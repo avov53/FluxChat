@@ -1,0 +1,13 @@
+bin/
+obj/
+dist/
+dist-server-linux/
+fluxusui-github/
+.vs/
+.idea/
+*.user
+*.suo
+*.db
+*.db-shm
+*.db-wal
+*.log

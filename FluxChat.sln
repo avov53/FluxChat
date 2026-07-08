@@ -1,0 +1,46 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluxChat.Client", "FluxChat.Client\FluxChat.Client.csproj", "{45E2A694-7DC5-432C-B4C7-015143D064EC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluxChat.Shared", "FluxChat.Shared\FluxChat.Shared.csproj", "{E7033A35-8623-421A-96E0-1CD0A197A166}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluxChat.Server", "FluxChat.Server\FluxChat.Server.csproj", "{C3DC2E7E-29E2-4EE3-B3A3-C05EB43468EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluxChat.Server.Core", "FluxChat.Server.Core\FluxChat.Server.Core.csproj", "{9C470777-EB2A-4C48-85F4-062B32A44C77}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FluxChat.Admin", "FluxChat.Admin\FluxChat.Admin.csproj", "{F01C1B2D-02DD-450B-9C92-C7DCCAC72EA3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{45E2A694-7DC5-432C-B4C7-015143D064EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{45E2A694-7DC5-432C-B4C7-015143D064EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{45E2A694-7DC5-432C-B4C7-015143D064EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{45E2A694-7DC5-432C-B4C7-015143D064EC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E7033A35-8623-421A-96E0-1CD0A197A166}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E7033A35-8623-421A-96E0-1CD0A197A166}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E7033A35-8623-421A-96E0-1CD0A197A166}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E7033A35-8623-421A-96E0-1CD0A197A166}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C3DC2E7E-29E2-4EE3-B3A3-C05EB43468EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C3DC2E7E-29E2-4EE3-B3A3-C05EB43468EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C3DC2E7E-29E2-4EE3-B3A3-C05EB43468EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C3DC2E7E-29E2-4EE3-B3A3-C05EB43468EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9C470777-EB2A-4C48-85F4-062B32A44C77}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9C470777-EB2A-4C48-85F4-062B32A44C77}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9C470777-EB2A-4C48-85F4-062B32A44C77}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9C470777-EB2A-4C48-85F4-062B32A44C77}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F01C1B2D-02DD-450B-9C92-C7DCCAC72EA3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F01C1B2D-02DD-450B-9C92-C7DCCAC72EA3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F01C1B2D-02DD-450B-9C92-C7DCCAC72EA3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F01C1B2D-02DD-450B-9C92-C7DCCAC72EA3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

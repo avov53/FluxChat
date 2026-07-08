@@ -1,0 +1,186 @@
+<Window x:Class="FluxChat.Client.VpsHelpWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VPS setup help"
+        Width="820"
+        Height="720"
+        MinWidth="720"
+        MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#101114"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PanelBrush" Color="#17191f"/>
+        <SolidColorBrush x:Key="LineBrush" Color="#2a2f3a"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#eef2ff"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#8f98ab"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#5eead4"/>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style x:Key="CommandBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#0d0f14"/>
+            <Setter Property="Foreground" Value="#d8fff8"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="MinWidth" Value="78"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="#061412"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="16"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="16"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Развертывание FluxChat Relay на Ubuntu VPS"
+                       FontSize="24"
+                       FontWeight="Bold"/>
+            <TextBlock Text="Пользователей теперь добавляй через команду fluxus. Друг вводит invite-код в поле Invite / token."
+                       Foreground="{StaticResource MutedBrush}"
+                       Margin="0,6,0,0"/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="Что значит root@IP_ТВОЕГО_VPS" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}"
+                                   Text="root - имя пользователя. Символ @ оставляешь. IP_ТВОЕГО_VPS заменяешь на реальный IP, например root@123.45.67.89."/>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,14,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="1. Сборка на Windows ПК" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}"
+                                   Text="Выполни в PowerShell из папки проекта. Будут созданы FluxChat.Server и fluxus для Linux."/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="BuildCommand" Style="{StaticResource CommandBox}" Text=".\dist-server-linux.bat"/>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Text, ElementName=BuildCommand}" Click="CopyButton_OnClick"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,14,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="2. Загрузка через PowerShell/SSH" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}"
+                                   Text="Команды scp запускай на своем Windows ПК, не внутри VPS."/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ScpCommand" MinHeight="62" Style="{StaticResource CommandBox}"
+                                     Text="scp .\dist-server-linux\FluxChat.Server root@IP_ТВОЕГО_VPS:/root/FluxChat.Server&#x0a;scp .\dist-server-linux\fluxus root@IP_ТВОЕГО_VPS:/root/fluxus"/>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Text, ElementName=ScpCommand}" Click="CopyButton_OnClick"/>
+                        </Grid>
+                        <TextBlock Margin="0,12,0,8" Foreground="{StaticResource MutedBrush}" Text="Подключение к VPS:"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="SshCommand" Style="{StaticResource CommandBox}" Text="ssh root@IP_ТВОЕГО_VPS"/>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Text, ElementName=SshCommand}" Click="CopyButton_OnClick"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,14,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="3. Termius и VNC" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Margin="0,8,0,0" Foreground="{StaticResource MutedBrush}"
+                                   Text="В Termius создай Host: Address = IP VPS, Username = root, Port = 22. Через SFTP загрузи FluxChat.Server в /root/FluxChat.Server, а fluxus в /root/fluxus. VNC-консоль обычно не умеет загружать файл с ПК, поэтому сначала загрузи файлы через scp, Termius SFTP или файловый менеджер хостинга."/>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,14,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="4. Быстрый ручной запуск" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}"
+                                   Text="Эти команды выполняются внутри Ubuntu VPS. Для создания инвайта открой вторую SSH-сессию и запусти /root/fluxus."/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="RunCommand" MinHeight="120" Style="{StaticResource CommandBox}"
+                                     Text="chmod +x /root/FluxChat.Server /root/fluxus&#x0a;sudo ufw allow 42800/tcp&#x0a;/root/FluxChat.Server&#x0a;# in another SSH session:&#x0a;/root/fluxus"/>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Text, ElementName=RunCommand}" Click="CopyButton_OnClick"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,14,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="5. Установка как постоянный сервис" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Margin="0,8,0,8" Foreground="{StaticResource MutedBrush}"
+                                   Text="Сервер будет запускаться после перезагрузки VPS. Команда fluxus останется доступна из SSH."/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ServiceCommand" MinHeight="330" Style="{StaticResource CommandBox}"
+                                     Text="sudo mkdir -p /opt/fluxchat /var/lib/fluxchat&#x0a;sudo mv /root/FluxChat.Server /opt/fluxchat/FluxChat.Server&#x0a;sudo mv /root/fluxus /usr/local/bin/fluxus&#x0a;sudo chmod +x /opt/fluxchat/FluxChat.Server /usr/local/bin/fluxus&#x0a;sudo tee /etc/systemd/system/fluxchat.service >/dev/null &lt;&lt;'EOF'&#x0a;[Unit]&#x0a;Description=FluxChat Relay Server&#x0a;After=network-online.target&#x0a;Wants=network-online.target&#x0a;&#x0a;[Service]&#x0a;ExecStart=/opt/fluxchat/FluxChat.Server&#x0a;Restart=always&#x0a;RestartSec=3&#x0a;User=root&#x0a;&#x0a;[Install]&#x0a;WantedBy=multi-user.target&#x0a;EOF&#x0a;sudo systemctl daemon-reload&#x0a;sudo systemctl enable --now fluxchat&#x0a;sudo systemctl status fluxchat&#x0a;fluxus"/>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Text, ElementName=ServiceCommand}" Click="CopyButton_OnClick"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,14,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <TextBlock Text="6. Полное удаление с VPS" FontSize="18" FontWeight="SemiBold"/>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="RemoveCommand" MinHeight="170" Style="{StaticResource CommandBox}"
+                                     Text="sudo systemctl disable --now fluxchat&#x0a;sudo rm -f /etc/systemd/system/fluxchat.service&#x0a;sudo rm -rf /opt/fluxchat&#x0a;sudo rm -f /usr/local/bin/fluxus&#x0a;sudo rm -rf /var/lib/fluxchat&#x0a;sudo rm -f /root/FluxChat.Server /root/fluxus&#x0a;sudo systemctl daemon-reload&#x0a;sudo ufw delete allow 42800/tcp"/>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Text, ElementName=RemoveCommand}" Click="CopyButton_OnClick"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button Grid.Row="4" Content="Close" HorizontalAlignment="Right" Click="CloseButton_OnClick"/>
+    </Grid>
+</Window>
