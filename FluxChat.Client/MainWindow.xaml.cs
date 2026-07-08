@@ -2433,6 +2433,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private void AvatarVideo_OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MediaElement element)
+        {
+            return;
+        }
+
+        TryRestartAvatarVideo(element, TimeSpan.Zero);
+    }
+
     private void AvatarVideo_OnMediaEnded(object sender, RoutedEventArgs e)
     {
         if (sender is not MediaElement element)
@@ -2440,8 +2450,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        element.Position = TimeSpan.Zero;
-        element.Play();
+        TryRestartAvatarVideo(element, TimeSpan.Zero);
+    }
+
+    private static void TryRestartAvatarVideo(MediaElement element, TimeSpan position)
+    {
+        try
+        {
+            element.Position = position;
+            element.Play();
+        }
+        catch (NotSupportedException)
+        {
+        }
     }
 
     private void AvatarVideo_OnMediaOpened(object sender, RoutedEventArgs e)

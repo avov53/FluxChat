@@ -497,8 +497,9 @@
                                                 </Image.Style>
                                             </Image>
                                             <MediaElement Source="{Binding AvatarPath}"
-                                                          LoadedBehavior="Play"
+                                                          LoadedBehavior="Manual"
                                                           UnloadedBehavior="Stop"
+                                                          Loaded="AvatarVideo_OnLoaded"
                                                           MediaEnded="AvatarVideo_OnMediaEnded"
                                                           Stretch="UniformToFill"
                                                           IsMuted="True">
@@ -991,8 +992,9 @@
                                                     </Image.Style>
                                                 </Image>
                                                 <MediaElement Source="{Binding AvatarPath}"
-                                                              LoadedBehavior="Play"
+                                                              LoadedBehavior="Manual"
                                                               UnloadedBehavior="Stop"
+                                                              Loaded="AvatarVideo_OnLoaded"
                                                               MediaEnded="AvatarVideo_OnMediaEnded"
                                                               Stretch="UniformToFill"
                                                               IsMuted="True">
