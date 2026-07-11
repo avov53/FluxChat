@@ -138,14 +138,45 @@ public sealed record RelayRegisterPacket(
         => new("fluxchat.relay-register.v1", userId, displayName, credential);
 }
 
+public sealed record RelayAudioRegisterPacket(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("userId")] string UserId,
+    [property: JsonPropertyName("displayName")] string DisplayName,
+    [property: JsonPropertyName("credential")] string Credential)
+{
+    public static RelayAudioRegisterPacket Create(string userId, string displayName, string credential)
+        => new("fluxchat.audio-register.v1", userId, displayName, credential);
+}
+
+public sealed record RelayScreenRegisterPacket(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("userId")] string UserId,
+    [property: JsonPropertyName("displayName")] string DisplayName,
+    [property: JsonPropertyName("credential")] string Credential)
+{
+    public static RelayScreenRegisterPacket Create(string userId, string displayName, string credential)
+        => new("fluxchat.screen-register.v1", userId, displayName, credential);
+}
+
+public sealed record RelayIceServer(
+    [property: JsonPropertyName("urls")] IReadOnlyList<string> Urls,
+    [property: JsonPropertyName("username")] string? Username = null,
+    [property: JsonPropertyName("credential")] string? Credential = null,
+    [property: JsonPropertyName("credentialType")] string CredentialType = "password");
+
+public sealed record RelayIceConfig(
+    [property: JsonPropertyName("iceServers")] IReadOnlyList<RelayIceServer> IceServers,
+    [property: JsonPropertyName("expiresAtUtc")] DateTimeOffset ExpiresAtUtc);
+
 public sealed record RelayAckPacket(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("accepted")] bool Accepted,
     [property: JsonPropertyName("message")] string Message,
-    [property: JsonPropertyName("clientToken")] string? ClientToken = null)
+    [property: JsonPropertyName("clientToken")] string? ClientToken = null,
+    [property: JsonPropertyName("iceConfig")] RelayIceConfig? IceConfig = null)
 {
-    public static RelayAckPacket AcceptedResult(string message, string? clientToken = null)
-        => new("fluxchat.relay-ack.v1", true, message, clientToken);
+    public static RelayAckPacket AcceptedResult(string message, string? clientToken = null, RelayIceConfig? iceConfig = null)
+        => new("fluxchat.relay-ack.v1", true, message, clientToken, iceConfig);
 
     public static RelayAckPacket Denied(string message)
         => new("fluxchat.relay-ack.v1", false, message);
@@ -192,6 +223,30 @@ public sealed record RelayPresencePacket(
             avatarOffsetY,
             avatarVideoStartSeconds,
             avatarVideoDurationSeconds);
+}
+
+public sealed record RelayAudioPacket(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("messageId")] Guid MessageId,
+    [property: JsonPropertyName("fromUserId")] string FromUserId,
+    [property: JsonPropertyName("toUserId")] string ToUserId,
+    [property: JsonPropertyName("body")] string Body,
+    [property: JsonPropertyName("sentAtUtc")] DateTimeOffset SentAtUtc)
+{
+    public static RelayAudioPacket Create(string fromUserId, string toUserId, string body)
+        => new("fluxchat.call-audio.v1", Guid.NewGuid(), fromUserId, toUserId, body, DateTimeOffset.UtcNow);
+}
+
+public sealed record RelayScreenFramePacket(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("messageId")] Guid MessageId,
+    [property: JsonPropertyName("fromUserId")] string FromUserId,
+    [property: JsonPropertyName("toUserId")] string ToUserId,
+    [property: JsonPropertyName("body")] string Body,
+    [property: JsonPropertyName("sentAtUtc")] DateTimeOffset SentAtUtc)
+{
+    public static RelayScreenFramePacket Create(string fromUserId, string toUserId, string body)
+        => new("fluxchat.screen-frame.v1", Guid.NewGuid(), fromUserId, toUserId, body, DateTimeOffset.UtcNow);
 }
 
 public sealed record RelayFederationPacket(

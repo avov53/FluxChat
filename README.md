@@ -33,6 +33,7 @@ The output is:
 
 ```text
 dist\FluxChat.exe
+dist\ffmpeg.exe
 ```
 
 ## Server
@@ -63,10 +64,11 @@ https://github.com/avov53/FluxChat/releases/latest
 For auto-update to work:
 
 - Create release tags like `v1.0.1`, `v1.0.2`, etc.
-- Attach the Windows client executable as an asset named exactly `FluxChat.exe`.
+- Attach the full Windows client package as a ZIP asset, for example `FluxChat v1.0.9.zip`. The ZIP should contain a top-level folder named `FluxChat v1.0.9` with `FluxChat.exe`, `ffmpeg.exe`, and any other runtime files.
+- Also attach the Windows client executable as an asset named exactly `FluxChat.exe` for users updating from older FluxChat builds that only know how to replace the executable.
 - Increase `Version`, `AssemblyVersion`, and `FileVersion` in `FluxChat.Client/FluxChat.Client.csproj` before building a release.
 
-When a newer release is found, FluxChat prompts the user, downloads `FluxChat.exe`, closes the running app, replaces the executable, and starts the new version.
+When a newer release is found, FluxChat prompts the user, downloads the ZIP package when available, closes the running app, copies all package files into the app folder, and starts the new version. If an older client updates through the `FluxChat.exe` asset first, the new client can then offer to install missing companion files from the ZIP package.
 
 ## Data
 

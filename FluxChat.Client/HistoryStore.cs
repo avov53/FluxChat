@@ -41,7 +41,9 @@ internal sealed class HistoryStore
                 AvatarOffsetX REAL NOT NULL DEFAULT 0,
                 AvatarOffsetY REAL NOT NULL DEFAULT 0,
                 AvatarVideoStartSeconds REAL NOT NULL DEFAULT 0,
-                AvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10
+                AvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10,
+                IsGroup INTEGER NOT NULL DEFAULT 0,
+                GroupMemberIds TEXT NOT NULL DEFAULT ''
             );
             """;
 
@@ -53,6 +55,8 @@ internal sealed class HistoryStore
         await AddContactColumnAsync(connection, "AvatarOffsetY REAL NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "AvatarVideoStartSeconds REAL NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "AvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10");
+        await AddContactColumnAsync(connection, "IsGroup INTEGER NOT NULL DEFAULT 0");
+        await AddContactColumnAsync(connection, "GroupMemberIds TEXT NOT NULL DEFAULT ''");
         await DeleteEmptyMessagesAsync(connection);
     }
 
@@ -135,9 +139,11 @@ internal sealed class HistoryStore
         var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO Contacts (UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
-                                  AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds)
+                                  AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
+                                  IsGroup, GroupMemberIds)
             VALUES ($userId, $displayName, $ipAddress, $messagePort, $status, $lastSeenUtc, $avatarKind, $avatarPath,
-                    $avatarScale, $avatarOffsetX, $avatarOffsetY, $avatarVideoStartSeconds, $avatarVideoDurationSeconds)
+                    $avatarScale, $avatarOffsetX, $avatarOffsetY, $avatarVideoStartSeconds, $avatarVideoDurationSeconds,
+                    $isGroup, $groupMemberIds)
             ON CONFLICT(UserId) DO UPDATE SET
                 DisplayName = excluded.DisplayName,
                 IpAddress = excluded.IpAddress,
@@ -150,7 +156,9 @@ internal sealed class HistoryStore
                 AvatarOffsetX = excluded.AvatarOffsetX,
                 AvatarOffsetY = excluded.AvatarOffsetY,
                 AvatarVideoStartSeconds = excluded.AvatarVideoStartSeconds,
-                AvatarVideoDurationSeconds = excluded.AvatarVideoDurationSeconds;
+                AvatarVideoDurationSeconds = excluded.AvatarVideoDurationSeconds,
+                IsGroup = excluded.IsGroup,
+                GroupMemberIds = excluded.GroupMemberIds;
             """;
         command.Parameters.AddWithValue("$userId", contact.UserId);
         command.Parameters.AddWithValue("$displayName", contact.DisplayName);
@@ -165,6 +173,8 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$avatarOffsetY", contact.AvatarOffsetY);
         command.Parameters.AddWithValue("$avatarVideoStartSeconds", contact.AvatarVideoStartSeconds);
         command.Parameters.AddWithValue("$avatarVideoDurationSeconds", contact.AvatarVideoDurationSeconds);
+        command.Parameters.AddWithValue("$isGroup", contact.IsGroup ? 1 : 0);
+        command.Parameters.AddWithValue("$groupMemberIds", contact.GroupMemberIds);
 
         await command.ExecuteNonQueryAsync();
     }
@@ -179,7 +189,8 @@ internal sealed class HistoryStore
         var command = connection.CreateCommand();
         command.CommandText = """
             SELECT UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
-                   AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds
+                   AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
+                   IsGroup, GroupMemberIds
             FROM Contacts
             ORDER BY DisplayName COLLATE NOCASE ASC;
             """;
@@ -205,7 +216,9 @@ internal sealed class HistoryStore
                 AvatarOffsetX = reader.GetDouble(9),
                 AvatarOffsetY = reader.GetDouble(10),
                 AvatarVideoStartSeconds = reader.GetDouble(11),
-                AvatarVideoDurationSeconds = reader.GetDouble(12)
+                AvatarVideoDurationSeconds = reader.GetDouble(12),
+                IsGroup = reader.GetInt32(13) == 1,
+                GroupMemberIds = reader.GetString(14)
             });
         }
 

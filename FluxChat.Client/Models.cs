@@ -14,6 +14,8 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     private string _ipAddress = "";
     private string _avatarKind = "color";
     private string _avatarPath = "";
+    private string _groupMemberIds = "";
+    private bool _isGroup;
     private int _messagePort;
 
     public required string UserId { get; init; }
@@ -101,6 +103,51 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(AvatarImageSource));
         }
     }
+
+    public bool IsGroup
+    {
+        get => _isGroup;
+        set
+        {
+            if (_isGroup == value)
+            {
+                return;
+            }
+
+            _isGroup = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsDirectContact));
+            OnPropertyChanged(nameof(GroupMemberCountText));
+        }
+    }
+
+    public bool IsDirectContact => !IsGroup;
+
+    public string GroupMemberIds
+    {
+        get => _groupMemberIds;
+        set
+        {
+            if (_groupMemberIds == value)
+            {
+                return;
+            }
+
+            _groupMemberIds = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(GroupMemberIdsList));
+            OnPropertyChanged(nameof(GroupMemberCount));
+            OnPropertyChanged(nameof(GroupMemberCountText));
+        }
+    }
+
+    public IReadOnlyList<string> GroupMemberIdsList => string.IsNullOrWhiteSpace(GroupMemberIds)
+        ? []
+        : GroupMemberIds.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    public int GroupMemberCount => GroupMemberIdsList.Count;
+
+    public string GroupMemberCountText => IsGroup ? $"{GroupMemberCount} participants" : "";
 
     private double _avatarScale = 1;
     private double _avatarOffsetX;
@@ -276,6 +323,49 @@ public sealed class MessageViewModel
 
     public string TimeText => SentAtUtc.ToLocalTime().ToString("HH:mm");
     public string Side => IsOutgoing ? "Right" : "Left";
+}
+
+public sealed class GroupCandidateViewModel : INotifyPropertyChanged
+{
+    private bool _isAdded;
+
+    public required ContactViewModel Contact { get; init; }
+
+    public string UserId => Contact.UserId;
+    public string DisplayName => Contact.DisplayName;
+    public string ShortId => Contact.ShortId;
+    public string Initials => Contact.Initials;
+    public string AvatarPath => Contact.AvatarPath;
+    public bool HasAvatar => Contact.HasAvatar;
+    public bool IsAvatarImage => Contact.IsAvatarImage;
+    public bool IsAvatarVideo => Contact.IsAvatarVideo;
+    public ImageSource? AvatarImageSource => Contact.AvatarImageSource;
+    public bool CanAdd => !IsAdded;
+    public string GroupActionText => IsAdded ? "Added" : "Add";
+    public string ActionText => IsAdded ? "добавлен" : "добавить";
+
+    public bool IsAdded
+    {
+        get => _isAdded;
+        set
+        {
+            if (_isAdded == value)
+            {
+                return;
+            }
+
+            _isAdded = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanAdd));
+            OnPropertyChanged(nameof(ActionText));
+            OnPropertyChanged(nameof(GroupActionText));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
 public sealed class FriendRequestViewModel : INotifyPropertyChanged

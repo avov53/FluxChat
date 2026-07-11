@@ -9,6 +9,8 @@ internal sealed class AppSettings
     public string RelayServer { get; set; } = $"127.0.0.1:{FluxChat.Shared.FluxChatPorts.Relay}";
     public string RelayAccessKey { get; set; } = "";
     public string RelayClientToken { get; set; } = "";
+    public int AudioInputDeviceId { get; set; } = -1;
+    public int AudioOutputDeviceId { get; set; } = -1;
 }
 
 internal enum NetworkMode

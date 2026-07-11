@@ -17,9 +17,14 @@ internal sealed class RelayServer
 {
     private static readonly UTF8Encoding Utf8NoBom = new(false);
     private static readonly TimeSpan FederationClockSkew = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan TurnCredentialLifetime = TimeSpan.FromHours(24);
     private readonly RelayDatabase _database;
     private readonly ConcurrentDictionary<string, ClientSession> _online = new();
     private readonly string? _federationKey = Environment.GetEnvironmentVariable("FLUXCHAT_FEDERATION_KEY");
+    private readonly string? _turnHost = Environment.GetEnvironmentVariable("FLUXCHAT_TURN_HOST");
+    private readonly string? _turnSecret = Environment.GetEnvironmentVariable("FLUXCHAT_TURN_SECRET");
+    private readonly string _turnRealm = Environment.GetEnvironmentVariable("FLUXCHAT_TURN_REALM") ?? "fluxchat";
+    private readonly int _turnPort = ParseEnvInt("FLUXCHAT_TURN_PORT", 3478);
 
     public RelayServer(RelayDatabase database)
     {
@@ -29,12 +34,19 @@ internal sealed class RelayServer
     public async Task RunAsync()
     {
         var listener = new TcpListener(IPAddress.Any, FluxChatPorts.Relay);
+        using var audioUdp = new UdpClient(FluxChatPorts.Relay);
         listener.Start();
+        _ = Task.Run(SweepStaleSessionsAsync);
+        _ = Task.Run(() => RunAudioUdpRelayAsync(audioUdp));
         Console.WriteLine($"FluxChat relay listening on TCP {FluxChatPorts.Relay}");
+        Console.WriteLine($"FluxChat call audio relay listening on UDP {FluxChatPorts.Relay}");
         Console.WriteLine($"Database: {ServerPaths.DatabasePath}");
         Console.WriteLine(string.IsNullOrWhiteSpace(_federationKey)
             ? "Federation disabled. Set FLUXCHAT_FEDERATION_KEY to enable server-to-server delivery."
             : "Federation enabled.");
+        Console.WriteLine(IsTurnEnabled()
+            ? $"TURN enabled: {_turnHost}:{_turnPort}, realm={_turnRealm}"
+            : "TURN disabled. Set FLUXCHAT_TURN_HOST and FLUXCHAT_TURN_SECRET to enable WebRTC relay.");
         Console.WriteLine("Use `fluxus` on the VPS to create invites and manage users.");
 
         while (true)
@@ -52,6 +64,7 @@ internal sealed class RelayServer
         try
         {
             await using var stream = client.GetStream();
+            client.NoDelay = true;
             using var reader = new StreamReader(stream, Utf8NoBom, leaveOpen: true);
             using var writer = new StreamWriter(stream, Utf8NoBom, leaveOpen: true)
             {
@@ -68,6 +81,22 @@ internal sealed class RelayServer
                 return;
             }
 
+            if (firstType == "fluxchat.audio-register.v1")
+            {
+                var audioRegister = ReadPacket<RelayAudioRegisterPacket>(firstLine, "fluxchat.audio-register.v1")
+                    ?? throw new InvalidOperationException("Invalid audio registration packet.");
+                await HandleAudioClientAsync(audioRegister, reader, writer, client, remote);
+                return;
+            }
+
+            if (firstType == "fluxchat.screen-register.v1")
+            {
+                var screenRegister = ReadPacket<RelayScreenRegisterPacket>(firstLine, "fluxchat.screen-register.v1")
+                    ?? throw new InvalidOperationException("Invalid screen registration packet.");
+                await HandleScreenClientAsync(screenRegister, reader, writer, client, remote);
+                return;
+            }
+
             var register = ReadPacket<RelayRegisterPacket>(firstLine, "fluxchat.relay-register.v1")
                 ?? throw new InvalidOperationException("First packet must be relay registration.");
 
@@ -79,9 +108,9 @@ internal sealed class RelayServer
                 return;
             }
 
-            await SendAsync(writer, RelayAckPacket.AcceptedResult(auth.Message, auth.ClientToken));
+            await SendAsync(writer, RelayAckPacket.AcceptedResult(auth.Message, auth.ClientToken, CreateIceConfig(register.UserId)));
 
-            session = new ClientSession(register.UserId, register.DisplayName, writer);
+            session = new ClientSession(register.UserId, register.DisplayName, writer, client);
             _online[register.UserId] = session;
             Console.WriteLine($"{register.DisplayName} ({register.UserId}) connected from {remote}");
             await SendPresenceSnapshotAsync(session);
@@ -104,14 +133,22 @@ internal sealed class RelayServer
                     {
                         session.DisplayName = presence.DisplayName;
                         session.Status = presence.Status;
-                        session.AvatarKind = presence.AvatarKind;
-                        session.AvatarMediaBase64 = presence.AvatarMediaBase64;
-                        session.AvatarExtension = presence.AvatarExtension;
-                        session.AvatarScale = presence.AvatarScale;
-                        session.AvatarOffsetX = presence.AvatarOffsetX;
-                        session.AvatarOffsetY = presence.AvatarOffsetY;
-                        session.AvatarVideoStartSeconds = presence.AvatarVideoStartSeconds;
-                        session.AvatarVideoDurationSeconds = presence.AvatarVideoDurationSeconds;
+                        if (!string.IsNullOrWhiteSpace(presence.AvatarKind))
+                        {
+                            session.AvatarKind = presence.AvatarKind;
+                            session.AvatarScale = presence.AvatarScale;
+                            session.AvatarOffsetX = presence.AvatarOffsetX;
+                            session.AvatarOffsetY = presence.AvatarOffsetY;
+                            session.AvatarVideoStartSeconds = presence.AvatarVideoStartSeconds;
+                            session.AvatarVideoDurationSeconds = presence.AvatarVideoDurationSeconds;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(presence.AvatarMediaBase64))
+                        {
+                            session.AvatarMediaBase64 = presence.AvatarMediaBase64;
+                            session.AvatarExtension = presence.AvatarExtension;
+                        }
+
                         session.LastPresenceUtc = DateTimeOffset.UtcNow;
                         await BroadcastPresenceAsync(session, presence.Status);
                     }
@@ -137,11 +174,71 @@ internal sealed class RelayServer
         {
             if (session is not null)
             {
-                _online.TryRemove(new KeyValuePair<string, ClientSession>(session.UserId, session));
-                Console.WriteLine($"{session.DisplayName} ({session.UserId}) offline");
-                await BroadcastPresenceAsync(session, "Offline");
+                if (_online.TryRemove(new KeyValuePair<string, ClientSession>(session.UserId, session)))
+                {
+                    Console.WriteLine($"{session.DisplayName} ({session.UserId}) offline");
+                    await BroadcastPresenceAsync(session, "Offline");
+                }
             }
 
+            client.Dispose();
+        }
+    }
+
+    private async Task HandleAudioClientAsync(
+        RelayAudioRegisterPacket register,
+        StreamReader reader,
+        StreamWriter writer,
+        TcpClient client,
+        EndPoint? remote)
+    {
+        ClientSession? session = null;
+        try
+        {
+            var auth = _database.Authenticate(register.UserId, register.DisplayName, register.Credential);
+            if (!auth.IsAccepted)
+            {
+                Console.WriteLine($"Rejected audio {remote}: {auth.Message}");
+                await SendAsync(writer, RelayAckPacket.Denied(auth.Message));
+                return;
+            }
+
+            if (!_online.TryGetValue(register.UserId, out session))
+            {
+                Console.WriteLine($"Rejected audio {remote}: primary session missing for {register.UserId}");
+                await SendAsync(writer, RelayAckPacket.Denied("Primary session is not connected."));
+                return;
+            }
+
+            session.SetAudioWriter(writer);
+            await SendAsync(writer, RelayAckPacket.AcceptedResult("Audio registered."));
+            Console.WriteLine($"{register.DisplayName} ({register.UserId}) audio connected from {remote}");
+
+            while (client.Connected)
+            {
+                var line = await reader.ReadLineAsync();
+                if (line is null)
+                {
+                    break;
+                }
+
+                var packet = ReadPacket<RelayAudioPacket>(line, "fluxchat.call-audio.v1");
+                if (packet is null || packet.FromUserId != session.UserId)
+                {
+                    continue;
+                }
+
+                session.LastPresenceUtc = DateTimeOffset.UtcNow;
+                await RouteAudioPacketAsync(packet);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Audio client {remote} disconnected: {ex.Message}");
+        }
+        finally
+        {
+            session?.ClearAudioWriter(writer);
             client.Dispose();
         }
     }
@@ -151,6 +248,12 @@ internal sealed class RelayServer
         if (!string.IsNullOrWhiteSpace(packet.ToRelayServer))
         {
             await ForwardToRelayAsync(packet);
+            return;
+        }
+
+        if (packet.Intent == "call-screen-frame")
+        {
+            Console.WriteLine($"Dropped control-channel screen frame from {packet.FromUserId} to {packet.ToUserId}");
             return;
         }
 
@@ -168,7 +271,7 @@ internal sealed class RelayServer
             }
         }
 
-        if (packet.Intent is "presence" or "call-audio")
+        if (IsTransientMessage(packet))
         {
             Console.WriteLine($"Dropped offline {packet.Intent} from {packet.FromUserId} to {packet.ToUserId}");
             return;
@@ -176,6 +279,190 @@ internal sealed class RelayServer
 
         _database.StorePending(packet);
         Console.WriteLine($"Queued {packet.MessageId} for {packet.ToUserId}");
+    }
+
+    private RelayIceConfig CreateIceConfig(string userId)
+    {
+        var expiresAt = DateTimeOffset.UtcNow.Add(TurnCredentialLifetime);
+        var servers = new List<RelayIceServer>
+        {
+            new(new[] { "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302" })
+        };
+
+        if (IsTurnEnabled())
+        {
+            var host = _turnHost!.Trim();
+            var username = $"{expiresAt.ToUnixTimeSeconds()}:{userId}";
+            using var hmac = new HMACSHA1(Encoding.UTF8.GetBytes(_turnSecret!));
+            var credential = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(username)));
+
+            servers.Add(new(new[] { $"stun:{host}:{_turnPort}" }));
+            servers.Add(new(
+                new[]
+                {
+                    $"turn:{host}:{_turnPort}?transport=udp",
+                    $"turn:{host}:{_turnPort}?transport=tcp"
+                },
+                username,
+                credential));
+        }
+
+        return new RelayIceConfig(servers, expiresAt);
+    }
+
+    private bool IsTurnEnabled()
+        => !string.IsNullOrWhiteSpace(_turnHost) &&
+            !string.IsNullOrWhiteSpace(_turnSecret);
+
+    private static int ParseEnvInt(string name, int fallback)
+        => int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value > 0
+            ? value
+            : fallback;
+
+    private async Task RouteAudioPacketAsync(RelayAudioPacket packet)
+    {
+        if (_online.TryGetValue(packet.ToUserId, out var recipient))
+        {
+            try
+            {
+                await recipient.SendAudioAsync(packet);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"TCP audio delivery failed from {packet.FromUserId} to {packet.ToUserId}: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task HandleScreenClientAsync(
+        RelayScreenRegisterPacket register,
+        StreamReader reader,
+        StreamWriter writer,
+        TcpClient client,
+        EndPoint? remote)
+    {
+        ClientSession? session = null;
+        try
+        {
+            var auth = _database.Authenticate(register.UserId, register.DisplayName, register.Credential);
+            if (!auth.IsAccepted)
+            {
+                Console.WriteLine($"Rejected screen {remote}: {auth.Message}");
+                await SendAsync(writer, RelayAckPacket.Denied(auth.Message));
+                return;
+            }
+
+            if (!_online.TryGetValue(register.UserId, out session))
+            {
+                Console.WriteLine($"Rejected screen {remote}: primary session missing for {register.UserId}");
+                await SendAsync(writer, RelayAckPacket.Denied("Primary session is not connected."));
+                return;
+            }
+
+            session.SetScreenWriter(writer);
+            await SendAsync(writer, RelayAckPacket.AcceptedResult("Screen registered."));
+            Console.WriteLine($"{register.DisplayName} ({register.UserId}) screen connected from {remote}");
+
+            while (client.Connected)
+            {
+                var line = await reader.ReadLineAsync();
+                if (line is null)
+                {
+                    break;
+                }
+
+                var packet = ReadPacket<RelayScreenFramePacket>(line, "fluxchat.screen-frame.v1");
+                if (packet is null || packet.FromUserId != session.UserId)
+                {
+                    continue;
+                }
+
+                session.LastPresenceUtc = DateTimeOffset.UtcNow;
+                await RouteScreenPacketAsync(packet);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Screen client {remote} disconnected: {ex.Message}");
+        }
+        finally
+        {
+            session?.ClearScreenWriter(writer);
+            client.Dispose();
+        }
+    }
+
+    private Task RouteScreenPacketAsync(RelayScreenFramePacket packet)
+    {
+        if (_online.TryGetValue(packet.ToUserId, out var recipient))
+        {
+            recipient.EnqueueScreenFrame(packet);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task RunAudioUdpRelayAsync(UdpClient udp)
+    {
+        var receivedPackets = 0L;
+        var forwardedPackets = 0L;
+        var missingSenderPackets = 0L;
+        var missingRecipientEndpointPackets = 0L;
+
+        while (true)
+        {
+            try
+            {
+                var result = await udp.ReceiveAsync();
+                var json = Encoding.UTF8.GetString(result.Buffer);
+                var packet = ReadPacket<RelayAudioPacket>(json, "fluxchat.call-audio.v1");
+                if (packet is null ||
+                    string.IsNullOrWhiteSpace(packet.FromUserId) ||
+                    string.IsNullOrWhiteSpace(packet.ToUserId) ||
+                    !_online.TryGetValue(packet.FromUserId, out var sender))
+                {
+                    missingSenderPackets++;
+                    if (missingSenderPackets == 1 || missingSenderPackets % 100 == 0)
+                    {
+                        Console.WriteLine($"UDP audio dropped: sender offline or packet invalid, count={missingSenderPackets}");
+                    }
+
+                    continue;
+                }
+
+                sender.AudioEndPoint = result.RemoteEndPoint;
+                sender.LastPresenceUtc = DateTimeOffset.UtcNow;
+                receivedPackets++;
+                if (receivedPackets == 1 || receivedPackets % 500 == 0)
+                {
+                    Console.WriteLine($"UDP audio received: count={receivedPackets}, from={packet.FromUserId}, to={packet.ToUserId}, bytes={result.Buffer.Length}, endpoint={result.RemoteEndPoint}");
+                }
+
+                if (!_online.TryGetValue(packet.ToUserId, out var recipient) ||
+                    recipient.AudioEndPoint is null)
+                {
+                    missingRecipientEndpointPackets++;
+                    if (missingRecipientEndpointPackets == 1 || missingRecipientEndpointPackets % 100 == 0)
+                    {
+                        Console.WriteLine($"UDP audio waiting for recipient endpoint: count={missingRecipientEndpointPackets}, from={packet.FromUserId}, to={packet.ToUserId}, recipientOnline={_online.ContainsKey(packet.ToUserId)}");
+                    }
+
+                    continue;
+                }
+
+                await udp.SendAsync(result.Buffer, result.Buffer.Length, recipient.AudioEndPoint);
+                forwardedPackets++;
+                if (forwardedPackets == 1 || forwardedPackets % 500 == 0)
+                {
+                    Console.WriteLine($"UDP audio forwarded: count={forwardedPackets}, from={packet.FromUserId}, to={packet.ToUserId}, endpoint={recipient.AudioEndPoint}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UDP audio relay error: {ex.Message}");
+            }
+        }
     }
 
     private async Task SendPresenceSnapshotAsync(ClientSession recipient)
@@ -277,6 +564,12 @@ internal sealed class RelayServer
         var count = 0;
         foreach (var packet in messages)
         {
+            if (IsTransientMessage(packet))
+            {
+                _database.DeletePending(packet.MessageId);
+                continue;
+            }
+
             await session.SendAsync(packet);
             _database.DeletePending(packet.MessageId);
             count++;
@@ -302,6 +595,45 @@ internal sealed class RelayServer
 
         return type == expectedType ? JsonSerializer.Deserialize<T>(json) : default;
     }
+
+    private async Task SweepStaleSessionsAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        while (await timer.WaitForNextTickAsync())
+        {
+            var staleBefore = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(40);
+            foreach (var session in _online.Values)
+            {
+                if (session.LastPresenceUtc >= staleBefore)
+                {
+                    continue;
+                }
+
+                if (!_online.TryRemove(new KeyValuePair<string, ClientSession>(session.UserId, session)))
+                {
+                    continue;
+                }
+
+                Console.WriteLine($"{session.DisplayName} ({session.UserId}) timed out");
+                session.Close();
+                await BroadcastPresenceAsync(session, "Offline");
+            }
+        }
+    }
+
+    private static bool IsTransientMessage(ChatPacket packet)
+        => packet.Intent is "presence"
+            or "call-audio"
+            or "call-audio-state"
+            or "call-invite"
+            or "call-accept"
+            or "call-decline"
+            or "call-end"
+            or "call-leave"
+            or "call-join"
+            or "call-screen-start"
+            or "call-screen-frame"
+            or "call-screen-stop";
 
     private bool IsFederationAccepted(RelayFederationPacket federation)
     {
@@ -379,13 +711,24 @@ internal sealed class RelayServer
             session.AvatarVideoDurationSeconds);
 }
 
-internal sealed class ClientSession(string userId, string displayName, StreamWriter writer)
+internal sealed class ClientSession(string userId, string displayName, StreamWriter writer, TcpClient client)
 {
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly SemaphoreSlim _audioSendLock = new(1, 1);
+    private readonly SemaphoreSlim _screenSendLock = new(1, 1);
+    private readonly object _audioGate = new();
+    private readonly object _screenGate = new();
+    private RelayScreenFramePacket? _pendingScreenFrame;
+    private int _screenSendLoopActive;
+    private long _droppedScreenFrames;
 
     public string UserId { get; } = userId;
     public string DisplayName { get; set; } = displayName;
     public StreamWriter Writer { get; } = writer;
+    public TcpClient Client { get; } = client;
+    public StreamWriter? AudioWriter { get; private set; }
+    public StreamWriter? ScreenWriter { get; private set; }
+    public IPEndPoint? AudioEndPoint { get; set; }
     public string Status { get; set; } = "Online";
     public string? AvatarKind { get; set; }
     public string? AvatarMediaBase64 { get; set; }
@@ -407,6 +750,166 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
         finally
         {
             _sendLock.Release();
+        }
+    }
+
+    public void SetAudioWriter(StreamWriter writer)
+    {
+        lock (_audioGate)
+        {
+            AudioWriter = writer;
+        }
+    }
+
+    public void ClearAudioWriter(StreamWriter writer)
+    {
+        lock (_audioGate)
+        {
+            if (ReferenceEquals(AudioWriter, writer))
+            {
+                AudioWriter = null;
+            }
+        }
+    }
+
+    public async Task SendAudioAsync(RelayAudioPacket packet)
+    {
+        StreamWriter? writer;
+        lock (_audioGate)
+        {
+            writer = AudioWriter;
+        }
+
+        if (writer is null)
+        {
+            throw new InvalidOperationException("Recipient audio channel is not connected.");
+        }
+
+        await _audioSendLock.WaitAsync();
+        try
+        {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(packet));
+        }
+        finally
+        {
+            _audioSendLock.Release();
+        }
+    }
+
+    public void SetScreenWriter(StreamWriter writer)
+    {
+        lock (_screenGate)
+        {
+            ScreenWriter = writer;
+            _pendingScreenFrame = null;
+            _droppedScreenFrames = 0;
+        }
+    }
+
+    public void ClearScreenWriter(StreamWriter writer)
+    {
+        lock (_screenGate)
+        {
+            if (ReferenceEquals(ScreenWriter, writer))
+            {
+                ScreenWriter = null;
+                _pendingScreenFrame = null;
+            }
+        }
+    }
+
+    public void EnqueueScreenFrame(RelayScreenFramePacket packet)
+    {
+        lock (_screenGate)
+        {
+            if (_pendingScreenFrame is not null)
+            {
+                _droppedScreenFrames++;
+            }
+
+            _pendingScreenFrame = packet;
+        }
+
+        if (Interlocked.CompareExchange(ref _screenSendLoopActive, 1, 0) == 0)
+        {
+            _ = Task.Run(SendPendingScreenFramesAsync);
+        }
+    }
+
+    private async Task SendPendingScreenFramesAsync()
+    {
+        var sent = 0L;
+        try
+        {
+            while (true)
+            {
+                RelayScreenFramePacket? packet;
+                StreamWriter? writer;
+                long dropped;
+                lock (_screenGate)
+                {
+                    packet = _pendingScreenFrame;
+                    _pendingScreenFrame = null;
+                    writer = ScreenWriter;
+                    dropped = _droppedScreenFrames;
+                }
+
+                if (packet is null || writer is null)
+                {
+                    break;
+                }
+
+                try
+                {
+                    await _screenSendLock.WaitAsync();
+                    try
+                    {
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(packet));
+                    }
+                    finally
+                    {
+                        _screenSendLock.Release();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Screen delivery failed from {packet.FromUserId} to {packet.ToUserId}: {ex.Message}");
+                    ClearScreenWriter(writer);
+                    break;
+                }
+
+                sent++;
+                if (dropped > 0 && (sent == 1 || sent % 100 == 0))
+                {
+                    Console.WriteLine($"Screen latest-frame relay: to={packet.ToUserId}, sent={sent}, dropped={dropped}");
+                }
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _screenSendLoopActive, 0);
+
+            var shouldRestart = false;
+            lock (_screenGate)
+            {
+                shouldRestart = _pendingScreenFrame is not null && ScreenWriter is not null;
+            }
+
+            if (shouldRestart && Interlocked.CompareExchange(ref _screenSendLoopActive, 1, 0) == 0)
+            {
+                _ = Task.Run(SendPendingScreenFramesAsync);
+            }
+        }
+    }
+
+    public void Close()
+    {
+        try
+        {
+            Client.Close();
+        }
+        catch
+        {
         }
     }
 }
