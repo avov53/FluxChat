@@ -9,9 +9,22 @@ set "FFMPEG_URL=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
 set "FFMPEG_ZIP=%TOOLS%\ffmpeg-release-essentials.zip"
 
 echo Building FluxChat single-file distribution...
+echo Root: %ROOT%
+echo Dist: %DIST%
+
+powershell -NoProfile -Command "if (Get-Process -Name FluxChat -ErrorAction SilentlyContinue) { exit 1 }"
+if errorlevel 1 (
+    echo FluxChat.exe is running. Close FluxChat before rebuilding dist.
+    exit /b 1
+)
 
 if exist "%DIST%" (
     rmdir /s /q "%DIST%"
+)
+
+if exist "%DIST%" (
+    echo Failed to clean dist folder. Close FluxChat.exe if it is running and try again.
+    exit /b 1
 )
 
 dotnet publish "%PROJECT%" ^
@@ -20,10 +33,7 @@ dotnet publish "%PROJECT%" ^
     --self-contained true ^
     -o "%DIST%" ^
     -p:PublishSingleFile=true ^
-    -p:IncludeNativeLibrariesForSelfExtract=true ^
-    -p:EnableCompressionInSingleFile=true ^
-    -p:DebugType=None ^
-    -p:DebugSymbols=false
+    -p:IncludeNativeLibrariesForSelfExtract=true
 
 if errorlevel 1 (
     echo.
@@ -31,12 +41,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for %%F in ("%DIST%\*.pdb") do (
-    if exist "%%~fF" del /q "%%~fF"
+if exist "%DIST%\FluxChat.Client.exe" (
+    move /y "%DIST%\FluxChat.Client.exe" "%DIST%\FluxChat.exe" >nul
 )
 
-if exist "%DIST%\FluxChat.Client.exe" (
-    ren "%DIST%\FluxChat.Client.exe" "FluxChat.exe"
+if not exist "%DIST%\FluxChat.exe" (
+    echo.
+    echo Publish finished, but FluxChat.exe was not found in dist.
+    exit /b 1
+)
+
+for %%F in ("%DIST%\*.pdb") do (
+    if exist "%%~fF" del /q "%%~fF"
 )
 
 call :include_ffmpeg
@@ -51,6 +67,7 @@ echo Done: %DIST%\FluxChat.exe
 if exist "%DIST%\ffmpeg.exe" (
     echo Done: %DIST%\ffmpeg.exe
 )
+echo Dist folder is ready.
 exit /b 0
 
 :include_ffmpeg

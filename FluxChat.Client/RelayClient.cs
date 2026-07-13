@@ -167,7 +167,8 @@ internal sealed class RelayClient : IAsyncDisposable
     public async Task SendAudioAsync(RelayAudioPacket packet, CancellationToken cancellationToken)
     {
         var udp = _audioUdp;
-        if (udp is not null)
+        var preferUdp = string.IsNullOrWhiteSpace(packet.Body) || IsUdpAudioActive();
+        if (udp is not null && preferUdp)
         {
             try
             {
@@ -200,6 +201,20 @@ internal sealed class RelayClient : IAsyncDisposable
                     AppLog.Write(ex, "Relay audio TCP send failed, falling back to UDP");
                     await DisposeAudioTcpAsync();
                 }
+            }
+        }
+
+        if (udp is not null)
+        {
+            try
+            {
+                var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
+                await udp.SendAsync(bytes, cancellationToken);
+                return;
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                AppLog.Write(ex, "Relay audio UDP send failed");
             }
         }
 

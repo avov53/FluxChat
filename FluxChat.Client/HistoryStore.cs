@@ -57,6 +57,15 @@ internal sealed class HistoryStore
         await AddContactColumnAsync(connection, "AvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10");
         await AddContactColumnAsync(connection, "IsGroup INTEGER NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "GroupMemberIds TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "Kind TEXT NOT NULL DEFAULT 'Text'");
+        await AddMessageColumnAsync(connection, "Text TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "AttachmentPath TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "AttachmentUrl TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "ReplyToMessageId TEXT NULL");
+        await AddMessageColumnAsync(connection, "ReplyPreview TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "ForwardedFrom TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "EditedAtUtc TEXT NULL");
+        await AddMessageColumnAsync(connection, "ReactionsJson TEXT NOT NULL DEFAULT ''");
         await DeleteEmptyMessagesAsync(connection);
     }
 
@@ -80,6 +89,19 @@ internal sealed class HistoryStore
         }
     }
 
+    private static async Task AddMessageColumnAsync(SqliteConnection connection, string columnDefinition)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE Messages ADD COLUMN {columnDefinition};";
+        try
+        {
+            await command.ExecuteNonQueryAsync();
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 1)
+        {
+        }
+    }
+
     public async Task SaveAsync(MessageViewModel message)
     {
         await using var connection = new SqliteConnection(_connectionString);
@@ -87,14 +109,85 @@ internal sealed class HistoryStore
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT OR IGNORE INTO Messages (MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc)
-            VALUES ($messageId, $peerUserId, $body, $isOutgoing, $sentAtUtc);
+            INSERT OR REPLACE INTO Messages (
+                MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
+                ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson)
+            VALUES (
+                $messageId, $peerUserId, $body, $isOutgoing, $sentAtUtc, $kind, $text, $attachmentPath, $attachmentUrl,
+                $replyToMessageId, $replyPreview, $forwardedFrom, $editedAtUtc, $reactionsJson);
             """;
         command.Parameters.AddWithValue("$messageId", message.MessageId.ToString());
         command.Parameters.AddWithValue("$peerUserId", message.PeerUserId);
         command.Parameters.AddWithValue("$body", message.Body);
         command.Parameters.AddWithValue("$isOutgoing", message.IsOutgoing ? 1 : 0);
         command.Parameters.AddWithValue("$sentAtUtc", message.SentAtUtc.UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$kind", message.Kind);
+        command.Parameters.AddWithValue("$text", message.Text);
+        command.Parameters.AddWithValue("$attachmentPath", message.AttachmentPath);
+        command.Parameters.AddWithValue("$attachmentUrl", message.AttachmentUrl);
+        command.Parameters.AddWithValue("$replyToMessageId", message.ReplyToMessageId?.ToString() ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$replyPreview", message.ReplyPreview);
+        command.Parameters.AddWithValue("$forwardedFrom", message.ForwardedFrom);
+        command.Parameters.AddWithValue("$editedAtUtc", message.EditedAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$reactionsJson", message.ReactionsJson);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public async Task UpdateMessageAsync(MessageViewModel message)
+        => await SaveAsync(message);
+
+    public async Task DeleteMessageAsync(Guid messageId)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM Messages
+            WHERE MessageId = $messageId;
+            """;
+        command.Parameters.AddWithValue("$messageId", messageId.ToString());
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public async Task<string> LoadMessageAttachmentPathAsync(Guid messageId, string peerUserId, bool isOutgoing)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT AttachmentPath
+            FROM Messages
+            WHERE MessageId = $messageId
+              AND PeerUserId = $peerUserId
+              AND IsOutgoing = $isOutgoing
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$messageId", messageId.ToString());
+        command.Parameters.AddWithValue("$peerUserId", peerUserId);
+        command.Parameters.AddWithValue("$isOutgoing", isOutgoing ? 1 : 0);
+
+        var result = await command.ExecuteScalarAsync();
+        return result as string ?? "";
+    }
+
+    public async Task DeleteIncomingMessageAsync(Guid messageId, string peerUserId)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM Messages
+            WHERE MessageId = $messageId
+              AND PeerUserId = $peerUserId
+              AND IsOutgoing = 0;
+            """;
+        command.Parameters.AddWithValue("$messageId", messageId.ToString());
+        command.Parameters.AddWithValue("$peerUserId", peerUserId);
 
         await command.ExecuteNonQueryAsync();
     }
@@ -108,7 +201,8 @@ internal sealed class HistoryStore
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc
+            SELECT MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
+                   ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson
             FROM Messages
             WHERE PeerUserId = $peerUserId
             ORDER BY SentAtUtc ASC;
@@ -118,13 +212,27 @@ internal sealed class HistoryStore
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
+            var body = reader.GetString(2);
+            var text = reader.IsDBNull(6) ? "" : reader.GetString(6);
+            var editedAt = reader.IsDBNull(12)
+                ? (DateTimeOffset?)null
+                : DateTimeOffset.Parse(reader.GetString(12));
             messages.Add(new MessageViewModel
             {
                 MessageId = Guid.Parse(reader.GetString(0)),
                 PeerUserId = reader.GetString(1),
-                Body = reader.GetString(2),
+                Body = body,
                 IsOutgoing = reader.GetInt32(3) == 1,
-                SentAtUtc = DateTimeOffset.Parse(reader.GetString(4))
+                SentAtUtc = DateTimeOffset.Parse(reader.GetString(4)),
+                Kind = reader.IsDBNull(5) ? MessageKinds.Text : reader.GetString(5),
+                Text = string.IsNullOrWhiteSpace(text) ? body : text,
+                AttachmentPath = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                AttachmentUrl = reader.IsDBNull(8) ? "" : reader.GetString(8),
+                ReplyToMessageId = reader.IsDBNull(9) ? null : Guid.Parse(reader.GetString(9)),
+                ReplyPreview = reader.IsDBNull(10) ? "" : reader.GetString(10),
+                ForwardedFrom = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                EditedAtUtc = editedAt,
+                ReactionsJson = reader.IsDBNull(13) ? "" : reader.GetString(13)
             });
         }
 

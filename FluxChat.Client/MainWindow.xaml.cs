@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -18,6 +19,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using FluxChat.Shared;
+using Microsoft.Data.Sqlite;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
@@ -33,8 +35,13 @@ public partial class MainWindow : Window
     private const string RelayContactPrefix = "VPS ";
     private const string FriendRequestIntent = "friend-request";
     private const string FriendAcceptIntent = "friend-accept";
+    private const string FriendRemoveIntent = "friend-remove";
     private const string ProfileUpdateIntent = "profile-update";
     private const string ProfileRequestIntent = "profile-request";
+    private const string ChatRichIntent = "chat-rich";
+    private const string ChatEditIntent = "chat-edit";
+    private const string ChatReactionIntent = "chat-reaction";
+    private const string ChatDeleteIntent = "chat-delete";
     private const string CallInviteIntent = "call-invite";
     private const string CallAcceptIntent = "call-accept";
     private const string CallDeclineIntent = "call-decline";
@@ -49,16 +56,18 @@ public partial class MainWindow : Window
     private const string CallScreenWebRtcOfferIntent = "call-screen-webrtc-offer";
     private const string CallScreenWebRtcAnswerIntent = "call-screen-webrtc-answer";
     private const string CallScreenWebRtcIceIntent = "call-screen-webrtc-ice";
+    private const string CallScreenWebRtcFallbackIntent = "call-screen-webrtc-fallback";
     private const string LegacyFriendRequestBody = "Friend request";
     private const string LegacyFriendAcceptBody = "Friend request accepted";
     private const string ControlBodyPrefix = "fluxchat-control:";
     private const int MaxAvatarSyncBytes = 5_000_000;
     private const int ScreenShareMaxFrameBodyChars = 1_800_000;
     private const long ScreenShareJpegQuality = 74L;
-    private const long ScreenShareHighFrameRateJpegQuality = 50L;
-    private const long ScreenShareHighLoadJpegQuality = 46L;
+    private const long ScreenShareHighFrameRateJpegQuality = 62L;
+    private const long ScreenShareHighLoadJpegQuality = 58L;
     private const int ScreenShareMaxCompactHeight = 150;
     private static readonly TimeSpan ScreenShareSelfPreviewInterval = TimeSpan.FromMilliseconds(180);
+    private static readonly TimeSpan ScreenShareEncodedLocalPreviewInterval = TimeSpan.FromMilliseconds(500);
     private const int ScreenShareMinAdaptiveHeight = 720;
     private const int ScreenShareHighResolutionMinAdaptiveHeight = 1080;
     private const int ScreenShareAdaptiveStep = 120;
@@ -68,7 +77,7 @@ public partial class MainWindow : Window
     private const int ScreenShareMaxPeerRenderFrameRate = 60;
     private const int ScreenShareFullscreenMaxPeerRenderFrameRate = 60;
     private const int ScreenShareEncodedChunkSize = 32 * 1024;
-    private const int ScreenShareEncodedDataChannelBufferLimit = 1024 * 1024;
+    private const int ScreenShareEncodedDataChannelBufferLimit = 4 * 1024 * 1024;
     private static readonly TimeSpan ScreenShareSendTimeout = TimeSpan.FromMilliseconds(250);
     private static readonly bool ScreenSharePreferWebRtc = true;
     private static readonly bool ScreenSharePreferEncodedWebRtc = true;
@@ -78,24 +87,34 @@ public partial class MainWindow : Window
     private const string ScreenShareCodecH264Fmp4 = "h264-fmp4";
     private const int CallAudioMinDecodedBytes = 64;
     private const int CallAudioMaxDecodedBytes = 2560;
-    private const int CallAudioTargetPeak = 9000;
-    private const int CallAudioOutputLimitPeak = 24000;
-    private const int CallAudioSilencePeak = 45;
-    private const int CallAudioVoiceFloorPeak = 180;
+    private const int CallAudioTargetPeak = 7000;
+    private const int CallAudioOutputLimitPeak = 20000;
+    private const int CallAudioSilencePeak = 24;
+    private const int CallAudioVoiceFloorPeak = 140;
     private const int CallAudioMaxCaptureQueueFrames = 8;
     private const int CallAudioMaxPlaybackQueueFrames = 8;
-    private const double CallAudioMaxGain = 3.0;
-    private const double CallAudioGainAttack = 0.35;
-    private const double CallAudioGainRelease = 0.10;
+    private const double CallAudioMaxGain = 2.4;
+    private const double CallAudioGainAttack = 0.22;
+    private const double CallAudioGainRelease = 0.18;
     private static readonly TimeSpan CallAudioSendTimeout = TimeSpan.FromMilliseconds(750);
     private const double AvatarEditorPreviewSize = 350;
     private const double AvatarEditorCircleSize = 344;
     private const double ProfileAvatarSize = 44;
     private const double SettingsAvatarSize = 64;
 
+    private enum ScreenShareFocusTarget
+    {
+        Auto,
+        Local,
+        Peer
+    }
+
     private readonly ObservableCollection<ContactViewModel> _contacts = [];
     private readonly ObservableCollection<MessageViewModel> _messages = [];
     private readonly ObservableCollection<FriendRequestViewModel> _friendRequests = [];
+    private readonly ObservableCollection<TenorGifViewModel> _gifResults = [];
+    private readonly ObservableCollection<TenorGifViewModel> _favoriteGifs = [];
+    private readonly HttpClient _httpClient = new();
     private readonly ObservableCollection<GroupCandidateViewModel> _groupCandidates = [];
     private readonly ObservableCollection<ScreenShareSourceItem> _screenShareSources = [];
     private readonly ObservableCollection<ScreenShareSourceItem> _visibleScreenShareSources = [];
@@ -109,6 +128,12 @@ public partial class MainWindow : Window
     private Forms.NotifyIcon? _notifyIcon;
     private ContactViewModel? _selectedContact;
     private ContactViewModel? _draftGroupContact;
+    private MessageViewModel? _replyTarget;
+    private MessageViewModel? _editingMessage;
+    private MessageViewModel? _forwardTarget;
+    private MessageViewModel? _reactionTarget;
+    private string _draftImagePath = "";
+    private bool _emojiWebViewReady;
     private UserPresenceStatus _selectedStatus = UserPresenceStatus.Online;
     private string _selectedAvatarColor = "#5865f2";
     private string _selectedAvatarKind = "color";
@@ -146,6 +171,8 @@ public partial class MainWindow : Window
     private bool _isScreenShareFocusMode;
     private bool _isScreenShareFullscreenMode;
     private bool _screenShareWindowFullscreenApplied;
+    private bool _screenSharePickerSuppressesStage;
+    private ScreenShareFocusTarget _screenShareFocusTarget = ScreenShareFocusTarget.Auto;
     private WindowStyle _screenSharePreviousWindowStyle;
     private WindowState _screenSharePreviousWindowState;
     private ResizeMode _screenSharePreviousResizeMode;
@@ -167,11 +194,13 @@ public partial class MainWindow : Window
     private bool _screenShareStartSignalSent;
     private bool _screenShareUsingEncodedWebRtc;
     private bool _screenShareEncodedChannelOpen;
+    private bool _peerScreenShareUsingWebRtc;
     private long _sentScreenShareFrames;
     private long _sentEncodedScreenShareChunks;
     private long _receivedScreenShareFrames;
     private long _droppedReceivedScreenShareFrames;
     private long _lastSelfScreenSharePreviewTicks;
+    private long _lastEncodedScreenSharePreviewTicks;
     private long _lastPeerScreenShareFrameAcceptedTicks;
     private ulong _lastScreenShareFrameHash;
     private long _lastScreenShareFrameHashSentTicks;
@@ -214,6 +243,7 @@ public partial class MainWindow : Window
     private double _playbackAudioGain = 1;
     private readonly ConcurrentQueue<CallPlaybackFrame> _callPlaybackQueue = new();
     private readonly SemaphoreSlim _callPlaybackSignal = new(0, int.MaxValue);
+    private readonly ObservableCollection<MessageTextSegment> _messageInputTextSegments = [];
     private string? _notificationContactUserId;
 
     public MainWindow()
@@ -240,11 +270,18 @@ public partial class MainWindow : Window
         AvatarEditorVideo.MediaEnded += AvatarVideo_OnMediaEnded;
         ContactsList.ItemsSource = _contacts;
         MessagesList.ItemsSource = _messages;
+        MessageInputEmojiPreview.ItemsSource = _messageInputTextSegments;
+        GifResultsList.ItemsSource = _gifResults;
+        GifFavoritesList.ItemsSource = _favoriteGifs;
+        ForwardContactsList.ItemsSource = _contacts;
         FriendRequestsList.ItemsSource = _friendRequests;
         GroupFriendsList.ItemsSource = _groupCandidates;
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("FluxChat/1.0");
         Loaded += OnLoaded;
         Closed += OnClosed;
         KeyDown += MainWindow_OnKeyDown;
+        PreviewKeyDown += MainWindow_OnPreviewKeyDown;
+        PreviewTextInput += MainWindow_OnPreviewTextInput;
         Activated += (_, _) => _isWindowActive = true;
         Deactivated += (_, _) => _isWindowActive = false;
     }
@@ -290,6 +327,60 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MainWindow_OnPreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (e.Handled ||
+            string.IsNullOrEmpty(e.Text) ||
+            _selectedContact is null ||
+            ComposerPanel.Visibility != Visibility.Visible ||
+            Keyboard.Modifiers.HasFlag(ModifierKeys.Control) ||
+            Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) ||
+            IsTextEntryFocus())
+        {
+            return;
+        }
+
+        InsertTextIntoMessageInput(e.Text);
+        e.Handled = true;
+    }
+
+    private static bool IsTextEntryFocus()
+    {
+        var focused = Keyboard.FocusedElement as DependencyObject;
+        while (focused is not null)
+        {
+            if (focused is System.Windows.Controls.TextBox ||
+                focused is PasswordBox ||
+                focused is System.Windows.Controls.RichTextBox ||
+                focused is System.Windows.Controls.ComboBox)
+            {
+                return true;
+            }
+
+            focused = VisualTreeHelper.GetParent(focused);
+        }
+
+        return false;
+    }
+
+    private async void MainWindow_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Handled || e.Key != Key.V || Keyboard.Modifiers != ModifierKeys.Control)
+        {
+            return;
+        }
+
+        if (IsTextEntryFocus())
+        {
+            return;
+        }
+
+        if (await TryStageImageFromClipboardAsync())
+        {
+            e.Handled = true;
+        }
+    }
+
     private async Task InitializeAsync()
     {
         AppLog.Write("Main window initialization started");
@@ -307,6 +398,8 @@ public partial class MainWindow : Window
         ServerAccessKeyInput.Text = _settings.RelayAccessKey;
         SettingsServerAddressInput.Text = _settings.RelayServer;
         SettingsServerAccessKeyInput.Text = _settings.RelayAccessKey;
+        SettingsTenorApiKeyInput.Text = _settings.TenorApiKey;
+        LoadFavoriteGifs();
         RefreshAudioDeviceSelectors();
         FirstRunServerAddressInput.Text = _settings.RelayServer;
         FirstRunServerAccessKeyInput.Text = _settings.RelayAccessKey;
@@ -412,7 +505,7 @@ public partial class MainWindow : Window
                     var localSource = _activeScreenShareSource;
                     if (!_isScreenSharing || localSource is null)
                     {
-                        PostScreenShareWebRtcMessage(new { type = "stop" });
+                        PostScreenShareWebRtcMessage(new { type = "stop-local" });
                         break;
                     }
 
@@ -432,7 +525,7 @@ public partial class MainWindow : Window
                     var encodedSource = _activeScreenShareSource;
                     if (!_isScreenSharing || encodedSource is null)
                     {
-                        PostScreenShareWebRtcMessage(new { type = "stop" });
+                        PostScreenShareWebRtcMessage(new { type = "stop-local" });
                         break;
                     }
 
@@ -462,6 +555,7 @@ public partial class MainWindow : Window
                 case "remote-started":
                     _peerScreenSharing = true;
                     _isWatchingPeerScreen = true;
+                    _peerScreenShareUsingWebRtc = true;
                     _screenShareWebRtcActive = true;
                     SetScreenShareWebRtcVisible(true);
                     if (!_isScreenShareFocusMode)
@@ -475,6 +569,7 @@ public partial class MainWindow : Window
                 case "remote-playing":
                     _peerScreenSharing = true;
                     _isWatchingPeerScreen = true;
+                    _peerScreenShareUsingWebRtc = true;
                     _screenShareWebRtcActive = true;
                     SetScreenShareWebRtcVisible(true);
                     UpdateScreenShareStageVisibility();
@@ -483,8 +578,13 @@ public partial class MainWindow : Window
                 case "remote-video-ready":
                     AppLog.Write($"Screen share WebRTC remote video ready: width={GetJsonDouble(root, "width"):0}, height={GetJsonDouble(root, "height"):0}, readyState={GetJsonDouble(root, "readyState"):0}");
                     break;
+                case "remote-decode-failed":
+                    var decodeReason = GetJsonString(root, "reason");
+                    AppLog.Write($"Screen share WebRTC remote decode failed: {decodeReason}");
+                    RequestPeerScreenShareFallback(decodeReason);
+                    break;
                 case "focus-request":
-                    ToggleScreenShareFocusFromPreview();
+                    FocusScreenShareFromPreview(ParseScreenShareFocusTarget(GetJsonString(root, "target")));
                     break;
                 case "local-ended":
                     if (_isScreenSharing)
@@ -492,8 +592,22 @@ public partial class MainWindow : Window
                         StopScreenShare(sendSignal: true);
                     }
                     break;
+                case "local-stopped":
+                    _screenShareUsingNativeWebRtc = false;
+                    _screenShareUsingEncodedWebRtc = false;
+                    _screenShareEncodedChannelOpen = false;
+                    StopScreenShareEncoderProcess();
+                    _screenShareWebRtcActive = _peerScreenShareUsingWebRtc;
+                    SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+                    break;
+                case "remote-stopped":
+                    _peerScreenShareUsingWebRtc = false;
+                    _screenShareWebRtcActive = _screenShareUsingNativeWebRtc || _screenShareUsingEncodedWebRtc;
+                    SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+                    break;
                 case "stopped":
                     _screenShareWebRtcActive = false;
+                    _peerScreenShareUsingWebRtc = false;
                     SetScreenShareWebRtcVisible(false);
                     break;
                 case "state":
@@ -568,6 +682,7 @@ public partial class MainWindow : Window
         {
             _peerScreenSharing = true;
             _isWatchingPeerScreen = true;
+            _peerScreenShareUsingWebRtc = true;
             SetScreenShareWebRtcVisible(true);
             UpdateScreenShareStageVisibility();
         }
@@ -617,13 +732,19 @@ public partial class MainWindow : Window
         {
             type = "configure",
             iceServers,
-            connectTimeoutMs = 9000
+            connectTimeoutMs = 9000,
+            polite = IsPoliteScreenSharePeer()
         });
 
         var turnCount = iceServers.Count(server =>
             server.Urls.Any(url => url.StartsWith("turn:", StringComparison.OrdinalIgnoreCase)));
         AppLog.Write($"Screen share WebRTC configured: iceServers={iceServers.Count}, turnServers={turnCount}");
     }
+
+    private bool IsPoliteScreenSharePeer()
+        => _profile is not null &&
+           _activeCallContact is not null &&
+           string.CompareOrdinal(_profile.UserId, _activeCallContact.UserId) > 0;
 
     private IReadOnlyList<RelayIceServer> GetScreenShareWebRtcIceServers()
     {
@@ -668,12 +789,42 @@ public partial class MainWindow : Window
 
     private void SetScreenShareWebRtcVisible(bool visible)
     {
-        ScreenShareWebView.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        CallScreenShareGrid.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+        var keepWebViewAlive =
+            visible ||
+            _screenShareUsingNativeWebRtc ||
+            _screenShareUsingEncodedWebRtc ||
+            _peerScreenShareUsingWebRtc;
+        var showWebViewStage = keepWebViewAlive && _peerScreenShareUsingWebRtc && !_screenSharePickerSuppressesStage;
+
+        ScreenShareWebView.Visibility = keepWebViewAlive
+            ? (_screenSharePickerSuppressesStage ? Visibility.Hidden : Visibility.Visible)
+            : Visibility.Collapsed;
+        ScreenShareWebView.IsHitTestVisible = showWebViewStage;
+        ScreenShareWebView.Width = showWebViewStage ? double.NaN : 1;
+        ScreenShareWebView.Height = showWebViewStage ? double.NaN : 1;
+        ScreenShareWebView.HorizontalAlignment = showWebViewStage
+            ? System.Windows.HorizontalAlignment.Stretch
+            : System.Windows.HorizontalAlignment.Left;
+        ScreenShareWebView.VerticalAlignment = showWebViewStage
+            ? System.Windows.VerticalAlignment.Stretch
+            : System.Windows.VerticalAlignment.Top;
+        CallScreenShareGrid.Visibility = showWebViewStage ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private bool IsScreenShareWebRtcPreferred()
         => ScreenSharePreferWebRtc && _screenShareWebRtcReady;
+
+    private bool ShouldUseCompatibleScreenShareForSimultaneousStart()
+        => _peerScreenSharing && _peerScreenShareUsingWebRtc;
+
+    private void ApplyCompatibleScreenShareFallbackQuality()
+    {
+        _screenShareResolution = Math.Min(_screenShareResolution, ScreenShareFallbackMaxHeight);
+        _screenShareFrameRate = Math.Min(
+            ScreenShareFallbackMaxFrameRate,
+            ClampScreenShareFrameRate(_screenShareResolution, _screenShareFrameRate));
+        _screenShareAdaptiveHeight = Math.Min(_screenShareResolution, ScreenShareFallbackMaxHeight);
+    }
 
     private void FallbackScreenShareFromWebRtc(string reason)
     {
@@ -694,14 +845,10 @@ public partial class MainWindow : Window
         }
 
         AppLog.Write($"Screen share WebRTC fallback to JPEG: {reason}");
-        PostScreenShareWebRtcMessage(new { type = "stop" });
-        _screenShareWebRtcActive = false;
-        SetScreenShareWebRtcVisible(false);
-        _screenShareResolution = Math.Min(_screenShareResolution, ScreenShareFallbackMaxHeight);
-        _screenShareFrameRate = Math.Min(
-            ScreenShareFallbackMaxFrameRate,
-            ClampScreenShareFrameRate(_screenShareResolution, _screenShareFrameRate));
-        _screenShareAdaptiveHeight = Math.Min(_screenShareResolution, ScreenShareFallbackMaxHeight);
+        PostScreenShareWebRtcMessage(new { type = "stop-local" });
+        _screenShareWebRtcActive = _peerScreenShareUsingWebRtc;
+        SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+        ApplyCompatibleScreenShareFallbackQuality();
         UpdateScreenSharePickerState();
         NetworkStatusText.Text = "WebRTC failed. Using compatible 720p screen share.";
         SendScreenShareStartSignal(source, useWebRtc: false);
@@ -731,6 +878,17 @@ public partial class MainWindow : Window
             : 0;
     }
 
+    private void RequestPeerScreenShareFallback(string reason)
+    {
+        if (!_peerScreenSharing || !_peerScreenShareUsingWebRtc)
+        {
+            return;
+        }
+
+        NetworkStatusText.Text = "Friend screen decode failed. Asking for compatible screen share.";
+        _ = SendScreenShareSignalAsync(CallScreenWebRtcFallbackIntent, reason);
+    }
+
     private async void OnClosed(object? sender, EventArgs e)
     {
         _presenceTimer.Stop();
@@ -754,6 +912,7 @@ public partial class MainWindow : Window
 
         _notifyIcon?.Dispose();
         _notifyIcon = null;
+        _httpClient.Dispose();
         _stop.Dispose();
     }
 
@@ -870,7 +1029,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (packet.Intent is CallInviteIntent or CallAcceptIntent or CallDeclineIntent or CallEndIntent or CallLeaveIntent or CallJoinIntent or CallAudioStateIntent or CallScreenStartIntent or CallScreenFrameIntent or CallScreenStopIntent or CallScreenWebRtcOfferIntent or CallScreenWebRtcAnswerIntent or CallScreenWebRtcIceIntent)
+            if (packet.Intent is CallInviteIntent or CallAcceptIntent or CallDeclineIntent or CallEndIntent or CallLeaveIntent or CallJoinIntent or CallAudioStateIntent or CallScreenStartIntent or CallScreenFrameIntent or CallScreenStopIntent or CallScreenWebRtcOfferIntent or CallScreenWebRtcAnswerIntent or CallScreenWebRtcIceIntent or CallScreenWebRtcFallbackIntent)
             {
                 HandleCallPacket(packet);
                 return;
@@ -902,6 +1061,30 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (packet.Intent == ChatEditIntent)
+            {
+                HandleIncomingChatEdit(packet);
+                return;
+            }
+
+            if (packet.Intent == ChatReactionIntent)
+            {
+                HandleIncomingChatReaction(packet);
+                return;
+            }
+
+            if (packet.Intent == ChatDeleteIntent)
+            {
+                HandleIncomingChatDelete(packet);
+                return;
+            }
+
+            if (packet.Intent == FriendRemoveIntent)
+            {
+                HandleIncomingFriendRemove(packet);
+                return;
+            }
+
             if (IsFriendAcceptPacket(packet))
             {
                 var accepted = CreateContactFromPacket(packet);
@@ -911,6 +1094,12 @@ public partial class MainWindow : Window
                 RequestProfileIfAvatarMissing(packet, accepted);
                 NetworkStatusText.Text = $"{packet.FromDisplayName} accepted your friend request";
                 ShowIncomingNotificationIfNeeded(packet.FromDisplayName, packet);
+                return;
+            }
+
+            if (packet.Intent == ChatRichIntent)
+            {
+                HandleIncomingRichMessage(packet, statusText);
                 return;
             }
 
@@ -933,9 +1122,11 @@ public partial class MainWindow : Window
                 MessageId = packet.MessageId,
                 PeerUserId = packet.FromUserId,
                 Body = packet.Body,
+                Text = packet.Body,
                 IsOutgoing = false,
                 SentAtUtc = packet.SentAtUtc
             };
+            PrepareMessageForUi(message);
             _ = _history.SaveAsync(message);
 
             var contact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId);
@@ -965,9 +1156,14 @@ public partial class MainWindow : Window
         return Task.CompletedTask;
     }
 
-    private async void ContactsList_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private async void ContactsList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ContactsList.SelectedItem is not ContactViewModel contact)
+        {
+            return;
+        }
+
+        if (_selectedContact?.UserId == contact.UserId)
         {
             return;
         }
@@ -988,15 +1184,60 @@ public partial class MainWindow : Window
         ComposerPanel.Visibility = Visibility.Visible;
         EmptyChatHint.Visibility = Visibility.Collapsed;
         StartCallButton.Visibility = contact.IsGroup ? Visibility.Collapsed : Visibility.Visible;
+        _ = RefreshEmojiOpenButtonAsync();
+        ClearImageDraft();
 
         _messages.Clear();
         foreach (var message in await _history.LoadConversationAsync(contact.UserId))
         {
+            PrepareMessageForUi(message);
             _messages.Add(message);
         }
 
         ScrollMessagesToEnd();
         MessageInput.Focus();
+    }
+
+    private Task RefreshEmojiOpenButtonAsync()
+    {
+        var emojis = AllEmojis();
+        if (emojis.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        var emoji = emojis[Random.Shared.Next(emojis.Count)].Symbol;
+        EmojiOpenButtonFallback.Text = emoji;
+        EmojiOpenButtonFallback.Visibility = Visibility.Visible;
+        EmojiOpenButtonImage.Source = null;
+        EmojiOpenButtonImage.Visibility = Visibility.Collapsed;
+        var twemojiUrl = TryBuildTwemojiPngUrl(emoji);
+        if (twemojiUrl is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.UriSource = twemojiUrl;
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+            image.EndInit();
+            EmojiOpenButtonImage.Source = image;
+            EmojiOpenButtonImage.Visibility = Visibility.Visible;
+            EmojiOpenButtonFallback.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            EmojiOpenButtonImage.Source = null;
+            EmojiOpenButtonImage.Visibility = Visibility.Collapsed;
+            EmojiOpenButtonFallback.Visibility = Visibility.Visible;
+            AppLog.Write(ex, "Emoji button image failed");
+        }
+
+        return Task.CompletedTask;
     }
 
     private async void StartCallButton_OnClick(object sender, RoutedEventArgs e)
@@ -1135,12 +1376,14 @@ public partial class MainWindow : Window
         _screenShareWebRtcSettingsMode = false;
         ScreenSharePickerOverlay.Visibility = Visibility.Collapsed;
         ScreenShareSourceList.SelectedItem = null;
+        SetScreenSharePickerStageSuppression(false);
         UpdateScreenSharePickerState();
     }
 
     private void ShowScreenSharePicker(bool webRtcSettingsOnly)
     {
         _screenShareWebRtcSettingsMode = webRtcSettingsOnly;
+        SetScreenSharePickerStageSuppression(!webRtcSettingsOnly);
         ScreenSharePickerOverlay.Width = webRtcSettingsOnly ? 390 : 860;
         ScreenSharePickerSubtitleText.Text = webRtcSettingsOnly
             ? "Choose quality, then pick a source in the Windows screen picker."
@@ -1195,8 +1438,23 @@ public partial class MainWindow : Window
         _screenShareWebRtcSettingsMode = false;
         ScreenShareSourceList.SelectedItem = null;
         ScreenSharePickerOverlay.Visibility = Visibility.Collapsed;
+        SetScreenSharePickerStageSuppression(false);
         StartScreenShare(source);
         UpdateScreenSharePickerState();
+    }
+
+    private void SetScreenSharePickerStageSuppression(bool suppress)
+    {
+        if (_screenSharePickerSuppressesStage == suppress)
+        {
+            return;
+        }
+
+        _screenSharePickerSuppressesStage = suppress;
+        SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+        UpdateScreenShareStageVisibility();
+        CallScreenShareStage.UpdateLayout();
+        ScreenShareWebView.UpdateLayout();
     }
 
     private void ScreenShareSourceTab_OnClick(object sender, RoutedEventArgs e)
@@ -1323,7 +1581,7 @@ public partial class MainWindow : Window
                 : $"Native capture: {selected.Title}";
         ScreenShareStreamAudioCheck.IsChecked = !_screenShareMuteAudio;
         ScreenShareQualityWarningText.Text = IsScreenShareWebRtcPreferred()
-            ? "Native capture uses WebRTC transport and hardware video when available; 1440p60 still depends on GPU, network, and NAT."
+            ? "1440p60 is available in WebRTC mode, but it needs a strong GPU and network. Voice stays on a separate audio path."
             : "Native capture avoids the browser sharing banner. 1440p is capped at 30 fps to keep voice stable.";
         ScreenShareQualityWarningText.Visibility = _screenShareResolution >= 1440 || _screenShareFrameRate >= 60
             ? Visibility.Visible
@@ -1375,24 +1633,81 @@ public partial class MainWindow : Window
         }
 
         e.Handled = true;
-        ToggleScreenShareFocusFromPreview();
+        var target = ReferenceEquals(sender, CallSelfScreenTile)
+            ? ScreenShareFocusTarget.Local
+            : ReferenceEquals(sender, CallPeerScreenTile)
+                ? ScreenShareFocusTarget.Peer
+                : ScreenShareFocusTarget.Auto;
+        FocusScreenShareFromPreview(target);
     }
 
-    private void ToggleScreenShareFocusFromPreview()
+    private void FocusScreenShareFromPreview(ScreenShareFocusTarget target)
     {
         if (!_isScreenSharing && !_peerScreenSharing)
         {
             return;
         }
 
+        SetScreenShareFocusTarget(target);
         if (!_isScreenShareFocusMode)
         {
             EnterScreenShareFocusMode();
+        }
+
+        SetScreenShareFullscreenMode(true);
+        UpdateScreenShareStageVisibility();
+    }
+
+    private static ScreenShareFocusTarget ParseScreenShareFocusTarget(string target)
+        => target.Equals("local", StringComparison.OrdinalIgnoreCase)
+            ? ScreenShareFocusTarget.Local
+            : target.Equals("remote", StringComparison.OrdinalIgnoreCase) ||
+              target.Equals("peer", StringComparison.OrdinalIgnoreCase)
+                ? ScreenShareFocusTarget.Peer
+                : ScreenShareFocusTarget.Auto;
+
+    private ScreenShareFocusTarget ResolveScreenShareFocusTarget(ScreenShareFocusTarget target)
+        => target switch
+        {
+            ScreenShareFocusTarget.Local when _isScreenSharing => ScreenShareFocusTarget.Local,
+            ScreenShareFocusTarget.Peer when _peerScreenSharing => ScreenShareFocusTarget.Peer,
+            _ => ScreenShareFocusTarget.Auto
+        };
+
+    private void SetScreenShareFocusTarget(ScreenShareFocusTarget target)
+    {
+        var resolvedTarget = ResolveScreenShareFocusTarget(target);
+        if (_screenShareFocusTarget == resolvedTarget)
+        {
+            PostScreenShareFocusTarget();
             return;
         }
 
-        SetScreenShareFullscreenMode(!_isScreenShareFullscreenMode);
-        UpdateScreenShareStageVisibility();
+        _screenShareFocusTarget = resolvedTarget;
+        PostScreenShareFocusTarget();
+    }
+
+    private void NormalizeScreenShareFocusTarget()
+    {
+        var resolvedTarget = ResolveScreenShareFocusTarget(_screenShareFocusTarget);
+        if (_screenShareFocusTarget == resolvedTarget)
+        {
+            return;
+        }
+
+        _screenShareFocusTarget = resolvedTarget;
+        PostScreenShareFocusTarget();
+    }
+
+    private void PostScreenShareFocusTarget()
+    {
+        var target = _screenShareFocusTarget switch
+        {
+            ScreenShareFocusTarget.Local => "local",
+            ScreenShareFocusTarget.Peer => "remote",
+            _ => "auto"
+        };
+        PostScreenShareWebRtcMessage(new { type = "focus-target", target });
     }
 
     private void CallScreenShareFocusExitButton_OnClick(object sender, RoutedEventArgs e)
@@ -1591,6 +1906,7 @@ public partial class MainWindow : Window
         ProfileFlyout.Visibility = Visibility.Collapsed;
         AddFriendPanel.Visibility = Visibility.Collapsed;
         ScreenSharePickerOverlay.Visibility = Visibility.Collapsed;
+        SetScreenSharePickerStageSuppression(false);
         _draftGroupContact = null;
         _selectedGroupMemberIds.Clear();
         GroupSearchInput.Clear();
@@ -2165,6 +2481,8 @@ public partial class MainWindow : Window
         };
 
         await UserProfileStore.SaveAsync(_profile);
+        _settings.TenorApiKey = SettingsTenorApiKeyInput.Text.Trim();
+        await AppSettingsStore.SaveAsync(_settings);
         RefreshProfileUi();
         await BroadcastProfileUpdateAsync();
         return true;
@@ -2440,6 +2758,15 @@ public partial class MainWindow : Window
             {
                 EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
             });
+
+        var scale = new ScaleTransform(0.98, 0.98);
+        menu.RenderTransform = scale;
+        var animation = new DoubleAnimation(0.98, 1, TimeSpan.FromMilliseconds(120))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, animation);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
     }
 
     private async void RenameContactMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -2449,7 +2776,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new RenameContactWindow(contact.DisplayName)
+        var dialog = new RenameContactWindow(contact)
         {
             Owner = this
         };
@@ -2478,7 +2805,7 @@ public partial class MainWindow : Window
         }
 
         var result = MessageBox.Show(
-            $"Delete {contact.DisplayName} from contacts?",
+            $"Remove {contact.DisplayName} from friends?",
             "FluxChat",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
@@ -2488,9 +2815,35 @@ public partial class MainWindow : Window
             return;
         }
 
-        _contacts.Remove(contact);
-        await _history.DeleteContactAsync(contact.UserId);
+        await RemoveContactFromFriendsAsync(contact, notifyPeer: true);
+    }
 
+    private async Task RemoveContactFromFriendsAsync(ContactViewModel contact, bool notifyPeer)
+    {
+        if (notifyPeer)
+        {
+            try
+            {
+                var packet = CreateProfilePacket(contact.UserId, "Removed from friends", FriendRemoveIntent);
+                await SendOverRelayAsync(packet, contact);
+            }
+            catch (Exception ex) when (!_stop.IsCancellationRequested)
+            {
+                AppLog.Write(ex, $"Friend remove notification failed: to={contact.UserId}");
+            }
+        }
+
+        RemoveContactFromUi(contact);
+        await _history.DeleteContactAsync(contact.UserId);
+        DeleteAvatarFileIfOwned(contact.AvatarPath);
+        NetworkStatusText.Text = notifyPeer
+            ? $"Removed {contact.DisplayName} from friends"
+            : $"{contact.DisplayName} removed you from friends";
+    }
+
+    private void RemoveContactFromUi(ContactViewModel contact)
+    {
+        _contacts.Remove(contact);
         if (_contacts.Count == 0)
         {
             EmptyContactsHint.Visibility = Visibility.Visible;
@@ -2499,15 +2852,25 @@ public partial class MainWindow : Window
         if (_selectedContact?.UserId == contact.UserId)
         {
             _selectedContact = null;
+            ContactsList.SelectedItem = null;
             _messages.Clear();
             ChatTitle.Text = "Choose a contact";
-            ChatSubtitle.Text = "Double-click a contact to open conversation";
+            ChatSubtitle.Text = "Click a contact to open conversation";
             ComposerPanel.Visibility = Visibility.Collapsed;
             StartCallButton.Visibility = Visibility.Collapsed;
             EmptyChatHint.Visibility = Visibility.Visible;
         }
+    }
 
-        NetworkStatusText.Text = $"Deleted {contact.DisplayName}";
+    private void HandleIncomingFriendRemove(ChatPacket packet)
+    {
+        var contact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId);
+        if (contact is null)
+        {
+            return;
+        }
+
+        _ = RemoveContactFromFriendsAsync(contact, notifyPeer: false);
     }
 
     private async void MessageInput_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -2519,6 +2882,1211 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MessageInput_OnTextChanged(object sender, TextChangedEventArgs e)
+        => RefreshMessageInputEmojiPreview();
+
+    private void MessageInput_OnPreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        var normalized = NormalizeEmojiPresentation(e.Text);
+        if (string.Equals(normalized, e.Text, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        InsertTextIntoMessageInput(normalized);
+    }
+
+    private void EmojiButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        GifPanel.Visibility = Visibility.Collapsed;
+        ForwardPanel.Visibility = Visibility.Collapsed;
+        EmojiPanel.Visibility = EmojiPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (EmojiPanel.Visibility == Visibility.Visible)
+        {
+            _ = InitializeEmojiWebViewAsync();
+        }
+    }
+
+    private void EmojiPickerButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var emoji = sender switch
+        {
+            System.Windows.Controls.Button { Tag: EmojiItemViewModel item } => item.Symbol,
+            System.Windows.Controls.Button { Content: string content } => content,
+            _ => ""
+        };
+
+        if (string.IsNullOrWhiteSpace(emoji))
+        {
+            return;
+        }
+
+        if (_reactionTarget is not null)
+        {
+            _ = AddReactionAsync(_reactionTarget, emoji);
+            _reactionTarget = null;
+            EmojiPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        InsertTextIntoMessageInput(emoji);
+    }
+
+    private async Task InitializeEmojiWebViewAsync()
+    {
+        if (_emojiWebViewReady)
+        {
+            return;
+        }
+
+        await EmojiWebView.EnsureCoreWebView2Async();
+        EmojiWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+        EmojiWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+        EmojiWebView.CoreWebView2.WebMessageReceived += EmojiWebView_OnWebMessageReceived;
+        EmojiWebView.NavigateToString(BuildEmojiPickerHtml());
+        _emojiWebViewReady = true;
+    }
+
+    private void EmojiWebView_OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+            if (!doc.RootElement.TryGetProperty("type", out var typeElement) ||
+                typeElement.GetString() != "emoji")
+            {
+                return;
+            }
+
+            var emoji = doc.RootElement.TryGetProperty("value", out var valueElement)
+                ? valueElement.GetString() ?? ""
+                : "";
+            InsertEmoji(emoji);
+        }
+        catch (JsonException ex)
+        {
+            AppLog.Write(ex, "Emoji picker message parse failed");
+        }
+    }
+
+    private void InsertEmoji(string emoji)
+    {
+        if (string.IsNullOrWhiteSpace(emoji))
+        {
+            return;
+        }
+
+        if (_reactionTarget is not null)
+        {
+            _ = AddReactionAsync(_reactionTarget, emoji);
+            _reactionTarget = null;
+            EmojiPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        InsertTextIntoMessageInput(emoji);
+    }
+
+    private void InsertTextIntoMessageInput(string text)
+    {
+        var normalized = NormalizeEmojiPresentation(text);
+        MessageInput.Focus();
+        MessageInput.SelectedText = normalized;
+        MessageInput.CaretIndex += normalized.Length;
+    }
+
+    private void RefreshMessageInputEmojiPreview()
+    {
+        _messageInputTextSegments.Clear();
+        foreach (var segment in MessageTextSegment.Build(MessageInput.Text, 14))
+        {
+            _messageInputTextSegments.Add(segment);
+        }
+    }
+
+    private static string NormalizeEmojiPresentation(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        StringBuilder? builder = null;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var current = text[i];
+            var next = i + 1 < text.Length ? text[i + 1] : '\0';
+            var needsEmojiPresentation = IsEmojiPresentationCandidate(current) &&
+                                         next != '\ufe0e' &&
+                                         next != '\ufe0f';
+            if (!needsEmojiPresentation)
+            {
+                builder?.Append(current);
+                continue;
+            }
+
+            builder ??= new StringBuilder(text.Length + 2).Append(text, 0, i);
+            builder.Append(current);
+            builder.Append('\ufe0f');
+        }
+
+        return builder?.ToString() ?? text;
+    }
+
+    private static bool IsEmojiPresentationCandidate(char value)
+        => value is '\u203c' or '\u2049' or '\u2122' or '\u2139' or '\u3030' or '\u303d' or '\u3297' or '\u3299' ||
+           value is >= '\u2600' and <= '\u27bf';
+
+    private void GifButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        EmojiPanel.Visibility = Visibility.Collapsed;
+        ForwardPanel.Visibility = Visibility.Collapsed;
+        GifPanel.Visibility = GifPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private async void GifSearchButton_OnClick(object sender, RoutedEventArgs e)
+        => await SearchGifsAsync(GifSearchInput.Text.Trim());
+
+    private async void GifSearchInput_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await SearchGifsAsync(GifSearchInput.Text.Trim());
+    }
+
+    private static string BuildEmojiPickerHtml()
+    {
+        var emojisJson = JsonSerializer.Serialize(AllEmojis());
+        return $$"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #202225; color: #f2f3f5; font-family: "Segoe UI", sans-serif; }
+    body { padding: 10px; }
+    input { width: 100%; height: 34px; border: 1px solid #45474f; border-radius: 6px; background: #303239; color: #f2f3f5; padding: 0 10px; outline: none; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Segoe UI", sans-serif; font-size: 18px; }
+    input:focus { border-color: #5865f2; }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; }
+    .tab { border: 0; border-radius: 6px; background: #303239; color: #d6d9df; padding: 7px 10px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+    .tab.active, .tab:hover { background: #5865f2; color: #fff; }
+    #grid { height: 242px; overflow-y: auto; display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; padding-right: 2px; }
+    .emoji { height: 38px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; font-size: 23px; line-height: 38px; }
+    .emoji:hover { background: #343741; }
+    .empty { grid-column: 1 / -1; color: #b5bac1; font-size: 12px; padding: 20px 6px; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: #45474f; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <input id="search" placeholder="Search emoji" autocomplete="off">
+  <div id="tabs" class="tabs"></div>
+  <div id="grid"></div>
+  <script>
+    const emojis = {{emojisJson}};
+    const categories = ['Recent', 'Smileys', 'People', 'Nature', 'Food', 'Activity', 'Objects', 'Symbols'];
+    let category = 'Recent';
+    const tabs = document.getElementById('tabs');
+    const grid = document.getElementById('grid');
+    const search = document.getElementById('search');
+    function postEmoji(value) {
+      if (window.chrome && chrome.webview) chrome.webview.postMessage({ type: 'emoji', value });
+    }
+    function renderTabs() {
+      tabs.innerHTML = '';
+      for (const name of categories) {
+        const button = document.createElement('button');
+        button.className = 'tab' + (name === category ? ' active' : '');
+        button.textContent = name;
+        button.onclick = () => { category = name; search.value = ''; render(); };
+        tabs.appendChild(button);
+      }
+    }
+    function render() {
+      renderTabs();
+      const query = search.value.trim().toLowerCase();
+      const filtered = emojis.filter(e => query ? e.SearchText.toLowerCase().includes(query) : (category === 'Recent' ? emojis.indexOf(e) < 48 : e.Category === category)).slice(0, 120);
+      grid.innerHTML = '';
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No emoji found';
+        grid.appendChild(empty);
+        return;
+      }
+      for (const emoji of filtered) {
+        const button = document.createElement('button');
+        button.className = 'emoji';
+        button.textContent = emoji.Symbol;
+        button.title = emoji.Name;
+        button.onclick = () => postEmoji(emoji.Symbol);
+        grid.appendChild(button);
+      }
+    }
+    function withEmojiPresentation(value) {
+      return value.replace(/([\u203C-\u3299])(?!(\uFE0E|\uFE0F))/gu, '$1\uFE0F');
+    }
+    search.addEventListener('input', () => {
+      const normalized = withEmojiPresentation(search.value);
+      if (normalized !== search.value) {
+        const caret = search.selectionStart || normalized.length;
+        search.value = normalized;
+        search.setSelectionRange(Math.min(caret + 1, normalized.length), Math.min(caret + 1, normalized.length));
+      }
+      render();
+    });
+    render();
+  </script>
+</body>
+</html>
+""";
+    }
+
+    private static Uri? TryBuildTwemojiPngUrl(string emoji)
+    {
+        var codepoints = emoji.EnumerateRunes()
+            .Where(rune => rune.Value != 0xFE0F)
+            .Select(rune => rune.Value.ToString("x", CultureInfo.InvariantCulture))
+            .ToArray();
+        if (codepoints.Length == 0)
+        {
+            return null;
+        }
+
+        return new Uri($"https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{string.Join("-", codepoints)}.png");
+    }
+
+    private static IReadOnlyList<EmojiItemViewModel> AllEmojis()
+        =>
+        [
+            Emoji("👍", "thumbs up like approve", "Recent"),
+            Emoji("❤️", "heart love", "Recent"),
+            Emoji("😂", "joy laugh tears", "Recent"),
+            Emoji("🔥", "fire hot", "Recent"),
+            Emoji("🎉", "party celebrate", "Recent"),
+            Emoji("😎", "cool sunglasses", "Recent"),
+            Emoji("🙏", "pray please thanks", "Recent"),
+            Emoji("✅", "check done", "Recent"),
+            Emoji("👀", "eyes look", "Recent"),
+            Emoji("💀", "skull dead laugh", "Recent"),
+            Emoji("😀", "grinning smile", "Smileys"),
+            Emoji("😃", "smile happy", "Smileys"),
+            Emoji("😄", "smile happy eyes", "Smileys"),
+            Emoji("😁", "beaming grin", "Smileys"),
+            Emoji("😆", "laugh squint", "Smileys"),
+            Emoji("🤣", "rolling laugh", "Smileys"),
+            Emoji("🙂", "slight smile", "Smileys"),
+            Emoji("😉", "wink", "Smileys"),
+            Emoji("😊", "blush smile", "Smileys"),
+            Emoji("😍", "heart eyes love", "Smileys"),
+            Emoji("😘", "kiss", "Smileys"),
+            Emoji("😋", "yum tasty", "Smileys"),
+            Emoji("🤔", "thinking", "Smileys"),
+            Emoji("🤨", "raised eyebrow", "Smileys"),
+            Emoji("😐", "neutral", "Smileys"),
+            Emoji("😴", "sleep", "Smileys"),
+            Emoji("😢", "cry sad", "Smileys"),
+            Emoji("😭", "sob crying", "Smileys"),
+            Emoji("😡", "angry mad", "Smileys"),
+            Emoji("😳", "flushed", "Smileys"),
+            Emoji("🥳", "party face", "Smileys"),
+            Emoji("🤯", "mind blown", "Smileys"),
+            Emoji("🤝", "handshake", "People"),
+            Emoji("👏", "clap applause", "People"),
+            Emoji("🙌", "raised hands", "People"),
+            Emoji("💪", "strong flex", "People"),
+            Emoji("🫡", "salute", "People"),
+            Emoji("🤌", "pinched fingers", "People"),
+            Emoji("👌", "ok hand", "People"),
+            Emoji("✌️", "peace", "People"),
+            Emoji("👋", "wave hello", "People"),
+            Emoji("🤦", "facepalm", "People"),
+            Emoji("🐱", "cat", "Nature"),
+            Emoji("🐶", "dog", "Nature"),
+            Emoji("🌙", "moon night", "Nature"),
+            Emoji("⭐", "star", "Nature"),
+            Emoji("⚡", "lightning", "Nature"),
+            Emoji("❄️", "snow", "Nature"),
+            Emoji("🌈", "rainbow", "Nature"),
+            Emoji("🌊", "wave water", "Nature"),
+            Emoji("🍕", "pizza", "Food"),
+            Emoji("🍔", "burger", "Food"),
+            Emoji("🍟", "fries", "Food"),
+            Emoji("🍣", "sushi", "Food"),
+            Emoji("🍩", "donut", "Food"),
+            Emoji("🍪", "cookie", "Food"),
+            Emoji("☕", "coffee", "Food"),
+            Emoji("🥤", "drink", "Food"),
+            Emoji("🎮", "game controller", "Activity"),
+            Emoji("🎧", "headphones music", "Activity"),
+            Emoji("🎬", "movie", "Activity"),
+            Emoji("🏆", "trophy win", "Activity"),
+            Emoji("⚽", "soccer ball", "Activity"),
+            Emoji("🏀", "basketball", "Activity"),
+            Emoji("🚗", "car", "Objects"),
+            Emoji("💻", "laptop computer", "Objects"),
+            Emoji("📱", "phone", "Objects"),
+            Emoji("📷", "camera", "Objects"),
+            Emoji("💡", "idea light", "Objects"),
+            Emoji("🎁", "gift", "Objects"),
+            Emoji("🔒", "lock", "Objects"),
+            Emoji("📌", "pin", "Objects"),
+            Emoji("💯", "hundred", "Symbols"),
+            Emoji("✨", "sparkles", "Symbols"),
+            Emoji("❗", "exclamation", "Symbols"),
+            Emoji("❓", "question", "Symbols"),
+            Emoji("🚫", "blocked no", "Symbols"),
+            Emoji("⬆️", "up arrow", "Symbols"),
+            Emoji("⬇️", "down arrow", "Symbols"),
+            Emoji("🔁", "repeat", "Symbols")
+        ];
+
+    private static EmojiItemViewModel Emoji(string symbol, string name, string category)
+        => new() { Symbol = symbol, Name = name, Category = category };
+
+    private async void GifItemButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: TenorGifViewModel gif })
+        {
+            return;
+        }
+
+        GifPanel.Visibility = Visibility.Collapsed;
+        await SendRichMessageAsync(MessageKinds.Gif, gif.Title, attachmentUrl: gif.GifUrl, replyTarget: _replyTarget);
+    }
+
+    private void GifFavoriteButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: TenorGifViewModel gif })
+        {
+            return;
+        }
+
+        ToggleFavoriteGif(gif);
+        e.Handled = true;
+    }
+
+    private void AttachImageButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.gif|All files|*.*"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        StageImageDraft(dialog.FileName);
+    }
+
+    private void ClearImageDraftButton_OnClick(object sender, RoutedEventArgs e)
+        => ClearImageDraft();
+
+    private void ComposerPanel_OnPreviewDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Effects = TryGetImagePathFromDrop(e.Data, out _)
+            ? System.Windows.DragDropEffects.Copy
+            : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void ComposerPanel_OnDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (TryGetImagePathFromDrop(e.Data, out var path))
+        {
+            StageImageDraft(path);
+            e.Handled = true;
+        }
+    }
+
+    private async void MessageInput_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Handled || e.Key != Key.V || Keyboard.Modifiers != ModifierKeys.Control)
+        {
+            return;
+        }
+
+        if (await TryStageImageFromClipboardAsync())
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void StageImageDraft(string path)
+    {
+        if (!IsSupportedImagePath(path) || !File.Exists(path))
+        {
+            NetworkStatusText.Text = "Unsupported image file.";
+            return;
+        }
+
+        _draftImagePath = path;
+        var preview = AvatarImageLoader.Load(path);
+        if (preview is null)
+        {
+            NetworkStatusText.Text = "Could not load image preview.";
+            return;
+        }
+
+        ImageDraftPreview.Source = preview;
+        ImageDraftBar.Visibility = Visibility.Visible;
+        MessageInput.Focus();
+        NetworkStatusText.Text = "Image added. Type a caption and press Send.";
+    }
+
+    private void ClearImageDraft()
+    {
+        _draftImagePath = "";
+        ImageDraftPreview.Source = null;
+        ImageDraftBar.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task<bool> TryStageImageFromClipboardAsync()
+    {
+        if (_selectedContact is null || ComposerPanel.Visibility != Visibility.Visible)
+        {
+            return false;
+        }
+
+        try
+        {
+            var dataObject = Clipboard.GetDataObject();
+            if (Clipboard.ContainsImage() && Clipboard.GetImage() is { } image)
+            {
+                return await StageClipboardBitmapSourceAsync(image);
+            }
+
+            if (dataObject is not null)
+            {
+                if (await TryStageClipboardStreamImageAsync(dataObject, "PNG", ".png") ||
+                    await TryStageClipboardStreamImageAsync(dataObject, "Portable Network Graphics", ".png") ||
+                    await TryStageClipboardBitmapDataAsync(dataObject))
+                {
+                    return true;
+                }
+            }
+
+            if (Clipboard.ContainsFileDropList())
+            {
+                foreach (var item in Clipboard.GetFileDropList())
+                {
+                    var path = item?.ToString() ?? "";
+                    if (!IsSupportedImagePath(path) || !File.Exists(path))
+                    {
+                        continue;
+                    }
+
+                    StageImageDraft(path);
+                    return true;
+                }
+            }
+
+            if (dataObject is not null)
+            {
+                AppLog.Write($"Clipboard image paste skipped: formats={string.Join(", ", dataObject.GetFormats(autoConvert: true))}");
+            }
+        }
+        catch (Exception ex) when (ex is ExternalException or IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or ArgumentException)
+        {
+            AppLog.Write(ex, "Stage image from clipboard failed");
+            NetworkStatusText.Text = "Could not read image from clipboard.";
+        }
+
+        return false;
+    }
+
+    private async Task<bool> StageClipboardBitmapSourceAsync(BitmapSource image)
+    {
+        AppPaths.EnsureAttachmentsDirectoryCreated();
+        var path = Path.Combine(AppPaths.AttachmentsDirectory, $"{Guid.NewGuid():N}.png");
+        await using var stream = File.Create(path);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(image));
+        encoder.Save(stream);
+        StageImageDraft(path);
+        return true;
+    }
+
+    private async Task<bool> TryStageClipboardStreamImageAsync(System.Windows.IDataObject dataObject, string format, string extension)
+    {
+        if (!dataObject.GetDataPresent(format, autoConvert: true))
+        {
+            return false;
+        }
+
+        var data = dataObject.GetData(format, autoConvert: true);
+        if (data is Stream stream)
+        {
+            AppPaths.EnsureAttachmentsDirectoryCreated();
+            var path = Path.Combine(AppPaths.AttachmentsDirectory, $"{Guid.NewGuid():N}{extension}");
+            await using var output = File.Create(path);
+            if (stream.CanSeek)
+            {
+                stream.Position = 0;
+            }
+
+            await stream.CopyToAsync(output);
+            StageImageDraft(path);
+            return true;
+        }
+
+        if (data is byte[] bytes)
+        {
+            AppPaths.EnsureAttachmentsDirectoryCreated();
+            var path = Path.Combine(AppPaths.AttachmentsDirectory, $"{Guid.NewGuid():N}{extension}");
+            await File.WriteAllBytesAsync(path, bytes);
+            StageImageDraft(path);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<bool> TryStageClipboardBitmapDataAsync(System.Windows.IDataObject dataObject)
+    {
+        if (!dataObject.GetDataPresent(System.Windows.DataFormats.Bitmap, autoConvert: true))
+        {
+            return false;
+        }
+
+        var data = dataObject.GetData(System.Windows.DataFormats.Bitmap, autoConvert: true);
+        if (data is BitmapSource bitmapSource)
+        {
+            return await StageClipboardBitmapSourceAsync(bitmapSource);
+        }
+
+        if (data is Bitmap bitmap)
+        {
+            using var memory = new MemoryStream();
+            bitmap.Save(memory, ImageFormat.Png);
+            memory.Position = 0;
+            AppPaths.EnsureAttachmentsDirectoryCreated();
+            var path = Path.Combine(AppPaths.AttachmentsDirectory, $"{Guid.NewGuid():N}.png");
+            await using var output = File.Create(path);
+            await memory.CopyToAsync(output);
+            StageImageDraft(path);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetImagePathFromDrop(System.Windows.IDataObject data, out string path)
+    {
+        path = "";
+        if (!data.GetDataPresent(System.Windows.DataFormats.FileDrop) ||
+            data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files)
+        {
+            return false;
+        }
+
+        path = files.FirstOrDefault(file => File.Exists(file) && IsSupportedImagePath(file)) ?? "";
+        return !string.IsNullOrWhiteSpace(path);
+    }
+
+    private static bool IsSupportedImagePath(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".gif", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ClearReplyEditButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ClearReplyTarget();
+        ClearEditingMessage();
+    }
+
+    private void MessageReplyMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is { } message)
+        {
+            SetReplyTarget(message);
+        }
+    }
+
+    private void MessageForwardMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is not { } message)
+        {
+            return;
+        }
+
+        _forwardTarget = message;
+        EmojiPanel.Visibility = Visibility.Collapsed;
+        GifPanel.Visibility = Visibility.Collapsed;
+        ForwardPanel.Visibility = Visibility.Visible;
+    }
+
+    private void MessageEditMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is not { CanEdit: true } message)
+        {
+            return;
+        }
+
+        _editingMessage = message;
+        MessageInput.Text = message.Text;
+        ReplyEditTitleText.Text = "Editing message";
+        ReplyEditPreviewText.Text = message.Text;
+        ReplyEditBar.Visibility = Visibility.Visible;
+        MessageInput.Focus();
+        MessageInput.CaretIndex = MessageInput.Text.Length;
+    }
+
+    private void MessageAddReactionMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is not { } message)
+        {
+            return;
+        }
+
+        _reactionTarget = message;
+        GifPanel.Visibility = Visibility.Collapsed;
+        ForwardPanel.Visibility = Visibility.Collapsed;
+        EmojiPanel.Visibility = Visibility.Visible;
+    }
+
+    private async void ReactionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: ReactionViewModel { IsMine: true } reaction } ||
+            _profile is null ||
+            _selectedContact is null)
+        {
+            return;
+        }
+
+        var message = FindMessage(reaction.MessageId);
+        if (message is null)
+        {
+            return;
+        }
+
+        await RemoveReactionAsync(message);
+        e.Handled = true;
+    }
+
+    private async void MessageCopyTextMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is { } message &&
+            await TrySetClipboardTextAsync(message.Text))
+        {
+            NetworkStatusText.Text = "Message text copied";
+        }
+    }
+
+    private async void MessageDeleteMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is not { CanDelete: true } message ||
+            _profile is null ||
+            _selectedContact is null)
+        {
+            return;
+        }
+
+        await DeleteOwnMessageAsync(message);
+    }
+
+    private void MessageCopyImageMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is not { IsImageMessage: true } message ||
+            string.IsNullOrWhiteSpace(message.AttachmentPath) ||
+            !File.Exists(message.AttachmentPath))
+        {
+            return;
+        }
+
+        if (AvatarImageLoader.Load(message.AttachmentPath) is BitmapSource image)
+        {
+            Clipboard.SetImage(image);
+            NetworkStatusText.Text = "Image copied";
+        }
+        else
+        {
+            NetworkStatusText.Text = "Could not copy image.";
+        }
+    }
+
+    private void MessageSaveImageMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (GetMessageFromActionSender(sender) is not { IsImageMessage: true } message ||
+            string.IsNullOrWhiteSpace(message.AttachmentPath) ||
+            !File.Exists(message.AttachmentPath))
+        {
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            FileName = Path.GetFileName(message.AttachmentPath),
+            Filter = "Image|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|All files|*.*"
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            File.Copy(message.AttachmentPath, dialog.FileName, overwrite: true);
+            NetworkStatusText.Text = "Image saved";
+        }
+    }
+
+    private async void ForwardContactsList_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_forwardTarget is null ||
+            ForwardContactsList.SelectedItem is not ContactViewModel contact ||
+            contact.IsGroup ||
+            _profile is null)
+        {
+            return;
+        }
+
+        await SendForwardedMessageAsync(contact, _forwardTarget);
+        _forwardTarget = null;
+        ForwardPanel.Visibility = Visibility.Collapsed;
+        NetworkStatusText.Text = $"Forwarded to {contact.DisplayName}";
+    }
+
+    private async Task SearchGifsAsync(string query)
+    {
+        _settings.TenorApiKey = SettingsTenorApiKeyInput.Text.Trim();
+        await AppSettingsStore.SaveAsync(_settings);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            GifStatusText.Text = "Type something to search GIFs.";
+            return;
+        }
+
+        try
+        {
+            GifStatusText.Text = "Searching...";
+            _gifResults.Clear();
+
+            SearchBuiltInGifs(query);
+
+            try
+            {
+                await SearchGiphyGifsAsync(query);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                AppLog.Write(ex, "Giphy GIF search failed, keeping built-in catalog");
+            }
+
+            if (!string.IsNullOrWhiteSpace(_settings.TenorApiKey))
+            {
+                try
+                {
+                    await SearchTenorGifsAsync(query, _settings.TenorApiKey.Trim());
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+                {
+                    AppLog.Write(ex, "Tenor GIF search failed, falling back to Wikimedia");
+                }
+            }
+
+            GifStatusText.Text = _gifResults.Count == 0
+                ? "No GIFs found."
+                : $"{_gifResults.Count} GIFs found.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            AppLog.Write(ex, "GIF search failed");
+            GifStatusText.Text = $"GIF search failed: {ex.Message}";
+        }
+    }
+
+    private async Task SearchGiphyGifsAsync(string query)
+    {
+        const string publicBetaKey = "dc6zaTOxFJmzC";
+        var url = $"https://api.giphy.com/v1/gifs/search?api_key={publicBetaKey}&q={Uri.EscapeDataString(query)}&limit=24&rating=g";
+        using var response = await _httpClient.GetAsync(url, _stop.Token);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(_stop.Token);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: _stop.Token);
+
+        if (!doc.RootElement.TryGetProperty("data", out var data) ||
+            data.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var item in data.EnumerateArray())
+        {
+            var id = item.TryGetProperty("id", out var idElement)
+                ? idElement.GetString() ?? Guid.NewGuid().ToString("N")
+                : Guid.NewGuid().ToString("N");
+            var title = item.TryGetProperty("title", out var titleElement)
+                ? titleElement.GetString() ?? "GIF"
+                : "GIF";
+
+            if (!item.TryGetProperty("images", out var images))
+            {
+                continue;
+            }
+
+            if (!TryReadGiphyImageUrl(images, "original", out var gifUrl) &&
+                !TryReadGiphyImageUrl(images, "fixed_height", out gifUrl))
+            {
+                continue;
+            }
+
+            if (!TryReadGiphyImageUrl(images, "fixed_width_small_still", out var previewUrl) &&
+                !TryReadGiphyImageUrl(images, "fixed_width_small", out previewUrl))
+            {
+                previewUrl = gifUrl;
+            }
+
+            AddGifResult($"giphy:{id}", title, gifUrl, previewUrl);
+        }
+    }
+
+    private static bool TryReadGiphyImageUrl(JsonElement images, string format, out string url)
+    {
+        url = "";
+        if (!images.TryGetProperty(format, out var image) ||
+            !image.TryGetProperty("url", out var urlElement))
+        {
+            return false;
+        }
+
+        url = urlElement.GetString() ?? "";
+        return !string.IsNullOrWhiteSpace(url);
+    }
+
+    private async Task SearchTenorGifsAsync(string query, string apiKey)
+    {
+        var url = $"https://tenor.googleapis.com/v2/search?q={Uri.EscapeDataString(query)}&key={Uri.EscapeDataString(apiKey)}&client_key=fluxchat&limit=24&media_filter=gif,tinygif";
+        using var response = await _httpClient.GetAsync(url, _stop.Token);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(_stop.Token);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: _stop.Token);
+
+        if (!doc.RootElement.TryGetProperty("results", out var results))
+        {
+            return;
+        }
+
+        foreach (var result in results.EnumerateArray())
+        {
+            var id = result.TryGetProperty("id", out var idElement) ? idElement.GetString() ?? Guid.NewGuid().ToString("N") : Guid.NewGuid().ToString("N");
+            var title = result.TryGetProperty("content_description", out var titleElement) ? titleElement.GetString() ?? "GIF" : "GIF";
+            if (!TryReadTenorMediaUrl(result, "gif", out var gifUrl))
+            {
+                continue;
+            }
+
+            if (!TryReadTenorMediaUrl(result, "tinygif", out var previewUrl))
+            {
+                previewUrl = gifUrl;
+            }
+
+            AddGifResult(id, title, gifUrl, previewUrl);
+        }
+    }
+
+    private async Task SearchWikimediaGifsAsync(string query)
+    {
+        var search = $"{query} gif";
+        var url = "https://commons.wikimedia.org/w/api.php" +
+                  "?action=query&generator=search&gsrnamespace=6&gsrlimit=36" +
+                  $"&gsrsearch={Uri.EscapeDataString(search)}" +
+                  "&prop=imageinfo&iiprop=url|mime&format=json&origin=*";
+        using var response = await _httpClient.GetAsync(url, _stop.Token);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(_stop.Token);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: _stop.Token);
+
+        if (!doc.RootElement.TryGetProperty("query", out var queryElement) ||
+            !queryElement.TryGetProperty("pages", out var pages))
+        {
+            return;
+        }
+
+        foreach (var page in pages.EnumerateObject())
+        {
+            if (!page.Value.TryGetProperty("imageinfo", out var imageInfo) ||
+                imageInfo.ValueKind != JsonValueKind.Array ||
+                imageInfo.GetArrayLength() == 0)
+            {
+                continue;
+            }
+
+            var info = imageInfo[0];
+            var mime = info.TryGetProperty("mime", out var mimeElement) ? mimeElement.GetString() ?? "" : "";
+            var gifUrl = info.TryGetProperty("url", out var urlElement) ? urlElement.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(gifUrl) ||
+                (!mime.Equals("image/gif", StringComparison.OrdinalIgnoreCase) &&
+                 !gifUrl.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var title = page.Value.TryGetProperty("title", out var titleElement)
+                ? titleElement.GetString() ?? "GIF"
+                : "GIF";
+            AddGifResult($"commons:{page.Name}", title.Replace("File:", "", StringComparison.OrdinalIgnoreCase), gifUrl, gifUrl);
+            if (_gifResults.Count >= 24)
+            {
+                break;
+            }
+        }
+    }
+
+    private void SearchBuiltInGifs(string query)
+    {
+        var words = query.Split([' ', ',', '.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var matches = BuiltInGifs
+            .Where(gif => words.Length == 0 || words.Any(word => gif.SearchText.Contains(word, StringComparison.OrdinalIgnoreCase)))
+            .Take(24)
+            .ToArray();
+        if (matches.Length == 0)
+        {
+            matches = BuiltInGifs.Take(24).ToArray();
+        }
+
+        foreach (var gif in matches)
+        {
+            AddGifResult($"builtin:{gif.Id}", gif.Title, gif.Url, gif.Url);
+        }
+    }
+
+    private void AddGifResult(string id, string title, string gifUrl, string previewUrl)
+    {
+        if (_gifResults.Any(x => x.GifUrl.Equals(gifUrl, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _gifResults.Add(new TenorGifViewModel
+        {
+            Id = id,
+            Title = title,
+            GifUrl = gifUrl,
+            PreviewUrl = previewUrl,
+            IsFavorite = _favoriteGifs.Any(x => x.Id == id || x.GifUrl.Equals(gifUrl, StringComparison.OrdinalIgnoreCase))
+        });
+    }
+
+    private sealed record BuiltInGifItem(string Id, string Title, string Url, string SearchText);
+
+    private static readonly BuiltInGifItem[] BuiltInGifs =
+    [
+        new("cat-typing", "Typing cat", "https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif", "cat typing work keyboard funny a"),
+        new("excited", "Excited", "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif", "excited happy yes wow reaction a"),
+        new("thumbs-up", "Thumbs up", "https://media.giphy.com/media/111ebonMs90YLu/giphy.gif", "yes ok okay thumbs up approve good like"),
+        new("wow", "Wow", "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif", "wow surprised shock omg reaction"),
+        new("hello", "Hello", "https://media.giphy.com/media/ASd0Ukj0y3qMM/giphy.gif", "hello hi wave привет"),
+        new("dance", "Dance", "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif", "dance party happy fun"),
+        new("love", "Love", "https://media.giphy.com/media/MDJ9IbxxvDUQM/giphy.gif", "love heart hug cat мило"),
+        new("fire", "Fire", "https://media.giphy.com/media/yr7n0u3qzO9nG/giphy.gif", "fire hot cool круто"),
+        new("laugh", "Laugh", "https://media.giphy.com/media/10JhviFuU2gWD6/giphy.gif", "laugh lol funny haha ахаха"),
+        new("facepalm", "Facepalm", "https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif", "facepalm bruh fail no"),
+        new("clap", "Clap", "https://media.giphy.com/media/nbvFVPiEiJH6JOGIok/giphy.gif", "clap applause bravo good"),
+        new("thinking", "Thinking", "https://media.giphy.com/media/3o7TKTDn976rzVgky4/giphy.gif", "thinking hmm think question"),
+        new("cry", "Cry", "https://media.giphy.com/media/OPU6wzx8JrHna/giphy.gif", "cry sad tears"),
+        new("no", "No", "https://media.giphy.com/media/3o7TKwmnDgQb5jemjK/giphy.gif", "no nope deny нет"),
+        new("party", "Party", "https://media.giphy.com/media/blSTtZehjAZ8I/giphy.gif", "party celebrate праздник"),
+        new("ok", "OK", "https://media.giphy.com/media/26gsvAm8UPaczzXz2/giphy.gif", "ok okay yes good")
+    ];
+
+    private static bool TryReadTenorMediaUrl(JsonElement result, string format, out string url)
+    {
+        url = "";
+        if (result.TryGetProperty("media_formats", out var formats) &&
+            formats.TryGetProperty(format, out var media) &&
+            media.TryGetProperty("url", out var urlElement))
+        {
+            url = urlElement.GetString() ?? "";
+            return !string.IsNullOrWhiteSpace(url);
+        }
+
+        if (result.TryGetProperty("media", out var mediaArray) &&
+            mediaArray.ValueKind == JsonValueKind.Array &&
+            mediaArray.GetArrayLength() > 0 &&
+            mediaArray[0].TryGetProperty(format, out var legacyMedia) &&
+            legacyMedia.TryGetProperty("url", out var legacyUrlElement))
+        {
+            url = legacyUrlElement.GetString() ?? "";
+            return !string.IsNullOrWhiteSpace(url);
+        }
+
+        return false;
+    }
+
+    private void ToggleFavoriteGif(TenorGifViewModel gif)
+    {
+        var existing = _favoriteGifs.FirstOrDefault(x => x.Id == gif.Id);
+        if (existing is null)
+        {
+            gif.IsFavorite = true;
+            _favoriteGifs.Add(new TenorGifViewModel
+            {
+                Id = gif.Id,
+                Title = gif.Title,
+                PreviewUrl = gif.PreviewUrl,
+                GifUrl = gif.GifUrl,
+                IsFavorite = true
+            });
+        }
+        else
+        {
+            _favoriteGifs.Remove(existing);
+            gif.IsFavorite = false;
+        }
+
+        foreach (var result in _gifResults.Where(x => x.Id == gif.Id))
+        {
+            result.IsFavorite = _favoriteGifs.Any(x => x.Id == gif.Id);
+        }
+
+        SaveFavoriteGifs();
+    }
+
+    private void LoadFavoriteGifs()
+    {
+        _favoriteGifs.Clear();
+        try
+        {
+            if (!File.Exists(AppPaths.GifFavoritesPath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(AppPaths.GifFavoritesPath);
+            var gifs = JsonSerializer.Deserialize<List<TenorGifViewModel>>(json) ?? [];
+            foreach (var gif in gifs)
+            {
+                gif.IsFavorite = true;
+                _favoriteGifs.Add(gif);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException)
+        {
+            AppLog.Write(ex, "GIF favorites load failed");
+        }
+    }
+
+    private void SaveFavoriteGifs()
+    {
+        try
+        {
+            AppPaths.EnsureCreated();
+            File.WriteAllText(AppPaths.GifFavoritesPath, JsonSerializer.Serialize(_favoriteGifs, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (IOException ex)
+        {
+            AppLog.Write(ex, "GIF favorites save failed");
+        }
+    }
+
+    private static MessageViewModel? GetMessageFromActionSender(object sender)
+        => sender switch
+        {
+            FrameworkElement { DataContext: MessageViewModel message } => message,
+            _ => null
+        };
+
+    private void SetReplyTarget(MessageViewModel message)
+    {
+        _replyTarget = message;
+        _editingMessage = null;
+        ReplyEditTitleText.Text = "Replying";
+        ReplyEditPreviewText.Text = message.PreviewText;
+        ReplyEditBar.Visibility = Visibility.Visible;
+        MessageInput.Focus();
+    }
+
+    private void ClearReplyTarget()
+    {
+        _replyTarget = null;
+        if (_editingMessage is null)
+        {
+            ReplyEditBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void ClearEditingMessage()
+    {
+        _editingMessage = null;
+        if (_replyTarget is null)
+        {
+            ReplyEditBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async Task FinishEditingMessageAsync(string text)
+    {
+        if (_selectedContact is null || _editingMessage is null)
+        {
+            return;
+        }
+
+        var message = _editingMessage;
+        MessageInput.Clear();
+        message.Text = text;
+        message.EditedAtUtc = DateTimeOffset.UtcNow;
+        await _history.UpdateMessageAsync(message);
+        var payload = new ChatEditPayload(message.MessageId, text, message.EditedAtUtc.Value);
+        var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatEditIntent);
+        await SendOverRelayAsync(packet, _selectedContact);
+        ClearEditingMessage();
+    }
+
+    private async Task AddReactionAsync(MessageViewModel message, string emoji)
+    {
+        if (_profile is null || _selectedContact is null)
+        {
+            return;
+        }
+
+        ApplyReaction(message, _profile.UserId, emoji);
+        await _history.UpdateMessageAsync(message);
+        var payload = new ChatReactionPayload(message.MessageId, _profile.UserId, emoji);
+        var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatReactionIntent);
+        await SendOverRelayAsync(packet, _selectedContact);
+    }
+
+    private async Task RemoveReactionAsync(MessageViewModel message)
+    {
+        if (_profile is null || _selectedContact is null)
+        {
+            return;
+        }
+
+        ApplyReaction(message, _profile.UserId, "");
+        await _history.UpdateMessageAsync(message);
+        var payload = new ChatReactionPayload(message.MessageId, _profile.UserId, "");
+        var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatReactionIntent);
+        await SendOverRelayAsync(packet, _selectedContact);
+    }
+
+    private async Task DeleteOwnMessageAsync(MessageViewModel message)
+    {
+        if (_selectedContact is null || !message.IsOutgoing)
+        {
+            return;
+        }
+
+        _messages.Remove(message);
+        DeleteAttachmentFileIfOwned(message.AttachmentPath);
+        await _history.DeleteMessageAsync(message.MessageId);
+        var payload = new ChatDeletePayload(message.MessageId);
+        var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatDeleteIntent);
+        await SendOverRelayAsync(packet, _selectedContact);
+        NetworkStatusText.Text = "Message deleted";
+    }
+
     private async Task SendCurrentMessageAsync()
     {
         if (_profile is null || _selectedContact is null)
@@ -2526,7 +4094,34 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_editingMessage is not null)
+        {
+            var editBody = MessageInput.Text.Trim();
+            if (string.IsNullOrWhiteSpace(editBody))
+            {
+                return;
+            }
+
+            await FinishEditingMessageAsync(editBody);
+            return;
+        }
+
         var body = MessageInput.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(_draftImagePath))
+        {
+            if (_selectedContact.IsGroup)
+            {
+                NetworkStatusText.Text = "Images are not supported in group chats yet.";
+                return;
+            }
+
+            var imagePath = _draftImagePath;
+            MessageInput.Clear();
+            ClearImageDraft();
+            await SendRichMessageAsync(MessageKinds.Image, body, imagePath, replyTarget: _replyTarget);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(body))
         {
             return;
@@ -2540,20 +4135,22 @@ public partial class MainWindow : Window
 
         AppLog.Write($"Send requested: to={_selectedContact.UserId}, ip={_selectedContact.IpAddress}, port={_selectedContact.MessagePort}, bodyLength={body.Length}");
         MessageInput.Clear();
-        var currentRelayServer = NormalizeRelayServer(_settings.RelayServer);
-        var contactRelayServer = GetRelayServer(_selectedContact);
-        var toRelayServer = string.Equals(currentRelayServer, contactRelayServer, StringComparison.OrdinalIgnoreCase)
-            ? null
-            : contactRelayServer;
-        var packet = CreateProfilePacket(_selectedContact.UserId, body);
+        var payload = CreateRichPayload(MessageKinds.Text, body, "", "", null, _replyTarget, "");
+        var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
         var message = new MessageViewModel
         {
             MessageId = packet.MessageId,
             PeerUserId = _selectedContact.UserId,
             Body = body,
+            Text = body,
             IsOutgoing = true,
-            SentAtUtc = packet.SentAtUtc
+            SentAtUtc = packet.SentAtUtc,
+            Kind = MessageKinds.Text,
+            ReplyToMessageId = _replyTarget?.MessageId,
+            ReplyPreview = _replyTarget?.PreviewText ?? ""
         };
+        PrepareMessageForUi(message);
+        ClearReplyTarget();
 
         _messages.Add(message);
         ScrollMessagesToEnd();
@@ -2566,14 +4163,17 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AppLog.Write(ex, $"Send failed: messageId={packet.MessageId}, to={_selectedContact.UserId}, ip={_selectedContact.IpAddress}:{_selectedContact.MessagePort}");
-            _messages.Add(new MessageViewModel
+            var failedMessage = new MessageViewModel
             {
                 MessageId = Guid.NewGuid(),
                 PeerUserId = _selectedContact.UserId,
                 Body = $"Failed to send: {ex.Message}",
+                Text = $"Failed to send: {ex.Message}",
                 IsOutgoing = false,
                 SentAtUtc = DateTimeOffset.UtcNow
-            });
+            };
+            PrepareMessageForUi(failedMessage);
+            _messages.Add(failedMessage);
             ScrollMessagesToEnd();
         }
     }
@@ -2591,9 +4191,11 @@ public partial class MainWindow : Window
             MessageId = Guid.NewGuid(),
             PeerUserId = group.UserId,
             Body = body,
+            Text = body,
             IsOutgoing = true,
             SentAtUtc = DateTimeOffset.UtcNow
         };
+        PrepareMessageForUi(message);
 
         _messages.Add(message);
         ScrollMessagesToEnd();
@@ -2621,6 +4223,319 @@ public partial class MainWindow : Window
         }
 
         NetworkStatusText.Text = $"Group message sent to {sent}/{group.GroupMemberCount}";
+    }
+
+    private async Task SendRichMessageAsync(
+        string kind,
+        string text,
+        string attachmentPath = "",
+        string attachmentUrl = "",
+        MessageViewModel? replyTarget = null,
+        string forwardedFrom = "")
+    {
+        if (_profile is null || _selectedContact is null || _selectedContact.IsGroup)
+        {
+            return;
+        }
+
+        var attachmentBase64 = "";
+        var attachmentFileName = "";
+        var storedAttachmentPath = attachmentPath;
+        if (!string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath))
+        {
+            storedAttachmentPath = CopyAttachmentIntoStore(attachmentPath);
+            attachmentBase64 = Convert.ToBase64String(await File.ReadAllBytesAsync(storedAttachmentPath));
+            attachmentFileName = Path.GetFileName(storedAttachmentPath);
+        }
+
+        var payload = CreateRichPayload(kind, text, attachmentFileName, attachmentBase64, attachmentUrl, replyTarget, forwardedFrom);
+        var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
+        var message = new MessageViewModel
+        {
+            MessageId = packet.MessageId,
+            PeerUserId = _selectedContact.UserId,
+            Body = text,
+            Text = text,
+            IsOutgoing = true,
+            SentAtUtc = packet.SentAtUtc,
+            Kind = kind,
+            AttachmentPath = storedAttachmentPath,
+            AttachmentUrl = attachmentUrl,
+            ReplyToMessageId = replyTarget?.MessageId,
+            ReplyPreview = replyTarget?.PreviewText ?? "",
+            ForwardedFrom = forwardedFrom
+        };
+        PrepareMessageForUi(message);
+
+        _messages.Add(message);
+        ScrollMessagesToEnd();
+        await _history.SaveAsync(message);
+        await SendOverRelayAsync(packet, _selectedContact);
+        ClearReplyTarget();
+    }
+
+    private async Task SendForwardedMessageAsync(ContactViewModel contact, MessageViewModel source)
+    {
+        if (_profile is null)
+        {
+            return;
+        }
+
+        var attachmentBase64 = "";
+        var attachmentFileName = "";
+        if (!string.IsNullOrWhiteSpace(source.AttachmentPath) && File.Exists(source.AttachmentPath))
+        {
+            attachmentBase64 = Convert.ToBase64String(await File.ReadAllBytesAsync(source.AttachmentPath));
+            attachmentFileName = Path.GetFileName(source.AttachmentPath);
+        }
+
+        var payload = CreateRichPayload(source.Kind, source.Text, attachmentFileName, attachmentBase64, source.AttachmentUrl, null, _profile.DisplayName);
+        var packet = CreateProfilePacket(contact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
+        var message = new MessageViewModel
+        {
+            MessageId = packet.MessageId,
+            PeerUserId = contact.UserId,
+            Body = source.Text,
+            Text = source.Text,
+            IsOutgoing = true,
+            SentAtUtc = packet.SentAtUtc,
+            Kind = source.Kind,
+            AttachmentPath = source.AttachmentPath,
+            AttachmentUrl = source.AttachmentUrl,
+            ForwardedFrom = _profile.DisplayName
+        };
+        PrepareMessageForUi(message);
+
+        await _history.SaveAsync(message);
+        if (_selectedContact?.UserId == contact.UserId)
+        {
+            _messages.Add(message);
+            ScrollMessagesToEnd();
+        }
+
+        await SendOverRelayAsync(packet, contact);
+    }
+
+    private RichChatPayload CreateRichPayload(
+        string kind,
+        string text,
+        string attachmentFileName,
+        string attachmentBase64,
+        string? attachmentUrl,
+        MessageViewModel? replyTarget,
+        string forwardedFrom)
+        => new(
+            kind,
+            text,
+            attachmentFileName,
+            attachmentBase64,
+            attachmentUrl ?? "",
+            replyTarget?.MessageId,
+            replyTarget?.PreviewText ?? "",
+            forwardedFrom);
+
+    private static string CopyAttachmentIntoStore(string sourcePath)
+    {
+        AppPaths.EnsureAttachmentsDirectoryCreated();
+        var extension = Path.GetExtension(sourcePath);
+        var destination = Path.Combine(AppPaths.AttachmentsDirectory, $"{Guid.NewGuid():N}{extension}");
+        File.Copy(sourcePath, destination, overwrite: true);
+        return destination;
+    }
+
+    private static string SaveIncomingAttachment(string fileName, string base64)
+    {
+        AppPaths.EnsureAttachmentsDirectoryCreated();
+        var extension = Path.GetExtension(fileName);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            extension = ".bin";
+        }
+
+        var destination = Path.Combine(AppPaths.AttachmentsDirectory, $"{Guid.NewGuid():N}{extension}");
+        File.WriteAllBytes(destination, Convert.FromBase64String(base64));
+        return destination;
+    }
+
+    private void HandleIncomingRichMessage(ChatPacket packet, string statusText)
+    {
+        RichChatPayload? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<RichChatPayload>(packet.Body);
+        }
+        catch (JsonException ex)
+        {
+            AppLog.Write(ex, $"Rich chat payload parse failed: messageId={packet.MessageId}");
+            return;
+        }
+
+        if (payload is null)
+        {
+            return;
+        }
+
+        var attachmentPath = "";
+        if (!string.IsNullOrWhiteSpace(payload.AttachmentBase64))
+        {
+            try
+            {
+                attachmentPath = SaveIncomingAttachment(payload.AttachmentFileName, payload.AttachmentBase64);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write(ex, $"Incoming attachment save failed: messageId={packet.MessageId}");
+            }
+        }
+
+        var message = new MessageViewModel
+        {
+            MessageId = packet.MessageId,
+            PeerUserId = packet.FromUserId,
+            Body = payload.Text,
+            Text = payload.Text,
+            IsOutgoing = false,
+            SentAtUtc = packet.SentAtUtc,
+            Kind = string.IsNullOrWhiteSpace(payload.Kind) ? MessageKinds.Text : payload.Kind,
+            AttachmentPath = attachmentPath,
+            AttachmentUrl = payload.AttachmentUrl,
+            ReplyToMessageId = payload.ReplyToMessageId,
+            ReplyPreview = payload.ReplyPreview,
+            ForwardedFrom = payload.ForwardedFrom
+        };
+        PrepareMessageForUi(message);
+        _ = _history.SaveAsync(message);
+
+        var contact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId);
+        if (contact is null)
+        {
+            UpsertFriendRequest(packet);
+            _ = RequestProfileFromPacketAsync(packet);
+            NetworkStatusText.Text = $"Message request from {packet.FromDisplayName}";
+            ShowIncomingNotificationIfNeeded(packet.FromDisplayName, packet);
+            return;
+        }
+
+        ApplyPacketProfileToContact(packet, contact);
+        _ = _history.SaveContactAsync(contact);
+        RequestProfileIfAvatarMissing(packet, contact);
+        if (_selectedContact?.UserId == packet.FromUserId)
+        {
+            _messages.Add(message);
+            ScrollMessagesToEnd();
+        }
+
+        NetworkStatusText.Text = $"{statusText}: {contact.DisplayName}";
+        ShowIncomingNotificationIfNeeded(contact.DisplayName, packet);
+    }
+
+    private void HandleIncomingChatEdit(ChatPacket packet)
+    {
+        if (!TryDeserializePayload<ChatEditPayload>(packet.Body, out var payload) || payload is null)
+        {
+            return;
+        }
+
+        var message = FindMessage(payload.MessageId);
+        if (message is null)
+        {
+            return;
+        }
+
+        message.Text = payload.Text;
+        message.EditedAtUtc = payload.EditedAtUtc;
+        _ = _history.UpdateMessageAsync(message);
+    }
+
+    private void HandleIncomingChatReaction(ChatPacket packet)
+    {
+        if (!TryDeserializePayload<ChatReactionPayload>(packet.Body, out var payload) || payload is null)
+        {
+            return;
+        }
+
+        var message = FindMessage(payload.MessageId);
+        if (message is null)
+        {
+            return;
+        }
+
+        ApplyReaction(message, payload.UserId, payload.Emoji);
+        _ = _history.UpdateMessageAsync(message);
+    }
+
+    private async void HandleIncomingChatDelete(ChatPacket packet)
+    {
+        try
+        {
+            if (!TryDeserializePayload<ChatDeletePayload>(packet.Body, out var payload) || payload is null)
+            {
+                return;
+            }
+
+            var message = FindMessage(payload.MessageId);
+            var attachmentPath = "";
+            if (message is not null)
+            {
+                if (message.IsOutgoing ||
+                    !message.PeerUserId.Equals(packet.FromUserId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                attachmentPath = message.AttachmentPath;
+                _messages.Remove(message);
+            }
+
+            if (string.IsNullOrWhiteSpace(attachmentPath))
+            {
+                attachmentPath = await _history.LoadMessageAttachmentPathAsync(payload.MessageId, packet.FromUserId, isOutgoing: false);
+            }
+
+            DeleteAttachmentFileIfOwned(attachmentPath);
+            await _history.DeleteIncomingMessageAsync(payload.MessageId, packet.FromUserId);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or SqliteException)
+        {
+            AppLog.Write(ex, $"Incoming message delete failed: from={packet.FromUserId}, messageId={packet.MessageId}");
+        }
+    }
+
+    private static bool TryDeserializePayload<T>(string body, out T? payload)
+    {
+        try
+        {
+            payload = JsonSerializer.Deserialize<T>(body);
+            return payload is not null;
+        }
+        catch (JsonException)
+        {
+            payload = default;
+            return false;
+        }
+    }
+
+    private MessageViewModel? FindMessage(Guid messageId)
+        => _messages.FirstOrDefault(x => x.MessageId == messageId);
+
+    private void PrepareMessageForUi(MessageViewModel message)
+        => message.CurrentUserId = _profile?.UserId ?? "";
+
+    private static void ApplyReaction(MessageViewModel message, string userId, string emoji)
+    {
+        var reactions = string.IsNullOrWhiteSpace(message.ReactionsJson)
+            ? new Dictionary<string, string>()
+            : JsonSerializer.Deserialize<Dictionary<string, string>>(message.ReactionsJson) ?? new Dictionary<string, string>();
+        if (string.IsNullOrWhiteSpace(emoji))
+        {
+            reactions.Remove(userId);
+        }
+        else
+        {
+            reactions[userId] = emoji;
+        }
+
+        message.ReactionsJson = reactions.Count == 0 ? "" : JsonSerializer.Serialize(reactions);
     }
 
     private async Task SendOverRelayAsync(
@@ -2715,25 +4630,44 @@ public partial class MainWindow : Window
     {
         _screenShareSources.Clear();
 
-        foreach (var screen in Forms.Screen.AllScreens)
+        var previousStageVisibility = CallScreenShareStage.Visibility;
+        var hideStageForPreviews = previousStageVisibility == Visibility.Visible;
+        if (hideStageForPreviews)
         {
-            var bounds = screen.Bounds;
-            _screenShareSources.Add(CreateScreenShareSource(
-                $"Entire screen {(_screenShareSources.Count + 1)}",
-                $"{bounds.Width}x{bounds.Height}",
-                true,
-                IntPtr.Zero,
-                bounds));
+            CallScreenShareStage.Visibility = Visibility.Hidden;
+            CallScreenShareStage.UpdateLayout();
         }
 
-        foreach (var window in EnumerateShareableWindows())
+        try
         {
-            _screenShareSources.Add(CreateScreenShareSource(
-                window.Title,
-                window.Description,
-                false,
-                window.WindowHandle,
-                window.Bounds));
+            foreach (var screen in Forms.Screen.AllScreens)
+            {
+                var bounds = screen.Bounds;
+                _screenShareSources.Add(CreateScreenShareSource(
+                    $"Entire screen {(_screenShareSources.Count + 1)}",
+                    $"{bounds.Width}x{bounds.Height}",
+                    true,
+                    IntPtr.Zero,
+                    bounds));
+            }
+
+            foreach (var window in EnumerateShareableWindows())
+            {
+                _screenShareSources.Add(CreateScreenShareSource(
+                    window.Title,
+                    window.Description,
+                    false,
+                    window.WindowHandle,
+                    window.Bounds));
+            }
+        }
+        finally
+        {
+            if (hideStageForPreviews)
+            {
+                CallScreenShareStage.Visibility = previousStageVisibility;
+                CallScreenShareStage.UpdateLayout();
+            }
         }
 
         ApplyScreenShareSourceFilter();
@@ -2795,6 +4729,7 @@ public partial class MainWindow : Window
         Interlocked.Exchange(ref _pendingNativeWebRtcWebViewFrame, 0);
         Interlocked.Exchange(ref _screenShareJpegLoopStarted, 0);
         Interlocked.Exchange(ref _lastSelfScreenSharePreviewTicks, 0);
+        Interlocked.Exchange(ref _lastEncodedScreenSharePreviewTicks, 0);
         _lastScreenShareFrameHash = 0;
         _lastScreenShareFrameHashSentTicks = 0;
         _screenShareUsingNativeWebRtc = false;
@@ -2807,6 +4742,15 @@ public partial class MainWindow : Window
         UpdateScreenShareStageVisibility();
 
         var useWebRtc = IsScreenShareWebRtcPreferred() && ScreenShareWebView.CoreWebView2 is not null;
+        if (useWebRtc && ShouldUseCompatibleScreenShareForSimultaneousStart())
+        {
+            useWebRtc = false;
+            ApplyCompatibleScreenShareFallbackQuality();
+            UpdateScreenSharePickerState();
+            NetworkStatusText.Text = "Using compatible screen share while both screens are active.";
+            AppLog.Write($"Screen share WebRTC skipped for simultaneous share: peerWebRtc={_peerScreenShareUsingWebRtc}, source={source.Title}, resolution={_screenShareResolution}, fps={_screenShareFrameRate}");
+        }
+
         if (!useWebRtc)
         {
             _screenShareFrameRate = ClampScreenShareFrameRate(_screenShareResolution, _screenShareFrameRate);
@@ -2830,8 +4774,9 @@ public partial class MainWindow : Window
                         {
                             type = "start-encoded-share",
                             iceServers = GetScreenShareWebRtcIceServers(),
+                            polite = IsPoliteScreenSharePeer(),
                             title = source.Title,
-                            mimeType = "video/mp4; codecs=\"avc1.42E01E\"",
+                            mimeType = "video/mp4; codecs=\"avc1.640033\"",
                             width = encodedWidth,
                             height = encodedHeight,
                             frameRate = _screenShareFrameRate,
@@ -2862,6 +4807,7 @@ public partial class MainWindow : Window
                     {
                         type = "start-native-share",
                         iceServers = GetScreenShareWebRtcIceServers(),
+                        polite = IsPoliteScreenSharePeer(),
                         title = source.Title,
                         width = targetWidth,
                         height = targetHeight,
@@ -2921,15 +4867,16 @@ public partial class MainWindow : Window
         StopScreenShareEncoderProcess();
         if (wasUsingNativeWebRtc || wasUsingEncodedWebRtc || _screenShareWebRtcActive || ScreenShareWebView.Visibility == Visibility.Visible)
         {
-            PostScreenShareWebRtcMessage(new { type = "stop" });
-            _screenShareWebRtcActive = false;
-            SetScreenShareWebRtcVisible(false);
+            PostScreenShareWebRtcMessage(new { type = "stop-local" });
+            _screenShareWebRtcActive = _peerScreenShareUsingWebRtc;
+            SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
         }
 
         Interlocked.Exchange(ref _pendingScreenShareFrame, 0);
         Interlocked.Exchange(ref _pendingNativeWebRtcWebViewFrame, 0);
         Interlocked.Exchange(ref _screenShareJpegLoopStarted, 0);
         Interlocked.Exchange(ref _lastSelfScreenSharePreviewTicks, 0);
+        Interlocked.Exchange(ref _lastEncodedScreenSharePreviewTicks, 0);
         CallSelfScreenSharePreview.Source = null;
 
         UpdateScreenShareControlVisuals();
@@ -3006,9 +4953,10 @@ public partial class MainWindow : Window
         }
 
         var sent = Interlocked.Increment(ref _sentScreenShareFrames);
+        var jpegBase64 = Convert.ToBase64String(jpeg);
         var payload = JsonSerializer.Serialize(new ScreenShareFramePayload(
             sent,
-            Convert.ToBase64String(jpeg),
+            jpegBase64,
             frameHeight,
             _screenShareFrameRate,
             _screenShareMuteAudio));
@@ -3051,7 +4999,14 @@ public partial class MainWindow : Window
         {
             var image = CreateBitmapImage(jpeg, 360);
             _ = Dispatcher.BeginInvoke(
-                new Action(() => CallSelfScreenSharePreview.Source = image),
+                new Action(() =>
+                {
+                    CallSelfScreenSharePreview.Source = image;
+                    if (_peerScreenShareUsingWebRtc)
+                    {
+                        PostScreenShareWebRtcMessage(new { type = "local-preview", jpegBase64 });
+                    }
+                }),
                 DispatcherPriority.Background);
         }
 
@@ -3199,6 +5154,7 @@ public partial class MainWindow : Window
                 var chunk = new byte[read];
                 Buffer.BlockCopy(buffer, 0, chunk, 0, read);
                 PostEncodedScreenShareChunk(chunk);
+                PostEncodedScreenShareLocalPreview(source);
             }
 
             if (!process.HasExited)
@@ -3253,6 +5209,46 @@ public partial class MainWindow : Window
         {
             AppLog.Write($"Screen share H.264 chunk queued: chunks={sent}, bytes={chunk.Length}");
         }
+    }
+
+    private void PostEncodedScreenShareLocalPreview(ScreenShareSourceItem source)
+    {
+        if (!_screenShareUsingEncodedWebRtc)
+        {
+            return;
+        }
+
+        var nowTicks = DateTimeOffset.UtcNow.Ticks;
+        var lastTicks = Interlocked.Read(ref _lastEncodedScreenSharePreviewTicks);
+        if (nowTicks - lastTicks < ScreenShareEncodedLocalPreviewInterval.Ticks ||
+            Interlocked.CompareExchange(ref _lastEncodedScreenSharePreviewTicks, nowTicks, lastTicks) != lastTicks)
+        {
+            return;
+        }
+
+        var jpeg = CaptureScreenShareFrame(source, 360);
+        if (jpeg is null)
+        {
+            return;
+        }
+
+        var base64 = Convert.ToBase64String(jpeg);
+        var image = CreateBitmapImage(jpeg, 360);
+        _ = Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                if (!_screenShareUsingEncodedWebRtc)
+                {
+                    return;
+                }
+
+                CallSelfScreenSharePreview.Source = image;
+                if (_peerScreenShareUsingWebRtc)
+                {
+                    PostScreenShareWebRtcMessage(new { type = "local-preview", jpegBase64 = base64 });
+                }
+            }),
+            DispatcherPriority.Background);
     }
 
     private async Task ReadScreenShareEncoderLogAsync(Process process, CancellationToken cancellationToken)
@@ -3362,15 +5358,15 @@ public partial class MainWindow : Window
     {
         if (effectiveHeight >= 1440)
         {
-            return _screenShareFrameRate >= 60 ? 22_000 : 14_000;
+            return _screenShareFrameRate >= 60 ? 28_000 : 16_000;
         }
 
         if (effectiveHeight >= 1080)
         {
-            return _screenShareFrameRate >= 60 ? 10_000 : 6_000;
+            return _screenShareFrameRate >= 60 ? 14_000 : 8_000;
         }
 
-        return _screenShareFrameRate >= 60 ? 5_500 : 3_500;
+        return _screenShareFrameRate >= 60 ? 7_000 : 4_500;
     }
 
     private static IReadOnlyList<string> DetectFfmpegH264Encoders(string ffmpegPath)
@@ -3440,6 +5436,12 @@ public partial class MainWindow : Window
         yield return Path.Combine(baseDirectory, "ffmpeg.exe");
         yield return Path.Combine(baseDirectory, "tools", "ffmpeg.exe");
         yield return Path.Combine(AppPaths.DataDirectory, "ffmpeg.exe");
+        for (var directory = new DirectoryInfo(baseDirectory); directory is not null; directory = directory.Parent)
+        {
+            yield return Path.Combine(directory.FullName, "ffmpeg.exe");
+            yield return Path.Combine(directory.FullName, "tools", "ffmpeg.exe");
+        }
+
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -3598,6 +5600,14 @@ public partial class MainWindow : Window
 
         stopwatch.Stop();
         AdjustAdaptiveScreenShareHeight(stopwatch.Elapsed, json.Length);
+        if (ShouldUpdateSelfScreenSharePreview())
+        {
+            var image = CreateBitmapImage(jpeg, 360);
+            _ = Dispatcher.BeginInvoke(
+                new Action(() => CallSelfScreenSharePreview.Source = image),
+                DispatcherPriority.Background);
+        }
+
         if (sent == 1 || sent % 100 == 0)
         {
             AppLog.Write($"Native WebRTC screen frame queued: frames={sent}, bytes={jpeg.Length}, bodyLength={json.Length}, source={source.Title}, resolution={_screenShareResolution}, effectiveHeight={frameHeight}, fps={_screenShareFrameRate}, elapsedMs={stopwatch.ElapsedMilliseconds}, jpegQuality={GetScreenShareJpegQuality(frameHeight)}");
@@ -3882,6 +5892,13 @@ public partial class MainWindow : Window
             case CallScreenStartIntent:
                 _peerScreenSharing = true;
                 _isWatchingPeerScreen = true;
+                var peerUsesWebRtc = IsWebRtcScreenShareStart(packet.Body);
+                if (!peerUsesWebRtc && _peerScreenShareUsingWebRtc)
+                {
+                    PostScreenShareWebRtcMessage(new { type = "stop-remote" });
+                }
+
+                _peerScreenShareUsingWebRtc = peerUsesWebRtc;
                 Interlocked.Exchange(ref _receivedScreenShareFrames, 0);
                 Interlocked.Exchange(ref _droppedReceivedScreenShareFrames, 0);
                 Interlocked.Exchange(ref _lastPeerScreenShareFrameAcceptedTicks, 0);
@@ -3899,18 +5916,37 @@ public partial class MainWindow : Window
             case CallScreenStopIntent:
                 _peerScreenSharing = false;
                 _isWatchingPeerScreen = false;
+                _peerScreenShareUsingWebRtc = false;
                 ClearQueuedPeerScreenShareFrames();
                 CallPeerScreenSharePreview.Source = null;
                 if (_screenShareWebRtcActive || ScreenShareWebView.Visibility == Visibility.Visible)
                 {
-                    PostScreenShareWebRtcMessage(new { type = "stop" });
-                    _screenShareWebRtcActive = false;
-                    SetScreenShareWebRtcVisible(false);
+                    PostScreenShareWebRtcMessage(new { type = "stop-remote" });
+                    _screenShareWebRtcActive = _screenShareUsingNativeWebRtc || _screenShareUsingEncodedWebRtc;
+                    SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
                 }
 
                 UpdateScreenShareStageVisibility();
                 AppLog.Write($"Screen share stopped: from={packet.FromUserId}");
                 break;
+        }
+    }
+
+    private static bool IsWebRtcScreenShareStart(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        try
+        {
+            var payload = JsonSerializer.Deserialize<ScreenShareStartPayload>(body);
+            return payload?.SourceTitle.Contains("(WebRTC)", StringComparison.OrdinalIgnoreCase) == true;
+        }
+        catch (JsonException)
+        {
+            return body.Contains("WebRTC", StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -4045,11 +6081,12 @@ public partial class MainWindow : Window
 
         _peerScreenSharing = true;
         _isWatchingPeerScreen = true;
-        if (_screenShareWebRtcActive || ScreenShareWebView.Visibility == Visibility.Visible)
+        if (_peerScreenShareUsingWebRtc)
         {
-            PostScreenShareWebRtcMessage(new { type = "stop" });
-            _screenShareWebRtcActive = false;
-            SetScreenShareWebRtcVisible(false);
+            _peerScreenShareUsingWebRtc = false;
+            PostScreenShareWebRtcMessage(new { type = "stop-remote" });
+            _screenShareWebRtcActive = _screenShareUsingNativeWebRtc || _screenShareUsingEncodedWebRtc;
+            SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
         }
 
         CallPeerScreenSharePreview.Source = image;
@@ -4128,17 +6165,34 @@ public partial class MainWindow : Window
 
     private void UpdateScreenShareStageVisibility()
     {
-        var shouldShow = _isScreenSharing || _peerScreenSharing;
-        if (!shouldShow && _isScreenShareFocusMode)
+        var hasScreenShare = _isScreenSharing || _peerScreenSharing;
+        if (!hasScreenShare && _isScreenShareFocusMode)
         {
             ExitScreenShareFocusMode();
         }
 
-        CallScreenShareStage.Visibility = shouldShow ? Visibility.Visible : Visibility.Collapsed;
-        CallSelfScreenTile.Visibility = _isScreenSharing ? Visibility.Visible : Visibility.Collapsed;
-        CallPeerScreenTile.Visibility = _peerScreenSharing ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasScreenShare)
+        {
+            SetScreenShareFocusTarget(ScreenShareFocusTarget.Auto);
+        }
+        else
+        {
+            NormalizeScreenShareFocusTarget();
+        }
+
+        var shouldShow = hasScreenShare && !_screenSharePickerSuppressesStage;
+        var showSelectedOnly = _isScreenShareFullscreenMode && _screenShareFocusTarget != ScreenShareFocusTarget.Auto;
+        var showSelfTile = shouldShow && _isScreenSharing && (!showSelectedOnly || _screenShareFocusTarget == ScreenShareFocusTarget.Local);
+        var showPeerTile = shouldShow && _peerScreenSharing && (!showSelectedOnly || _screenShareFocusTarget == ScreenShareFocusTarget.Peer);
+        var visibleTileCount = (showSelfTile ? 1 : 0) + (showPeerTile ? 1 : 0);
+
+        CallScreenShareStage.Visibility = hasScreenShare
+            ? (_screenSharePickerSuppressesStage ? Visibility.Hidden : Visibility.Visible)
+            : Visibility.Collapsed;
+        CallSelfScreenTile.Visibility = showSelfTile ? Visibility.Visible : Visibility.Collapsed;
+        CallPeerScreenTile.Visibility = showPeerTile ? Visibility.Visible : Visibility.Collapsed;
         CallScreenShareJoinOverlay.Visibility = Visibility.Collapsed;
-        CallScreenShareGrid.Columns = _isScreenSharing && _peerScreenSharing ? 2 : 1;
+        CallScreenShareGrid.Columns = visibleTileCount > 1 ? 2 : 1;
         CallScreenShareFullscreenControlButton.Visibility = shouldShow ? Visibility.Visible : Visibility.Collapsed;
 
         if (_isScreenShareFocusMode && shouldShow)
@@ -4149,7 +6203,7 @@ public partial class MainWindow : Window
             var availableWidth = GetAvailableScreenShareStageWidth(minWidth: 420);
             var reservedHeight = _isScreenShareFullscreenMode ? 0 : 112;
             var availableHeight = Math.Max(280, CallPanel.ActualHeight - reservedHeight);
-            var aspect = _isScreenSharing && _peerScreenSharing ? 32d / 9d : 16d / 9d;
+            var aspect = visibleTileCount > 1 ? 32d / 9d : 16d / 9d;
             var targetWidth = availableWidth;
             var targetHeight = targetWidth / aspect;
             if (targetHeight > availableHeight)
@@ -4169,9 +6223,9 @@ public partial class MainWindow : Window
         }
 
         CallPanel.MaxHeight = 260;
-        CallPanel.Height = shouldShow ? 260 : 150;
+        CallPanel.Height = hasScreenShare ? 260 : 150;
         CallContentPanel.VerticalAlignment = System.Windows.VerticalAlignment.Center;
-        var compactWidth = _isScreenSharing && _peerScreenSharing ? 520 : 300;
+        var compactWidth = visibleTileCount > 1 ? 520 : 300;
         CallScreenShareStage.Width = Math.Min(compactWidth, GetAvailableScreenShareStageWidth(minWidth: 220));
         CallScreenShareStage.Height = ScreenShareMaxCompactHeight;
         CallScreenShareStage.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
@@ -4231,6 +6285,11 @@ public partial class MainWindow : Window
 
     private void SetScreenShareFullscreenMode(bool enabled)
     {
+        if (!enabled)
+        {
+            SetScreenShareFocusTarget(ScreenShareFocusTarget.Auto);
+        }
+
         if (_isScreenShareFullscreenMode == enabled)
         {
             return;
@@ -4389,9 +6448,17 @@ public partial class MainWindow : Window
     private static IEnumerable<ScreenShareSourceItem> EnumerateShareableWindows()
     {
         var windows = new List<ScreenShareSourceItem>();
+        using var currentProcess = Process.GetCurrentProcess();
+        var currentProcessId = (uint)currentProcess.Id;
         EnumWindows((handle, _) =>
         {
             if (!IsWindowVisible(handle) || IsIconic(handle))
+            {
+                return true;
+            }
+
+            GetWindowThreadProcessId(handle, out var processId);
+            if (processId == currentProcessId)
             {
                 return true;
             }
@@ -4587,7 +6654,26 @@ public partial class MainWindow : Window
             case CallScreenWebRtcIceIntent:
                 HandleScreenShareWebRtcSignal(packet);
                 break;
+            case CallScreenWebRtcFallbackIntent:
+                HandleScreenShareWebRtcFallbackRequest(packet);
+                break;
         }
+    }
+
+    private void HandleScreenShareWebRtcFallbackRequest(ChatPacket packet)
+    {
+        if (_activeCallContact?.UserId != packet.FromUserId ||
+            !_isScreenSharing ||
+            (!_screenShareUsingNativeWebRtc && !_screenShareUsingEncodedWebRtc))
+        {
+            return;
+        }
+
+        var reason = string.IsNullOrWhiteSpace(packet.Body)
+            ? "peer requested compatible screen share"
+            : packet.Body;
+        AppLog.Write($"Screen share WebRTC fallback requested by peer: from={packet.FromUserId}, reason={reason}");
+        FallbackScreenShareFromWebRtc($"peer requested compatible screen share: {reason}");
     }
 
     private void ApplyPeerCallAudioState(ChatPacket packet)
@@ -4768,6 +6854,12 @@ public partial class MainWindow : Window
         _peerHeadphonesMuted = false;
         _peerScreenSharing = false;
         _isWatchingPeerScreen = false;
+        _peerScreenShareUsingWebRtc = false;
+        _screenShareWebRtcActive = false;
+        ScreenSharePickerOverlay.Visibility = Visibility.Collapsed;
+        SetScreenSharePickerStageSuppression(false);
+        PostScreenShareWebRtcMessage(new { type = "stop" });
+        SetScreenShareWebRtcVisible(false);
         ClearQueuedPeerScreenShareFrames();
         CallSelfScreenSharePreview.Source = null;
         CallPeerScreenSharePreview.Source = null;
@@ -5684,6 +7776,22 @@ public partial class MainWindow : Window
         double? AvatarVideoStartSeconds,
         double? AvatarVideoDurationSeconds);
 
+    private sealed record RichChatPayload(
+        string Kind,
+        string Text,
+        string AttachmentFileName,
+        string AttachmentBase64,
+        string AttachmentUrl,
+        Guid? ReplyToMessageId,
+        string ReplyPreview,
+        string ForwardedFrom);
+
+    private sealed record ChatEditPayload(Guid MessageId, string Text, DateTimeOffset EditedAtUtc);
+
+    private sealed record ChatReactionPayload(Guid MessageId, string UserId, string Emoji);
+
+    private sealed record ChatDeletePayload(Guid MessageId);
+
     private sealed record CallAudioState(bool MicrophoneMuted, bool HeadphonesMuted);
 
     private sealed record ScreenShareStartPayload(string SourceTitle, int Resolution, int FrameRate, bool AudioMuted);
@@ -5723,15 +7831,16 @@ public partial class MainWindow : Window
     #stage { width: 100%; height: 100%; display: grid; grid-template-columns: 1fr; grid-auto-rows: 100%; gap: 8px; padding: 0; box-sizing: border-box; }
     #stage.both { grid-template-columns: 1fr 1fr; }
     .tile { position: relative; min-width: 0; min-height: 0; background: #111214; overflow: hidden; }
-    video { width: 100%; height: 100%; object-fit: contain; background: #111214; }
+    video, .preview { width: 100%; height: 100%; object-fit: contain; background: #111214; }
     .label { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 4px; background: rgba(0,0,0,.62); font-size: 11px; font-weight: 600; }
     #localTile.hidden, #remoteTile.hidden { display: none; }
+    .preview.hidden, video.hidden { display: none; }
     #status { position: absolute; left: 12px; bottom: 10px; padding: 5px 8px; border-radius: 4px; background: rgba(0,0,0,.62); font-size: 11px; color: #b5bac1; pointer-events: none; }
   </style>
 </head>
 <body>
   <div id="stage">
-    <div id="localTile" class="tile hidden"><video id="localVideo" autoplay playsinline muted></video><div class="label">Your native WebRTC screen</div></div>
+    <div id="localTile" class="tile hidden"><video id="localVideo" autoplay playsinline muted></video><img id="localPreviewImage" class="preview hidden" alt=""><div class="label">Your screen</div></div>
     <div id="remoteTile" class="tile hidden"><video id="remoteVideo" autoplay playsinline muted></video><div class="label">Friend WebRTC screen</div></div>
   </div>
   <div id="status">WebRTC ready</div>
@@ -5740,12 +7849,16 @@ public partial class MainWindow : Window
     const localTile = document.getElementById('localTile');
     const remoteTile = document.getElementById('remoteTile');
     const localVideo = document.getElementById('localVideo');
+    const localPreviewImage = document.getElementById('localPreviewImage');
     const remoteVideo = document.getElementById('remoteVideo');
     const statusBox = document.getElementById('status');
     const defaultIceServers = [
       { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
     ];
     let pc = null;
+    let politePeer = true;
+    let makingOffer = false;
+    let ignoringOffer = false;
     let localStream = null;
     let remoteStarted = false;
     let rtcConfig = { iceServers: defaultIceServers, bundlePolicy: 'max-bundle', iceTransportPolicy: 'all' };
@@ -5754,21 +7867,28 @@ public partial class MainWindow : Window
     let statsTimer = null;
     let previousStats = new Map();
     let remotePlaybackRetry = null;
+    let remoteDecodeWatchdog = null;
+    let remoteDecodeFailedNotified = false;
     let nativeCanvas = null;
     let nativeContext = null;
     let nativeFrameWriter = null;
     let nativeCanvasTrack = null;
     let nativePendingFrame = null;
     let nativeFrameBusy = false;
-    let encodedChannel = null;
-    let encodedIsSender = false;
-    let encodedMimeType = 'video/mp4; codecs="avc1.42E01E"';
+    let encodedSendChannel = null;
+    let encodedReceiveChannel = null;
+    let encodedMimeType = 'video/mp4; codecs="avc1.640033"';
     let encodedSendQueue = [];
     let encodedSendBusy = false;
     let encodedBufferLimit = 4194304;
     let encodedMediaSource = null;
     let encodedSourceBuffer = null;
     let encodedAppendQueue = [];
+    let encodedReceivedChunks = 0;
+    let encodedReceivedBytes = 0;
+    let encodedObjectUrl = null;
+    let screenShareFocusTarget = 'auto';
+    let localPreviewActive = false;
 
     function post(message) {
       if (window.chrome && chrome.webview) chrome.webview.postMessage(message);
@@ -5779,7 +7899,9 @@ public partial class MainWindow : Window
     }
     stage.addEventListener('dblclick', event => {
       event.preventDefault();
-      post({ type: 'focus-request' });
+      const tile = event.target && event.target.closest ? event.target.closest('.tile') : null;
+      const target = tile === localTile ? 'local' : tile === remoteTile ? 'remote' : 'auto';
+      post({ type: 'focus-request', target });
     });
     function normalizeIceServers(servers) {
       if (!Array.isArray(servers) || servers.length === 0) return defaultIceServers;
@@ -5802,19 +7924,66 @@ public partial class MainWindow : Window
         iceTransportPolicy: 'all'
       };
       connectTimeoutMs = Number(message.connectTimeoutMs || connectTimeoutMs);
+      if (typeof message.polite === 'boolean') politePeer = message.polite;
       setStatus('WebRTC ICE configured');
     }
     function updateLayout() {
-      const hasLocal = localStream && localStream.getTracks().some(t => t.readyState === 'live');
-      localTile.classList.toggle('hidden', !hasLocal);
-      remoteTile.classList.toggle('hidden', !remoteStarted);
-      stage.classList.toggle('both', hasLocal && remoteStarted);
+      const hasLocalStream = localStream && localStream.getTracks().some(t => t.readyState === 'live');
+      const hasLocal = hasLocalStream || localPreviewActive;
+      const wantsLocal = screenShareFocusTarget === 'local';
+      const wantsRemote = screenShareFocusTarget === 'remote';
+      const showLocal = hasLocal && !(wantsRemote && remoteStarted);
+      const showRemote = remoteStarted && !(wantsLocal && hasLocal);
+      localVideo.classList.toggle('hidden', !hasLocalStream);
+      localPreviewImage.classList.toggle('hidden', hasLocalStream || !localPreviewActive);
+      localTile.classList.toggle('hidden', !showLocal);
+      remoteTile.classList.toggle('hidden', !showRemote);
+      stage.classList.toggle('both', showLocal && showRemote);
+    }
+    function clearLocalPreview() {
+      localPreviewActive = false;
+      localPreviewImage.removeAttribute('src');
+      updateLayout();
+    }
+    function handleLocalPreview(message) {
+      const base64 = message.jpegBase64 || message.JpegBase64 || '';
+      if (!base64) return;
+      localPreviewImage.src = 'data:image/jpeg;base64,' + base64;
+      localPreviewActive = true;
+      updateLayout();
+    }
+    function setFocusTarget(target) {
+      screenShareFocusTarget = target === 'local' || target === 'remote' ? target : 'auto';
+      updateLayout();
     }
     function clearRemotePlaybackRetry() {
       if (remotePlaybackRetry) clearTimeout(remotePlaybackRetry);
       remotePlaybackRetry = null;
     }
+    function clearRemoteDecodeWatchdog() {
+      if (remoteDecodeWatchdog) clearTimeout(remoteDecodeWatchdog);
+      remoteDecodeWatchdog = null;
+    }
+    function hasRemoteVideoFrame() {
+      return remoteVideo.readyState >= 2 && remoteVideo.videoWidth > 0 && remoteVideo.videoHeight > 0;
+    }
+    function notifyRemoteDecodeFailed(reason) {
+      if (remoteDecodeFailedNotified) return;
+      remoteDecodeFailedNotified = true;
+      clearRemoteDecodeWatchdog();
+      statusBox.textContent = 'Encoded WebRTC decode issue';
+      post({ type: 'remote-decode-failed', reason });
+    }
+    function armRemoteDecodeWatchdog(reason) {
+      clearRemoteDecodeWatchdog();
+      remoteDecodeWatchdog = setTimeout(() => {
+        if (remoteStarted && !hasRemoteVideoFrame()) {
+          notifyRemoteDecodeFailed(reason + '; chunks=' + encodedReceivedChunks + '; bytes=' + encodedReceivedBytes);
+        }
+      }, 6500);
+    }
     function notifyRemotePlaying() {
+      clearRemoteDecodeWatchdog();
       post({
         type: 'remote-playing',
         width: Number(remoteVideo.videoWidth || 0),
@@ -5864,6 +8033,7 @@ public partial class MainWindow : Window
       armRemotePlaybackRetry(stream, 1);
     }
     remoteVideo.onloadedmetadata = () => {
+      if (hasRemoteVideoFrame()) clearRemoteDecodeWatchdog();
       post({
         type: 'remote-video-ready',
         width: Number(remoteVideo.videoWidth || 0),
@@ -5874,13 +8044,33 @@ public partial class MainWindow : Window
     };
     remoteVideo.onplaying = () => {
       clearRemotePlaybackRetry();
+      clearRemoteDecodeWatchdog();
       notifyRemotePlaying();
     };
     remoteVideo.onwaiting = () => post({ type: 'state', value: 'WebRTC remote video waiting' });
     remoteVideo.onstalled = () => post({ type: 'state', value: 'WebRTC remote video stalled' });
+    remoteVideo.onerror = () => {
+      const error = remoteVideo.error;
+      notifyRemoteDecodeFailed('HTML video error code=' + String(error ? error.code : 0));
+    };
     function clearConnectionWatchdog() {
       if (connectionWatchdog) clearTimeout(connectionWatchdog);
       connectionWatchdog = null;
+    }
+    function closePeerConnectionForRestart() {
+      clearConnectionWatchdog();
+      clearRemoteDecodeWatchdog();
+      stopStatsTimer();
+      if (pc) {
+        try { pc.close(); } catch {}
+      }
+      pc = null;
+      remoteStarted = false;
+      remoteVideo.pause();
+      remoteVideo.srcObject = null;
+      remoteVideo.removeAttribute('src');
+      try { remoteVideo.load(); } catch {}
+      updateLayout();
     }
     function armConnectionWatchdog() {
       clearConnectionWatchdog();
@@ -5902,6 +8092,9 @@ public partial class MainWindow : Window
       previousStats.clear();
     }
     async function ensurePeerConnection() {
+      if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) {
+        closePeerConnectionForRestart();
+      }
       if (pc) return pc;
       pc = new RTCPeerConnection(rtcConfig);
       pc.onicecandidate = event => {
@@ -5944,6 +8137,14 @@ public partial class MainWindow : Window
         post({ type: 'state', value: 'WebRTC sender parameters skipped: ' + String(error && error.message ? error.message : error) });
       }
     }
+    function removeLocalSenders() {
+      if (!pc) return;
+      for (const sender of pc.getSenders()) {
+        if (sender.track) {
+          try { pc.removeTrack(sender); } catch {}
+        }
+      }
+    }
     function base64ToBytes(base64) {
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
@@ -5961,39 +8162,87 @@ public partial class MainWindow : Window
       nativeCanvas = null;
       nativeContext = null;
     }
-    function resetEncodedStream() {
+    function resetEncodedSender() {
       encodedSendQueue = [];
       encodedSendBusy = false;
+      if (encodedSendChannel) {
+        const channel = encodedSendChannel;
+        encodedSendChannel = null;
+        channel.onclose = null;
+        channel.onerror = null;
+        channel.onbufferedamountlow = null;
+        try { channel.close(); } catch {}
+      }
+    }
+    function resetEncodedReceiver() {
+      clearRemoteDecodeWatchdog();
+      remoteDecodeFailedNotified = false;
+      encodedReceivedChunks = 0;
+      encodedReceivedBytes = 0;
       encodedAppendQueue = [];
       encodedSourceBuffer = null;
-      if (encodedChannel) {
-        try { encodedChannel.close(); } catch {}
+      if (encodedReceiveChannel) {
+        const channel = encodedReceiveChannel;
+        encodedReceiveChannel = null;
+        channel.onclose = null;
+        channel.onerror = null;
+        channel.onmessage = null;
+        try { channel.close(); } catch {}
       }
-      encodedChannel = null;
-      encodedIsSender = false;
       if (encodedMediaSource && encodedMediaSource.readyState === 'open') {
         try { encodedMediaSource.endOfStream(); } catch {}
       }
       encodedMediaSource = null;
+      if (encodedObjectUrl) {
+        URL.revokeObjectURL(encodedObjectUrl);
+        encodedObjectUrl = null;
+      }
+    }
+    function resetEncodedStream() {
+      resetEncodedSender();
+      resetEncodedReceiver();
     }
     function setupEncodedChannel(channel, isSender, options) {
-      encodedChannel = channel;
-      encodedIsSender = isSender;
+      if (isSender) {
+        setupEncodedSendChannel(channel, options);
+      } else {
+        setupEncodedReceiveChannel(channel, options);
+      }
+    }
+    function setupEncodedSendChannel(channel, options) {
+      resetEncodedSender();
+      encodedSendChannel = channel;
       encodedMimeType = options.mimeType || encodedMimeType;
       encodedBufferLimit = Number(options.dataChannelBufferLimit || encodedBufferLimit);
-      encodedChannel.binaryType = 'arraybuffer';
-      encodedChannel.bufferedAmountLowThreshold = Math.floor(encodedBufferLimit / 2);
-      encodedChannel.onopen = () => {
-        if (encodedIsSender) {
-          encodedChannel.send(JSON.stringify({ type: 'encoded-config', mimeType: encodedMimeType }));
+      channel.binaryType = 'arraybuffer';
+      channel.bufferedAmountLowThreshold = Math.floor(encodedBufferLimit / 2);
+      channel.onopen = () => {
+        try {
+          channel.send(JSON.stringify({ type: 'encoded-config', mimeType: encodedMimeType }));
           post({ type: 'encoded-channel-open' });
+        } catch (error) {
+          post({ type: 'error', message: 'Encoded WebRTC config send failed: ' + String(error && error.message ? error.message : error) });
         }
         flushEncodedSendQueue();
       };
-      encodedChannel.onclose = () => post({ type: 'encoded-channel-closed' });
-      encodedChannel.onerror = error => post({ type: 'error', message: 'Encoded WebRTC data channel error: ' + String(error && error.message ? error.message : error) });
-      encodedChannel.onbufferedamountlow = flushEncodedSendQueue;
-      encodedChannel.onmessage = event => {
+      channel.onclose = () => {
+        if (encodedSendChannel === channel) encodedSendChannel = null;
+        post({ type: 'encoded-channel-closed' });
+      };
+      channel.onerror = error => post({ type: 'error', message: 'Encoded WebRTC send channel error: ' + String(error && error.message ? error.message : error) });
+      channel.onbufferedamountlow = flushEncodedSendQueue;
+    }
+    function setupEncodedReceiveChannel(channel, options) {
+      resetEncodedReceiver();
+      encodedReceiveChannel = channel;
+      encodedMimeType = options.mimeType || encodedMimeType;
+      channel.binaryType = 'arraybuffer';
+      channel.onclose = () => {
+        if (encodedReceiveChannel === channel) encodedReceiveChannel = null;
+        post({ type: 'state', value: 'Encoded WebRTC receive channel ended' });
+      };
+      channel.onerror = error => post({ type: 'state', value: 'Encoded WebRTC receive channel error: ' + String(error && error.message ? error.message : error) });
+      channel.onmessage = event => {
         if (typeof event.data === 'string') {
           try {
             const message = JSON.parse(event.data);
@@ -6013,16 +8262,20 @@ public partial class MainWindow : Window
     function startEncodedReceiver(mimeType) {
       encodedMimeType = mimeType || encodedMimeType;
       if (encodedMediaSource) return;
+      remoteDecodeFailedNotified = false;
       encodedMediaSource = new MediaSource();
       remoteVideo.muted = true;
       remoteVideo.autoplay = true;
       remoteVideo.playsInline = true;
       remoteVideo.srcObject = null;
-      remoteVideo.src = URL.createObjectURL(encodedMediaSource);
+      if (encodedObjectUrl) URL.revokeObjectURL(encodedObjectUrl);
+      encodedObjectUrl = URL.createObjectURL(encodedMediaSource);
+      remoteVideo.src = encodedObjectUrl;
       remoteStarted = true;
       updateLayout();
       post({ type: 'remote-started' });
       setStatus('Encoded WebRTC remote stream');
+      armRemoteDecodeWatchdog('encoded WebRTC video did not render');
       encodedMediaSource.addEventListener('sourceopen', () => {
         try {
           if (!MediaSource.isTypeSupported(encodedMimeType)) {
@@ -6031,10 +8284,11 @@ public partial class MainWindow : Window
           encodedSourceBuffer = encodedMediaSource.addSourceBuffer(encodedMimeType);
           encodedSourceBuffer.mode = 'segments';
           encodedSourceBuffer.addEventListener('updateend', flushEncodedAppendQueue);
+          encodedSourceBuffer.addEventListener('error', () => notifyRemoteDecodeFailed('encoded SourceBuffer error'));
           flushEncodedAppendQueue();
           playRemoteVideo();
         } catch (error) {
-          post({ type: 'error', message: String(error && error.message ? error.message : error) });
+          notifyRemoteDecodeFailed(String(error && error.message ? error.message : error));
         }
       }, { once: true });
     }
@@ -6042,15 +8296,26 @@ public partial class MainWindow : Window
       if (!data) return;
       startEncodedReceiver(encodedMimeType);
       const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      encodedReceivedChunks += 1;
+      encodedReceivedBytes += bytes.byteLength || bytes.length || 0;
       encodedAppendQueue.push(bytes);
+      if (!hasRemoteVideoFrame() && !remoteDecodeWatchdog) armRemoteDecodeWatchdog('encoded WebRTC video did not render');
       flushEncodedAppendQueue();
     }
     function flushEncodedAppendQueue() {
       if (!encodedSourceBuffer || encodedSourceBuffer.updating || encodedAppendQueue.length === 0) return;
+      if (remoteVideo.error) {
+        notifyRemoteDecodeFailed('HTML video error before append code=' + remoteVideo.error.code);
+        encodedAppendQueue = [];
+        return;
+      }
+
       try {
         encodedSourceBuffer.appendBuffer(encodedAppendQueue.shift());
       } catch (error) {
-        post({ type: 'state', value: 'Encoded WebRTC append skipped: ' + String(error && error.message ? error.message : error) });
+        const message = String(error && error.message ? error.message : error);
+        post({ type: 'state', value: 'Encoded WebRTC append skipped: ' + message });
+        notifyRemoteDecodeFailed(message);
         encodedAppendQueue = [];
       }
     }
@@ -6062,11 +8327,11 @@ public partial class MainWindow : Window
       flushEncodedSendQueue();
     }
     function flushEncodedSendQueue() {
-      if (encodedSendBusy || !encodedChannel || encodedChannel.readyState !== 'open') return;
+      if (encodedSendBusy || !encodedSendChannel || encodedSendChannel.readyState !== 'open') return;
       encodedSendBusy = true;
       try {
-        while (encodedSendQueue.length > 0 && encodedChannel.bufferedAmount < encodedBufferLimit) {
-          encodedChannel.send(encodedSendQueue.shift());
+        while (encodedSendQueue.length > 0 && encodedSendChannel.bufferedAmount < encodedBufferLimit) {
+          encodedSendChannel.send(encodedSendQueue.shift());
         }
       } catch (error) {
         post({ type: 'error', message: 'Encoded WebRTC send failed: ' + String(error && error.message ? error.message : error) });
@@ -6085,6 +8350,7 @@ public partial class MainWindow : Window
       if (!base64) return;
       const bitmap = await decodeNativeFrame(base64);
       try {
+        if (!nativeCanvas || !nativeContext) return;
         if (bitmap.width > 0 && bitmap.height > 0 && (nativeCanvas.width !== bitmap.width || nativeCanvas.height !== bitmap.height)) {
           nativeCanvas.width = bitmap.width;
           nativeCanvas.height = bitmap.height;
@@ -6126,11 +8392,26 @@ public partial class MainWindow : Window
       nativePendingFrame = message;
       processNativeFrameQueue();
     }
+    async function createAndSendOffer(offerOptions, connectedStatus) {
+      makingOffer = true;
+      try {
+        const offer = await pc.createOffer(offerOptions);
+        await pc.setLocalDescription(offer);
+      } finally {
+        makingOffer = false;
+      }
+
+      post({ type: 'offer', sdp: pc.localDescription.sdp });
+      armConnectionWatchdog();
+      setStatus(connectedStatus);
+    }
     async function startNativeShare(options) {
       try {
         if (options.iceServers) configure(options);
         await ensurePeerConnection();
         stopLocalTracks(false);
+        removeLocalSenders();
+        clearLocalPreview();
         const frameRate = Number(options.frameRate || 60);
         const width = Number(options.width || 1920);
         const height = Number(options.height || 1080);
@@ -6173,11 +8454,7 @@ public partial class MainWindow : Window
         nativeTrack.onended = () => post({ type: 'local-ended' });
         updateLayout();
         post({ type: 'local-started' });
-        const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false });
-        await pc.setLocalDescription(offer);
-        post({ type: 'offer', sdp: pc.localDescription.sdp });
-        armConnectionWatchdog();
-        setStatus('Native WebRTC offer sent');
+        await createAndSendOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false }, 'Native WebRTC offer sent');
       } catch (error) {
         resetNativeFrameSource();
         post({ type: 'error', message: String(error && error.message ? error.message : error) });
@@ -6189,17 +8466,15 @@ public partial class MainWindow : Window
         if (options.iceServers) configure(options);
         await ensurePeerConnection();
         stopLocalTracks(false);
-        resetEncodedStream();
+        removeLocalSenders();
+        resetEncodedSender();
+        clearLocalPreview();
         setupEncodedChannel(pc.createDataChannel('screen-h264', { ordered: true }), true, options);
         updateLayout();
         post({ type: 'encoded-local-started' });
-        const offer = await pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false });
-        await pc.setLocalDescription(offer);
-        post({ type: 'offer', sdp: pc.localDescription.sdp });
-        armConnectionWatchdog();
-        setStatus('Encoded WebRTC offer sent');
+        await createAndSendOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false }, 'Encoded WebRTC offer sent');
       } catch (error) {
-        resetEncodedStream();
+        resetEncodedSender();
         post({ type: 'error', message: String(error && error.message ? error.message : error) });
         setStatus('Encoded WebRTC error');
       }
@@ -6209,6 +8484,8 @@ public partial class MainWindow : Window
         if (options.iceServers) configure(options);
         await ensurePeerConnection();
         stopLocalTracks(false);
+        removeLocalSenders();
+        clearLocalPreview();
         const frameRate = Number(options.frameRate || 60);
         const width = Number(options.width || 2560);
         const height = Number(options.height || 1440);
@@ -6230,11 +8507,7 @@ public partial class MainWindow : Window
         }
         updateLayout();
         post({ type: 'local-started' });
-        const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false });
-        await pc.setLocalDescription(offer);
-        post({ type: 'offer', sdp: pc.localDescription.sdp });
-        armConnectionWatchdog();
-        setStatus('WebRTC offer sent');
+        await createAndSendOffer({ offerToReceiveVideo: true, offerToReceiveAudio: false }, 'WebRTC offer sent');
       } catch (error) {
         post({ type: 'error', message: String(error && error.message ? error.message : error) });
         setStatus('WebRTC error');
@@ -6243,6 +8516,18 @@ public partial class MainWindow : Window
     async function handleOffer(signal) {
       try {
         await ensurePeerConnection();
+        const offerCollision = makingOffer || pc.signalingState !== 'stable';
+        ignoringOffer = !politePeer && offerCollision;
+        if (ignoringOffer) {
+          post({ type: 'state', value: 'WebRTC offer collision ignored' });
+          return;
+        }
+
+        if (offerCollision) {
+          await pc.setLocalDescription({ type: 'rollback' });
+        }
+
+        ignoringOffer = false;
         await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -6267,30 +8552,58 @@ public partial class MainWindow : Window
       try {
         if (pc && signal.candidate) await pc.addIceCandidate(signal.candidate);
       } catch (error) {
-        post({ type: 'error', message: String(error && error.message ? error.message : error) });
+        if (!ignoringOffer) {
+          post({ type: 'error', message: String(error && error.message ? error.message : error) });
+        }
       }
     }
     function stopLocalTracks(notify) {
       if (localStream) {
-        for (const track of localStream.getTracks()) track.stop();
+        for (const track of localStream.getTracks()) {
+          if (!notify) track.onended = null;
+          try { track.stop(); } catch {}
+        }
       }
       localStream = null;
       localVideo.srcObject = null;
       resetNativeFrameSource();
-      resetEncodedStream();
+      resetEncodedSender();
+      clearLocalPreview();
       updateLayout();
       if (notify) post({ type: 'local-ended' });
+    }
+    function stopLocalOnly() {
+      stopLocalTracks(false);
+      if (pc) {
+        removeLocalSenders();
+      }
+      updateLayout();
+      post({ type: 'local-stopped' });
+    }
+    function stopRemoteOnly() {
+      clearRemotePlaybackRetry();
+      resetEncodedReceiver();
+      remoteVideo.pause();
+      remoteVideo.srcObject = null;
+      remoteVideo.removeAttribute('src');
+      try { remoteVideo.load(); } catch {}
+      remoteStarted = false;
+      updateLayout();
+      post({ type: 'remote-stopped' });
     }
     function stopAll() {
       clearConnectionWatchdog();
       clearRemotePlaybackRetry();
       stopStatsTimer();
       stopLocalTracks(false);
+      resetEncodedStream();
       if (pc) {
         pc.close();
         pc = null;
       }
       remoteVideo.srcObject = null;
+      remoteVideo.removeAttribute('src');
+      try { remoteVideo.load(); } catch {}
       remoteStarted = false;
       updateLayout();
       setStatus('WebRTC stopped');
@@ -6348,10 +8661,14 @@ public partial class MainWindow : Window
         if (message.type === 'configure') configure(message);
         else if (message.type === 'start-encoded-share') startEncodedShare(message);
         else if (message.type === 'encoded-local-chunk') enqueueEncodedLocalChunk(message);
+        else if (message.type === 'local-preview') handleLocalPreview(message);
         else if (message.type === 'start-native-share') startNativeShare(message);
         else if (message.type === 'native-frame') handleNativeFrame(message);
         else if (message.type === 'start-share') startShare(message);
+        else if (message.type === 'stop-local') stopLocalOnly();
+        else if (message.type === 'stop-remote') stopRemoteOnly();
         else if (message.type === 'stop') stopAll();
+        else if (message.type === 'focus-target') setFocusTarget(message.target || 'auto');
         else if (message.type === 'remote-offer') handleOffer(message.signal || {});
         else if (message.type === 'remote-answer') handleAnswer(message.signal || {});
         else if (message.type === 'remote-ice') handleIce(message.signal || {});
@@ -6421,6 +8738,9 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowTextLength(IntPtr handle);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr handle, out NativeRect rect);
@@ -7211,6 +9531,31 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             AppLog.Write(ex, $"Avatar cleanup failed: path={path}");
+        }
+    }
+
+    private static void DeleteAttachmentFileIfOwned(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            var attachmentsDirectory = Path.GetFullPath(AppPaths.AttachmentsDirectory);
+            var fullPath = Path.GetFullPath(path);
+            if (!fullPath.StartsWith(attachmentsDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(fullPath))
+            {
+                return;
+            }
+
+            File.Delete(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            AppLog.Write(ex, $"Attachment cleanup failed: path={path}");
         }
     }
 

@@ -11,6 +11,7 @@ internal sealed class AppSettings
     public string RelayClientToken { get; set; } = "";
     public int AudioInputDeviceId { get; set; } = -1;
     public int AudioOutputDeviceId { get; set; } = -1;
+    public string TenorApiKey { get; set; } = "";
 }
 
 internal enum NetworkMode
