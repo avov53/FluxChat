@@ -18,6 +18,7 @@ if exist "%ADMIN_DIST%" (
 )
 
 dotnet publish "%PROJECT%" ^
+    -m:1 ^
     -c Release ^
     -r linux-x64 ^
     --self-contained true ^
@@ -26,7 +27,8 @@ dotnet publish "%PROJECT%" ^
     -p:IncludeNativeLibrariesForSelfExtract=true ^
     -p:EnableCompressionInSingleFile=true ^
     -p:DebugType=None ^
-    -p:DebugSymbols=false
+    -p:DebugSymbols=false ^
+    -p:NuGetAudit=false
 
 if errorlevel 1 (
     echo.
@@ -35,6 +37,7 @@ if errorlevel 1 (
 )
 
 dotnet publish "%ADMIN_PROJECT%" ^
+    -m:1 ^
     -c Release ^
     -r linux-x64 ^
     --self-contained true ^
@@ -43,7 +46,8 @@ dotnet publish "%ADMIN_PROJECT%" ^
     -p:IncludeNativeLibrariesForSelfExtract=true ^
     -p:EnableCompressionInSingleFile=true ^
     -p:DebugType=None ^
-    -p:DebugSymbols=false
+    -p:DebugSymbols=false ^
+    -p:NuGetAudit=false
 
 if errorlevel 1 (
     echo.
@@ -61,3 +65,4 @@ rmdir /s /q "%ADMIN_DIST%"
 echo.
 echo Done: %DIST%\FluxChat.Server
 echo Done: %DIST%\fluxus
+echo Badge Authority is intentionally separate. Run dist-badge-authority-linux.bat for the official service binary.

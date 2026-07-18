@@ -1,6 +1,7 @@
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using FluxChat.Shared;
 
 namespace FluxChat.Client;
 
@@ -47,7 +48,7 @@ internal static class UserProfileStore
         var publicKey = Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo());
         var privateKey = ecdsa.ExportPkcs8PrivateKey();
         var protectedKey = ProtectedData.Protect(privateKey, null, DataProtectionScope.CurrentUser);
-        var userId = CreateFingerprint(publicKey);
+        var userId = BadgeCrypto.CreateUserId(publicKey);
         var profile = new UserProfile(userId, Environment.UserName, Convert.ToBase64String(protectedKey), publicKey);
 
         await SaveAsync(profile);
@@ -59,12 +60,6 @@ internal static class UserProfileStore
         AppPaths.EnsureCreated();
         var options = new JsonSerializerOptions { WriteIndented = true };
         await File.WriteAllTextAsync(AppPaths.ProfilePath, JsonSerializer.Serialize(profile, options));
-    }
-
-    private static string CreateFingerprint(string publicKey)
-    {
-        var hash = SHA256.HashData(Convert.FromBase64String(publicKey));
-        return Convert.ToHexString(hash)[..24].ToLowerInvariant();
     }
 
     private static bool IsUsable(UserProfile profile)

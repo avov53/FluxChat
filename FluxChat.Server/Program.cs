@@ -100,6 +100,12 @@ internal sealed class RelayServer
             var register = ReadPacket<RelayRegisterPacket>(firstLine, "fluxchat.relay-register.v1")
                 ?? throw new InvalidOperationException("First packet must be relay registration.");
 
+            if (!VerifyRegistrationIdentity(register))
+            {
+                await SendAsync(writer, RelayAckPacket.Denied("Identity signature is invalid."));
+                return;
+            }
+
             var auth = _database.Authenticate(register.UserId, register.DisplayName, register.Credential);
             if (!auth.IsAccepted)
             {
@@ -110,7 +116,10 @@ internal sealed class RelayServer
 
             await SendAsync(writer, RelayAckPacket.AcceptedResult(auth.Message, auth.ClientToken, CreateIceConfig(register.UserId)));
 
-            session = new ClientSession(register.UserId, register.DisplayName, writer, client);
+            session = new ClientSession(register.UserId, register.DisplayName, writer, client)
+            {
+                PublicKey = register.PublicKey
+            };
             _online[register.UserId] = session;
             Console.WriteLine($"{register.DisplayName} ({register.UserId}) connected from {remote}");
             await SendPresenceSnapshotAsync(session);
@@ -131,6 +140,12 @@ internal sealed class RelayServer
                     var presence = ReadPacket<RelayPresencePacket>(line, "fluxchat.relay-presence.v1");
                     if (presence is not null)
                     {
+                        if (!VerifyPresenceIdentity(presence, session))
+                        {
+                            Console.WriteLine($"Rejected invalid signed presence from {session.UserId}");
+                            continue;
+                        }
+
                         session.DisplayName = presence.DisplayName;
                         session.Status = presence.Status;
                         if (!string.IsNullOrWhiteSpace(presence.AvatarKind))
@@ -150,7 +165,8 @@ internal sealed class RelayServer
                         }
 
                         session.LastPresenceUtc = DateTimeOffset.UtcNow;
-                        await BroadcastPresenceAsync(session, presence.Status);
+                        session.LatestPresence = presence;
+                        await BroadcastPresenceAsync(session, presence.Status, presence);
                     }
 
                     continue;
@@ -161,6 +177,11 @@ internal sealed class RelayServer
                     var packet = ReadPacket<ChatPacket>(line, "fluxchat.message.v1");
                     if (packet is not null)
                     {
+                        if (!VerifyChatIdentity(packet, session))
+                        {
+                            Console.WriteLine($"Rejected invalid signed message {packet.MessageId} from {session.UserId}");
+                            continue;
+                        }
                         await RouteMessageAsync(packet);
                     }
                 }
@@ -484,9 +505,9 @@ internal sealed class RelayServer
         }
     }
 
-    private async Task BroadcastPresenceAsync(ClientSession changed, string status)
+    private async Task BroadcastPresenceAsync(ClientSession changed, string status, RelayPresencePacket? signedPacket = null)
     {
-        var packet = CreatePresencePacket(changed, status);
+        var packet = signedPacket ?? CreatePresencePacket(changed, status);
         foreach (var session in _online.Values)
         {
             if (session.UserId == changed.UserId)
@@ -697,7 +718,9 @@ internal sealed class RelayServer
         => writer.WriteLineAsync(JsonSerializer.Serialize(packet));
 
     private static RelayPresencePacket CreatePresencePacket(ClientSession session, string status)
-        => RelayPresencePacket.Create(
+        => session.LatestPresence is not null && session.LatestPresence.Status == status
+            ? session.LatestPresence
+            : RelayPresencePacket.Create(
             session.UserId,
             session.DisplayName,
             status,
@@ -709,6 +732,43 @@ internal sealed class RelayServer
             session.AvatarOffsetY,
             session.AvatarVideoStartSeconds,
             session.AvatarVideoDurationSeconds);
+
+    private static bool VerifyRegistrationIdentity(RelayRegisterPacket packet)
+    {
+        var hasAny = packet.PublicKey is not null || packet.IdentityNonce is not null ||
+                     packet.IdentityTimestampUtc is not null || packet.IdentitySignature is not null;
+        if (!hasAny) return true;
+        if (string.IsNullOrWhiteSpace(packet.PublicKey) || string.IsNullOrWhiteSpace(packet.IdentityNonce) ||
+            packet.IdentityTimestampUtc is null || string.IsNullOrWhiteSpace(packet.IdentitySignature) ||
+            Math.Abs((DateTimeOffset.UtcNow - packet.IdentityTimestampUtc.Value).TotalMinutes) > 5 ||
+            BadgeCrypto.CreateUserId(packet.PublicKey) != packet.UserId)
+        {
+            return false;
+        }
+        return BadgeCrypto.Verify(BadgeCrypto.BuildRegisterIdentityPayload(packet), packet.IdentitySignature, packet.PublicKey);
+    }
+
+    private static bool VerifyPresenceIdentity(RelayPresencePacket packet, ClientSession session)
+    {
+        var hasAny = packet.PublicKey is not null || packet.IdentityNonce is not null || packet.IdentitySignature is not null || packet.BadgeCertificate is not null;
+        if (!hasAny) return packet.UserId == session.UserId;
+        return packet.UserId == session.UserId && packet.PublicKey == session.PublicKey &&
+               !string.IsNullOrWhiteSpace(packet.IdentityNonce) && !string.IsNullOrWhiteSpace(packet.IdentitySignature) &&
+               Math.Abs((DateTimeOffset.UtcNow - packet.SentAtUtc).TotalMinutes) <= 5 &&
+               BadgeCrypto.Verify(BadgeCrypto.BuildPresenceIdentityPayload(packet), packet.IdentitySignature, packet.PublicKey!) &&
+               session.TryUseIdentityNonce(packet.IdentityNonce);
+    }
+
+    private static bool VerifyChatIdentity(ChatPacket packet, ClientSession session)
+    {
+        var hasAny = packet.FromPublicKey is not null || packet.IdentityNonce is not null || packet.IdentitySignature is not null || packet.BadgeCertificate is not null;
+        if (!hasAny) return packet.FromUserId == session.UserId;
+        return packet.FromUserId == session.UserId && packet.FromPublicKey == session.PublicKey &&
+               !string.IsNullOrWhiteSpace(packet.IdentityNonce) && !string.IsNullOrWhiteSpace(packet.IdentitySignature) &&
+               Math.Abs((DateTimeOffset.UtcNow - packet.SentAtUtc).TotalMinutes) <= 5 &&
+               BadgeCrypto.Verify(BadgeCrypto.BuildChatIdentityPayload(packet), packet.IdentitySignature, packet.FromPublicKey!) &&
+               session.TryUseIdentityNonce(packet.IdentityNonce);
+    }
 }
 
 internal sealed class ClientSession(string userId, string displayName, StreamWriter writer, TcpClient client)
@@ -721,6 +781,9 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
     private RelayScreenFramePacket? _pendingScreenFrame;
     private int _screenSendLoopActive;
     private long _droppedScreenFrames;
+    private readonly Queue<string> _identityNonceOrder = new();
+    private readonly HashSet<string> _identityNonces = new(StringComparer.Ordinal);
+    private readonly object _identityNonceGate = new();
 
     public string UserId { get; } = userId;
     public string DisplayName { get; set; } = displayName;
@@ -730,6 +793,8 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
     public StreamWriter? ScreenWriter { get; private set; }
     public IPEndPoint? AudioEndPoint { get; set; }
     public string Status { get; set; } = "Online";
+    public string? PublicKey { get; set; }
+    public RelayPresencePacket? LatestPresence { get; set; }
     public string? AvatarKind { get; set; }
     public string? AvatarMediaBase64 { get; set; }
     public string? AvatarExtension { get; set; }
@@ -738,6 +803,20 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
     public double AvatarOffsetY { get; set; }
     public double AvatarVideoStartSeconds { get; set; }
     public double AvatarVideoDurationSeconds { get; set; } = 10;
+
+    public bool TryUseIdentityNonce(string nonce)
+    {
+        lock (_identityNonceGate)
+        {
+            if (!_identityNonces.Add(nonce)) return false;
+            _identityNonceOrder.Enqueue(nonce);
+            while (_identityNonceOrder.Count > 2048)
+            {
+                _identityNonces.Remove(_identityNonceOrder.Dequeue());
+            }
+            return true;
+        }
+    }
     public DateTimeOffset LastPresenceUtc { get; set; } = DateTimeOffset.UtcNow;
 
     public async Task SendAsync<T>(T packet)

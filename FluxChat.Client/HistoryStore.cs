@@ -43,7 +43,15 @@ internal sealed class HistoryStore
                 AvatarVideoStartSeconds REAL NOT NULL DEFAULT 0,
                 AvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10,
                 IsGroup INTEGER NOT NULL DEFAULT 0,
-                GroupMemberIds TEXT NOT NULL DEFAULT ''
+                GroupMemberIds TEXT NOT NULL DEFAULT '',
+                GroupOwnerUserId TEXT NOT NULL DEFAULT '',
+                GroupVersion INTEGER NOT NULL DEFAULT 0,
+                GroupIsDeleted INTEGER NOT NULL DEFAULT 0,
+                GroupMembersJson TEXT NOT NULL DEFAULT '',
+                VerifiedBadgeId TEXT NOT NULL DEFAULT '',
+                BadgeCertificateJson TEXT NOT NULL DEFAULT '',
+                IdentityPublicKey TEXT NOT NULL DEFAULT '',
+                BadgeVerifiedAtUtc TEXT NULL
             );
             """;
 
@@ -57,6 +65,14 @@ internal sealed class HistoryStore
         await AddContactColumnAsync(connection, "AvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10");
         await AddContactColumnAsync(connection, "IsGroup INTEGER NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "GroupMemberIds TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "GroupOwnerUserId TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "GroupVersion INTEGER NOT NULL DEFAULT 0");
+        await AddContactColumnAsync(connection, "GroupIsDeleted INTEGER NOT NULL DEFAULT 0");
+        await AddContactColumnAsync(connection, "GroupMembersJson TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "VerifiedBadgeId TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "BadgeCertificateJson TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "IdentityPublicKey TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "BadgeVerifiedAtUtc TEXT NULL");
         await AddMessageColumnAsync(connection, "Kind TEXT NOT NULL DEFAULT 'Text'");
         await AddMessageColumnAsync(connection, "Text TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "AttachmentPath TEXT NOT NULL DEFAULT ''");
@@ -66,13 +82,27 @@ internal sealed class HistoryStore
         await AddMessageColumnAsync(connection, "ForwardedFrom TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "EditedAtUtc TEXT NULL");
         await AddMessageColumnAsync(connection, "ReactionsJson TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "SenderUserId TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "SenderDisplayName TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "SenderAvatarKind TEXT NOT NULL DEFAULT 'color'");
+        await AddMessageColumnAsync(connection, "SenderAvatarPath TEXT NOT NULL DEFAULT ''");
         await DeleteEmptyMessagesAsync(connection);
     }
 
     private static async Task DeleteEmptyMessagesAsync(SqliteConnection connection)
     {
         var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM Messages WHERE length(trim(Body)) = 0;";
+        command.CommandText = """
+                DELETE FROM Messages
+            WHERE length(trim(Body)) = 0
+              AND length(trim(Text)) = 0
+              AND length(trim(AttachmentPath)) = 0
+              AND length(trim(AttachmentUrl)) = 0
+              AND length(trim(ReplyPreview)) = 0
+              AND length(trim(ForwardedFrom)) = 0
+              AND length(trim(ReactionsJson)) = 0
+              AND (Kind IS NULL OR Kind = '' OR Kind = 'Text');
+            """;
         await command.ExecuteNonQueryAsync();
     }
 
@@ -111,10 +141,12 @@ internal sealed class HistoryStore
         command.CommandText = """
             INSERT OR REPLACE INTO Messages (
                 MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
-                ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson)
+                ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson,
+                SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath)
             VALUES (
                 $messageId, $peerUserId, $body, $isOutgoing, $sentAtUtc, $kind, $text, $attachmentPath, $attachmentUrl,
-                $replyToMessageId, $replyPreview, $forwardedFrom, $editedAtUtc, $reactionsJson);
+                $replyToMessageId, $replyPreview, $forwardedFrom, $editedAtUtc, $reactionsJson,
+                $senderUserId, $senderDisplayName, $senderAvatarKind, $senderAvatarPath);
             """;
         command.Parameters.AddWithValue("$messageId", message.MessageId.ToString());
         command.Parameters.AddWithValue("$peerUserId", message.PeerUserId);
@@ -130,6 +162,10 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$forwardedFrom", message.ForwardedFrom);
         command.Parameters.AddWithValue("$editedAtUtc", message.EditedAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$reactionsJson", message.ReactionsJson);
+        command.Parameters.AddWithValue("$senderUserId", message.SenderUserId);
+        command.Parameters.AddWithValue("$senderDisplayName", message.SenderDisplayName);
+        command.Parameters.AddWithValue("$senderAvatarKind", message.SenderAvatarKind);
+        command.Parameters.AddWithValue("$senderAvatarPath", message.SenderAvatarPath);
 
         await command.ExecuteNonQueryAsync();
     }
@@ -202,7 +238,8 @@ internal sealed class HistoryStore
         var command = connection.CreateCommand();
         command.CommandText = """
             SELECT MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
-                   ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson
+                   ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson,
+                   SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath
             FROM Messages
             WHERE PeerUserId = $peerUserId
             ORDER BY SentAtUtc ASC;
@@ -232,7 +269,11 @@ internal sealed class HistoryStore
                 ReplyPreview = reader.IsDBNull(10) ? "" : reader.GetString(10),
                 ForwardedFrom = reader.IsDBNull(11) ? "" : reader.GetString(11),
                 EditedAtUtc = editedAt,
-                ReactionsJson = reader.IsDBNull(13) ? "" : reader.GetString(13)
+                ReactionsJson = reader.IsDBNull(13) ? "" : reader.GetString(13),
+                SenderUserId = reader.IsDBNull(14) ? "" : reader.GetString(14),
+                SenderDisplayName = reader.IsDBNull(15) ? "" : reader.GetString(15),
+                SenderAvatarKind = reader.IsDBNull(16) ? "color" : reader.GetString(16),
+                SenderAvatarPath = reader.IsDBNull(17) ? "" : reader.GetString(17)
             });
         }
 
@@ -248,10 +289,12 @@ internal sealed class HistoryStore
         command.CommandText = """
             INSERT INTO Contacts (UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
                                   AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
-                                  IsGroup, GroupMemberIds)
+                                  IsGroup, GroupMemberIds, GroupOwnerUserId, GroupVersion, GroupIsDeleted, GroupMembersJson,
+                                  VerifiedBadgeId, BadgeCertificateJson, IdentityPublicKey, BadgeVerifiedAtUtc)
             VALUES ($userId, $displayName, $ipAddress, $messagePort, $status, $lastSeenUtc, $avatarKind, $avatarPath,
                     $avatarScale, $avatarOffsetX, $avatarOffsetY, $avatarVideoStartSeconds, $avatarVideoDurationSeconds,
-                    $isGroup, $groupMemberIds)
+                    $isGroup, $groupMemberIds, $groupOwnerUserId, $groupVersion, $groupIsDeleted, $groupMembersJson,
+                    $verifiedBadgeId, $badgeCertificateJson, $identityPublicKey, $badgeVerifiedAtUtc)
             ON CONFLICT(UserId) DO UPDATE SET
                 DisplayName = excluded.DisplayName,
                 IpAddress = excluded.IpAddress,
@@ -266,7 +309,15 @@ internal sealed class HistoryStore
                 AvatarVideoStartSeconds = excluded.AvatarVideoStartSeconds,
                 AvatarVideoDurationSeconds = excluded.AvatarVideoDurationSeconds,
                 IsGroup = excluded.IsGroup,
-                GroupMemberIds = excluded.GroupMemberIds;
+                GroupMemberIds = excluded.GroupMemberIds,
+                GroupOwnerUserId = excluded.GroupOwnerUserId,
+                GroupVersion = excluded.GroupVersion,
+                GroupIsDeleted = excluded.GroupIsDeleted,
+                GroupMembersJson = excluded.GroupMembersJson,
+                VerifiedBadgeId = excluded.VerifiedBadgeId,
+                BadgeCertificateJson = excluded.BadgeCertificateJson,
+                IdentityPublicKey = excluded.IdentityPublicKey,
+                BadgeVerifiedAtUtc = excluded.BadgeVerifiedAtUtc;
             """;
         command.Parameters.AddWithValue("$userId", contact.UserId);
         command.Parameters.AddWithValue("$displayName", contact.DisplayName);
@@ -283,6 +334,14 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$avatarVideoDurationSeconds", contact.AvatarVideoDurationSeconds);
         command.Parameters.AddWithValue("$isGroup", contact.IsGroup ? 1 : 0);
         command.Parameters.AddWithValue("$groupMemberIds", contact.GroupMemberIds);
+        command.Parameters.AddWithValue("$groupOwnerUserId", contact.GroupOwnerUserId);
+        command.Parameters.AddWithValue("$groupVersion", contact.GroupVersion);
+        command.Parameters.AddWithValue("$groupIsDeleted", contact.GroupIsDeleted ? 1 : 0);
+        command.Parameters.AddWithValue("$groupMembersJson", contact.GroupMembersJson);
+        command.Parameters.AddWithValue("$verifiedBadgeId", contact.VerifiedBadgeId);
+        command.Parameters.AddWithValue("$badgeCertificateJson", contact.BadgeCertificateJson);
+        command.Parameters.AddWithValue("$identityPublicKey", contact.IdentityPublicKey);
+        command.Parameters.AddWithValue("$badgeVerifiedAtUtc", contact.BadgeVerifiedAtUtc?.ToString("O") ?? (object)DBNull.Value);
 
         await command.ExecuteNonQueryAsync();
     }
@@ -298,8 +357,10 @@ internal sealed class HistoryStore
         command.CommandText = """
             SELECT UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
                    AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
-                   IsGroup, GroupMemberIds
+                   IsGroup, GroupMemberIds, GroupOwnerUserId, GroupVersion, GroupIsDeleted, GroupMembersJson,
+                   VerifiedBadgeId, BadgeCertificateJson, IdentityPublicKey, BadgeVerifiedAtUtc
             FROM Contacts
+            WHERE GroupIsDeleted = 0
             ORDER BY DisplayName COLLATE NOCASE ASC;
             """;
 
@@ -326,7 +387,15 @@ internal sealed class HistoryStore
                 AvatarVideoStartSeconds = reader.GetDouble(11),
                 AvatarVideoDurationSeconds = reader.GetDouble(12),
                 IsGroup = reader.GetInt32(13) == 1,
-                GroupMemberIds = reader.GetString(14)
+                GroupMemberIds = reader.GetString(14),
+                GroupOwnerUserId = reader.IsDBNull(15) ? "" : reader.GetString(15),
+                GroupVersion = reader.IsDBNull(16) ? 0 : reader.GetInt64(16),
+                GroupIsDeleted = !reader.IsDBNull(17) && reader.GetInt32(17) == 1,
+                GroupMembersJson = reader.IsDBNull(18) ? "" : reader.GetString(18),
+                VerifiedBadgeId = reader.IsDBNull(19) ? "" : reader.GetString(19),
+                BadgeCertificateJson = reader.IsDBNull(20) ? "" : reader.GetString(20),
+                IdentityPublicKey = reader.IsDBNull(21) ? "" : reader.GetString(21),
+                BadgeVerifiedAtUtc = reader.IsDBNull(22) ? null : DateTimeOffset.Parse(reader.GetString(22))
             });
         }
 

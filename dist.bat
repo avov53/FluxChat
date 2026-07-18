@@ -33,7 +33,8 @@ dotnet publish "%PROJECT%" ^
     --self-contained true ^
     -o "%DIST%" ^
     -p:PublishSingleFile=true ^
-    -p:IncludeNativeLibrariesForSelfExtract=true
+    -p:IncludeNativeLibrariesForSelfExtract=true ^
+    -p:NuGetAudit=false
 
 if errorlevel 1 (
     echo.

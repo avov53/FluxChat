@@ -9,9 +9,9 @@ namespace FluxChat.Client;
 internal sealed class RelayClient : IAsyncDisposable
 {
     private static readonly UTF8Encoding Utf8NoBom = new(false);
-    private static readonly TimeSpan AudioUdpPreferredAfterReceive = TimeSpan.FromSeconds(5);
 
     private readonly UserProfile _profile;
+    private readonly IdentitySigner _identitySigner;
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly SemaphoreSlim _audioSendLock = new(1, 1);
@@ -31,11 +31,17 @@ internal sealed class RelayClient : IAsyncDisposable
     private string? _screenHost;
     private int _screenPort;
     private string _screenCredential = "";
-    private long _lastUdpAudioReceivedTicks;
 
     public RelayClient(UserProfile profile)
     {
         _profile = profile;
+        _identitySigner = new IdentitySigner(profile);
+    }
+
+    public BadgeCertificate? ActiveBadgeCertificate
+    {
+        get => _identitySigner.ActiveBadgeCertificate;
+        set => _identitySigner.ActiveBadgeCertificate = value;
     }
 
     public bool IsConnected => _client?.Connected == true && _writer is not null;
@@ -67,7 +73,8 @@ internal sealed class RelayClient : IAsyncDisposable
         };
         var reader = new StreamReader(stream, Utf8NoBom, leaveOpen: true);
 
-        await SendRawAsync(RelayRegisterPacket.Create(_profile.UserId, _profile.DisplayName, credential), cancellationToken);
+        var register = _identitySigner.Sign(RelayRegisterPacket.Create(_profile.UserId, _profile.DisplayName, credential));
+        await SendRawAsync(register, cancellationToken);
         var ackLine = await reader.ReadLineAsync(cancellationToken);
         var ack = ReadPacket<RelayAckPacket>(ackLine, "fluxchat.relay-ack.v1")
             ?? throw new InvalidOperationException("VPS server did not confirm registration.");
@@ -161,19 +168,24 @@ internal sealed class RelayClient : IAsyncDisposable
             AppLog.Write($"Relay send: messageId={packet.MessageId}, to={packet.ToUserId}");
         }
 
-        await SendRawAsync(packet, cancellationToken);
+        await SendRawAsync(_identitySigner.Sign(packet), cancellationToken);
     }
 
     public async Task SendAudioAsync(RelayAudioPacket packet, CancellationToken cancellationToken)
     {
         var udp = _audioUdp;
-        var preferUdp = string.IsNullOrWhiteSpace(packet.Body) || IsUdpAudioActive();
-        if (udp is not null && preferUdp)
+        var hasAudioFrame = !string.IsNullOrWhiteSpace(packet.Body);
+        if (udp is not null)
         {
             try
             {
                 var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
                 await udp.SendAsync(bytes, cancellationToken);
+                if (hasAudioFrame)
+                {
+                    await udp.SendAsync(bytes, cancellationToken);
+                }
+
                 return;
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
@@ -182,7 +194,7 @@ internal sealed class RelayClient : IAsyncDisposable
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(packet.Body))
+        if (hasAudioFrame)
         {
             if (_audioWriter is null)
             {
@@ -281,8 +293,7 @@ internal sealed class RelayClient : IAsyncDisposable
             throw new InvalidOperationException("VPS server is not connected.");
         }
 
-        await SendRawAsync(
-            RelayPresencePacket.Create(
+        var presence = RelayPresencePacket.Create(
                 _profile.UserId,
                 _profile.DisplayName,
                 status,
@@ -293,8 +304,8 @@ internal sealed class RelayClient : IAsyncDisposable
                 avatarOffsetX,
                 avatarOffsetY,
                 avatarVideoStartSeconds,
-                avatarVideoDurationSeconds),
-            cancellationToken);
+                avatarVideoDurationSeconds);
+        await SendRawAsync(_identitySigner.Sign(presence), cancellationToken);
     }
 
     private async Task ConnectAudioTcpAsync(string host, int port, string credential, CancellationToken cancellationToken)
@@ -507,7 +518,6 @@ internal sealed class RelayClient : IAsyncDisposable
                 var packet = JsonSerializer.Deserialize<RelayAudioPacket>(result.Buffer);
                 if (packet is not null && packet.ToUserId == _profile.UserId)
                 {
-                    Interlocked.Exchange(ref _lastUdpAudioReceivedTicks, DateTimeOffset.UtcNow.Ticks);
                     AudioReceived?.Invoke(packet);
                 }
             }
@@ -682,7 +692,6 @@ internal sealed class RelayClient : IAsyncDisposable
     {
         await DisposeAudioTcpAsync();
         await DisposeScreenTcpAsync();
-        Interlocked.Exchange(ref _lastUdpAudioReceivedTicks, 0);
 
         try
         {
@@ -816,11 +825,4 @@ internal sealed class RelayClient : IAsyncDisposable
         => packet.Intent == "call-audio" ||
             packet.Body.StartsWith("fluxchat-control:", StringComparison.Ordinal) &&
             packet.Body.Contains("\"Intent\":\"call-audio\"", StringComparison.Ordinal);
-
-    private bool IsUdpAudioActive()
-    {
-        var lastTicks = Interlocked.Read(ref _lastUdpAudioReceivedTicks);
-        return lastTicks > 0 &&
-               DateTimeOffset.UtcNow - new DateTimeOffset(lastTicks, TimeSpan.Zero) <= AudioUdpPreferredAfterReceive;
-    }
 }

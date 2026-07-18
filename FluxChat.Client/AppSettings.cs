@@ -11,7 +11,9 @@ internal sealed class AppSettings
     public string RelayClientToken { get; set; } = "";
     public int AudioInputDeviceId { get; set; } = -1;
     public int AudioOutputDeviceId { get; set; } = -1;
+    public bool NoiseSuppressionEnabled { get; set; } = true;
     public string TenorApiKey { get; set; } = "";
+    public string BadgeAuthorityUrl { get; set; } = "https://badges.91-186-217-186.sslip.io:8443";
 }
 
 internal enum NetworkMode

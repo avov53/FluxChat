@@ -11,7 +11,7 @@ internal sealed class AudioCallSession : IDisposable
     private const int SampleRate = 16000;
     private const short Channels = 1;
     private const short BitsPerSample = 16;
-    private const int BufferMilliseconds = 40;
+    private const int BufferMilliseconds = 20;
     private const int InputBufferCount = 4;
     private const int OutputBufferCount = 4;
     private const int InputBufferBytes = SampleRate * Channels * (BitsPerSample / 8) * BufferMilliseconds / 1000;

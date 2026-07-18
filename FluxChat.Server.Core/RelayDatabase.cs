@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using FluxChat.Shared;
 using Microsoft.Data.Sqlite;
 
@@ -63,7 +64,11 @@ public sealed class RelayDatabase
                     FromAvatarOffsetX REAL NOT NULL DEFAULT 0,
                     FromAvatarOffsetY REAL NOT NULL DEFAULT 0,
                     FromAvatarVideoStartSeconds REAL NOT NULL DEFAULT 0,
-                    FromAvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10
+                    FromAvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10,
+                    FromPublicKey TEXT NULL,
+                    IdentityNonce TEXT NULL,
+                    IdentitySignature TEXT NULL,
+                    BadgeCertificateJson TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS IX_PendingMessages_ToUserId_StoredAtUtc
@@ -108,6 +113,10 @@ public sealed class RelayDatabase
             AddPendingColumn(command, "FromAvatarOffsetY REAL NOT NULL DEFAULT 0");
             AddPendingColumn(command, "FromAvatarVideoStartSeconds REAL NOT NULL DEFAULT 0");
             AddPendingColumn(command, "FromAvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10");
+            AddPendingColumn(command, "FromPublicKey TEXT NULL");
+            AddPendingColumn(command, "IdentityNonce TEXT NULL");
+            AddPendingColumn(command, "IdentitySignature TEXT NULL");
+            AddPendingColumn(command, "BadgeCertificateJson TEXT NULL");
         }
     }
 
@@ -327,11 +336,13 @@ public sealed class RelayDatabase
                 INSERT OR IGNORE INTO PendingMessages
                     (MessageId, FromUserId, FromDisplayName, ToUserId, Body, SentAtUtc, StoredAtUtc, NetworkId, FromRelayServer, ToRelayServer,
                      Intent, FromStatus, FromAvatarKind, FromAvatarMediaBase64, FromAvatarExtension, FromAvatarScale,
-                     FromAvatarOffsetX, FromAvatarOffsetY, FromAvatarVideoStartSeconds, FromAvatarVideoDurationSeconds)
+                     FromAvatarOffsetX, FromAvatarOffsetY, FromAvatarVideoStartSeconds, FromAvatarVideoDurationSeconds,
+                     FromPublicKey, IdentityNonce, IdentitySignature, BadgeCertificateJson)
                 VALUES
                     ($messageId, $fromUserId, $fromDisplayName, $toUserId, $body, $sentAtUtc, $storedAtUtc, $networkId, $fromRelayServer, $toRelayServer,
                      $intent, $fromStatus, $fromAvatarKind, $fromAvatarMediaBase64, $fromAvatarExtension, $fromAvatarScale,
-                     $fromAvatarOffsetX, $fromAvatarOffsetY, $fromAvatarVideoStartSeconds, $fromAvatarVideoDurationSeconds);
+                     $fromAvatarOffsetX, $fromAvatarOffsetY, $fromAvatarVideoStartSeconds, $fromAvatarVideoDurationSeconds,
+                     $fromPublicKey, $identityNonce, $identitySignature, $badgeCertificateJson);
                 """;
             command.Parameters.AddWithValue("$messageId", packet.MessageId.ToString());
             command.Parameters.AddWithValue("$fromUserId", packet.FromUserId);
@@ -353,6 +364,10 @@ public sealed class RelayDatabase
             command.Parameters.AddWithValue("$fromAvatarOffsetY", packet.FromAvatarOffsetY);
             command.Parameters.AddWithValue("$fromAvatarVideoStartSeconds", packet.FromAvatarVideoStartSeconds);
             command.Parameters.AddWithValue("$fromAvatarVideoDurationSeconds", packet.FromAvatarVideoDurationSeconds);
+            command.Parameters.AddWithValue("$fromPublicKey", (object?)packet.FromPublicKey ?? DBNull.Value);
+            command.Parameters.AddWithValue("$identityNonce", (object?)packet.IdentityNonce ?? DBNull.Value);
+            command.Parameters.AddWithValue("$identitySignature", (object?)packet.IdentitySignature ?? DBNull.Value);
+            command.Parameters.AddWithValue("$badgeCertificateJson", packet.BadgeCertificate is null ? DBNull.Value : JsonSerializer.Serialize(packet.BadgeCertificate));
             command.ExecuteNonQuery();
         }
     }
@@ -366,7 +381,8 @@ public sealed class RelayDatabase
             command.CommandText = """
                 SELECT MessageId, FromUserId, FromDisplayName, ToUserId, Body, SentAtUtc, NetworkId, FromRelayServer, ToRelayServer,
                        Intent, FromStatus, FromAvatarKind, FromAvatarMediaBase64, FromAvatarExtension, FromAvatarScale,
-                       FromAvatarOffsetX, FromAvatarOffsetY, FromAvatarVideoStartSeconds, FromAvatarVideoDurationSeconds
+                       FromAvatarOffsetX, FromAvatarOffsetY, FromAvatarVideoStartSeconds, FromAvatarVideoDurationSeconds,
+                       FromPublicKey, IdentityNonce, IdentitySignature, BadgeCertificateJson
                 FROM PendingMessages
                 WHERE ToUserId = $toUserId
                 ORDER BY StoredAtUtc ASC;
@@ -396,7 +412,11 @@ public sealed class RelayDatabase
                     reader.GetDouble(15),
                     reader.GetDouble(16),
                     reader.GetDouble(17),
-                    reader.GetDouble(18)));
+                    reader.GetDouble(18),
+                    reader.IsDBNull(19) ? null : reader.GetString(19),
+                    reader.IsDBNull(20) ? null : reader.GetString(20),
+                    reader.IsDBNull(21) ? null : reader.GetString(21),
+                    reader.IsDBNull(22) ? null : JsonSerializer.Deserialize<BadgeCertificate>(reader.GetString(22))));
             }
 
             return rows;

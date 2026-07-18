@@ -21,6 +21,18 @@ public partial class App : System.Windows.Application
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
+        if (IsRecoverableWebViewCompositionResizeException(e.Exception))
+        {
+            CrashLog.Write(e.Exception, "Recovered WebView2 composition resize exception");
+            e.Handled = true;
+            if (Current.MainWindow is MainWindow window)
+            {
+                window.RecoverFromWebViewCompositionResizeFault();
+            }
+
+            return;
+        }
+
         CrashLog.Write(e.Exception, "WPF dispatcher exception");
         MessageBox.Show(
             $"FluxChat crashed during startup or UI work.\n\n{e.Exception.Message}\n\nLog: {CrashLog.LogPath}",
@@ -29,6 +41,18 @@ public partial class App : System.Windows.Application
             MessageBoxImage.Error);
         e.Handled = true;
         Current.Shutdown();
+    }
+
+    private static bool IsRecoverableWebViewCompositionResizeException(Exception exception)
+    {
+        if (exception is not ArgumentException)
+        {
+            return false;
+        }
+
+        var details = exception.ToString();
+        return details.Contains("WebView2CompositionControl_SizeChanged", StringComparison.Ordinal) ||
+               details.Contains("Direct3D11CaptureFramePool", StringComparison.Ordinal);
     }
 
     private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)

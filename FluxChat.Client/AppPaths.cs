@@ -18,6 +18,14 @@ internal static class AppPaths
 
     public static string GifFavoritesPath => Path.Combine(DataDirectory, "gif-favorites.json");
 
+    public static string SoundboardDirectory => Path.Combine(DataDirectory, "soundboard");
+
+    public static string SoundboardCacheDirectory => Path.Combine(SoundboardDirectory, "cache");
+
+    public static string SoundboardLibraryPath => Path.Combine(DataDirectory, "soundboard-library.json");
+
+    public static string CallAudioPreferencesPath => Path.Combine(DataDirectory, "call-audio-preferences.json");
+
     public static void EnsureCreated() => Directory.CreateDirectory(DataDirectory);
 
     public static void EnsureAvatarDirectoryCreated()
@@ -30,5 +38,12 @@ internal static class AppPaths
     {
         EnsureCreated();
         Directory.CreateDirectory(AttachmentsDirectory);
+    }
+
+    public static void EnsureSoundboardDirectoriesCreated()
+    {
+        EnsureCreated();
+        Directory.CreateDirectory(SoundboardDirectory);
+        Directory.CreateDirectory(SoundboardCacheDirectory);
     }
 }

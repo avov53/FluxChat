@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Net;
 using System.IO;
@@ -7,6 +8,7 @@ using System.Text.Json;
 using System.Text;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using FluxChat.Shared;
 
 namespace FluxChat.Client;
 
@@ -19,8 +21,17 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     private string _avatarKind = "color";
     private string _avatarPath = "";
     private string _groupMemberIds = "";
+    private string _groupOwnerUserId = "";
+    private string _groupMembersJson = "";
+    private string _currentUserId = "";
+    private long _groupVersion;
+    private bool _groupIsDeleted;
     private bool _isGroup;
     private int _messagePort;
+    private string _verifiedBadgeId = "";
+    private string _badgeCertificateJson = "";
+    private string _identityPublicKey = "";
+    private DateTimeOffset? _badgeVerifiedAtUtc;
 
     public required string UserId { get; init; }
 
@@ -37,6 +48,7 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             _displayName = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(Initials));
+            OnPropertyChanged(nameof(CanRenameContact));
         }
     }
 
@@ -122,6 +134,10 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsDirectContact));
             OnPropertyChanged(nameof(GroupMemberCountText));
+            OnPropertyChanged(nameof(CanRenameContact));
+            OnPropertyChanged(nameof(CanRemoveFromFriends));
+            OnPropertyChanged(nameof(CanEditGroup));
+            OnPropertyChanged(nameof(CanLeaveGroup));
         }
     }
 
@@ -152,6 +168,99 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     public int GroupMemberCount => GroupMemberIdsList.Count;
 
     public string GroupMemberCountText => IsGroup ? $"{GroupMemberCount} participants" : "";
+
+    public string GroupOwnerUserId
+    {
+        get => _groupOwnerUserId;
+        set
+        {
+            if (_groupOwnerUserId == value)
+            {
+                return;
+            }
+
+            _groupOwnerUserId = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsCurrentUserGroupOwner));
+            OnPropertyChanged(nameof(CanEditGroup));
+            OnPropertyChanged(nameof(CanLeaveGroup));
+        }
+    }
+
+    public long GroupVersion
+    {
+        get => _groupVersion;
+        set
+        {
+            if (_groupVersion == value)
+            {
+                return;
+            }
+
+            _groupVersion = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool GroupIsDeleted
+    {
+        get => _groupIsDeleted;
+        set
+        {
+            if (_groupIsDeleted == value)
+            {
+                return;
+            }
+
+            _groupIsDeleted = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string GroupMembersJson
+    {
+        get => _groupMembersJson;
+        set
+        {
+            if (_groupMembersJson == value)
+            {
+                return;
+            }
+
+            _groupMembersJson = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string CurrentUserId
+    {
+        get => _currentUserId;
+        set
+        {
+            if (_currentUserId == value)
+            {
+                return;
+            }
+
+            _currentUserId = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsCurrentUserGroupOwner));
+            OnPropertyChanged(nameof(CanEditGroup));
+            OnPropertyChanged(nameof(CanLeaveGroup));
+        }
+    }
+
+    public bool IsCurrentUserGroupOwner => IsGroup &&
+                                           !string.IsNullOrWhiteSpace(CurrentUserId) &&
+                                           string.Equals(GroupOwnerUserId, CurrentUserId, StringComparison.Ordinal);
+
+    public bool CanRenameContact => !IsGroup;
+
+    public bool CanRemoveFromFriends => !IsGroup;
+
+    public bool CanEditGroup => IsGroup && IsCurrentUserGroupOwner;
+
+    public bool CanLeaveGroup => IsGroup && !IsCurrentUserGroupOwner;
 
     private double _avatarScale = 1;
     private double _avatarOffsetX;
@@ -239,6 +348,27 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     public bool IsAvatarVideo => AvatarKind == "video" && HasAvatar;
     public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
 
+    public string VerifiedBadgeId
+    {
+        get => _verifiedBadgeId;
+        set
+        {
+            if (_verifiedBadgeId == value) return;
+            _verifiedBadgeId = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasVerifiedBadge));
+            OnPropertyChanged(nameof(BadgeImageSource));
+            OnPropertyChanged(nameof(BadgeToolTip));
+        }
+    }
+
+    public string BadgeCertificateJson { get => _badgeCertificateJson; set { if (_badgeCertificateJson == value) return; _badgeCertificateJson = value; OnPropertyChanged(); } }
+    public string IdentityPublicKey { get => _identityPublicKey; set { if (_identityPublicKey == value) return; _identityPublicKey = value; OnPropertyChanged(); } }
+    public DateTimeOffset? BadgeVerifiedAtUtc { get => _badgeVerifiedAtUtc; set { if (_badgeVerifiedAtUtc == value) return; _badgeVerifiedAtUtc = value; OnPropertyChanged(); } }
+    public bool HasVerifiedBadge => BadgeIds.IsKnown(VerifiedBadgeId);
+    public ImageSource? BadgeImageSource => BadgeVisuals.GetImage(VerifiedBadgeId);
+    public string BadgeToolTip => VerifiedBadgeId == BadgeIds.Owner ? "Owner" : VerifiedBadgeId == BadgeIds.Tester ? "Tester" : "";
+
     public DateTimeOffset LastSeenUtc
     {
         get => _lastSeenUtc;
@@ -323,7 +453,12 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     private string _text = "";
     private string _reactionsJson = "";
     private string _currentUserId = "";
+    private string _senderDisplayName = "";
+    private string _senderAvatarKind = "color";
+    private string _senderAvatarPath = "";
     private DateTimeOffset? _editedAtUtc;
+    private double _gifRenderWidth = 300;
+    private double _gifRenderHeight = 170;
 
     public required Guid MessageId { get; init; }
     public required string PeerUserId { get; init; }
@@ -335,6 +470,24 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public Guid? ReplyToMessageId { get; init; }
     public string ReplyPreview { get; init; } = "";
     public string ForwardedFrom { get; init; } = "";
+    public string SenderUserId { get; set; } = "";
+
+    public double GifRenderWidth => _gifRenderWidth;
+
+    public double GifRenderHeight => _gifRenderHeight;
+
+    public void SetGifRenderSize(double width, double height)
+    {
+        if (Math.Abs(_gifRenderWidth - width) < 0.5 && Math.Abs(_gifRenderHeight - height) < 0.5)
+        {
+            return;
+        }
+
+        _gifRenderWidth = width;
+        _gifRenderHeight = height;
+        OnPropertyChanged(nameof(GifRenderWidth));
+        OnPropertyChanged(nameof(GifRenderHeight));
+    }
 
     public required string Body
     {
@@ -421,6 +574,61 @@ public sealed class MessageViewModel : INotifyPropertyChanged
         }
     }
 
+    public string SenderDisplayName
+    {
+        get => _senderDisplayName;
+        set
+        {
+            if (_senderDisplayName == value)
+            {
+                return;
+            }
+
+            _senderDisplayName = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SenderInitials));
+            OnPropertyChanged(nameof(HasSenderName));
+        }
+    }
+
+    public string SenderAvatarKind
+    {
+        get => _senderAvatarKind;
+        set
+        {
+            if (_senderAvatarKind == value)
+            {
+                return;
+            }
+
+            _senderAvatarKind = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSenderAvatarImage));
+            OnPropertyChanged(nameof(IsSenderAvatarVideo));
+            OnPropertyChanged(nameof(SenderAvatarImageSource));
+            OnPropertyChanged(nameof(HasSenderAvatar));
+        }
+    }
+
+    public string SenderAvatarPath
+    {
+        get => _senderAvatarPath;
+        set
+        {
+            if (_senderAvatarPath == value)
+            {
+                return;
+            }
+
+            _senderAvatarPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSenderAvatarImage));
+            OnPropertyChanged(nameof(IsSenderAvatarVideo));
+            OnPropertyChanged(nameof(SenderAvatarImageSource));
+            OnPropertyChanged(nameof(HasSenderAvatar));
+        }
+    }
+
     public string TimeText
     {
         get
@@ -436,7 +644,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool IsTextMessage => Kind == MessageKinds.Text;
     public bool IsImageMessage => Kind == MessageKinds.Image;
     public bool IsGifMessage => Kind == MessageKinds.Gif;
-    public bool HasText => !string.IsNullOrWhiteSpace(Text);
+    public bool HasText => !string.IsNullOrWhiteSpace(Text) && !IsGifMessage;
     public bool IsEmojiOnlyText => IsTextMessage && HasText && IsEmojiOnly(Text);
     public bool ShowsPlainText => HasText && !IsEmojiOnlyText;
     public bool HasAttachment => !string.IsNullOrWhiteSpace(AttachmentPath) || !string.IsNullOrWhiteSpace(AttachmentUrl);
@@ -447,6 +655,12 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool CanDelete => IsOutgoing;
     public bool CanShowMessageActions => !IsImageMessage;
     public bool HasReactions => ReactionItems.Count > 0;
+    public bool HasSenderName => !string.IsNullOrWhiteSpace(SenderDisplayName);
+    public bool HasSenderAvatar => !string.IsNullOrWhiteSpace(SenderAvatarPath);
+    public bool IsSenderAvatarImage => HasSenderAvatar && SenderAvatarKind == "image";
+    public bool IsSenderAvatarVideo => HasSenderAvatar && SenderAvatarKind == "video";
+    public ImageSource? SenderAvatarImageSource => IsSenderAvatarImage ? AvatarImageLoader.Load(SenderAvatarPath) : null;
+    public string SenderInitials => BuildInitials(SenderDisplayName);
     public string PreviewText => IsImageMessage ? "Image" : IsGifMessage ? "GIF" : Text;
     public Uri EmojiHtmlSource => IsEmojiOnlyText
         ? new Uri($"data:text/html;charset=utf-8,{Uri.EscapeDataString(BuildEmojiHtml(Text))}")
@@ -561,6 +775,22 @@ public sealed class MessageViewModel : INotifyPropertyChanged
                value == 0x20E3 ||
                value is >= 0x1F000 and <= 0x1FAFF ||
                value is >= 0x2600 and <= 0x27BF;
+    }
+
+    private static string BuildInitials(string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            return "?";
+        }
+
+        var initials = string.Concat(displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => x[0])).ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(initials))
+        {
+            return "?";
+        }
+
+        return initials.Length <= 2 ? initials : initials[..2];
     }
 
     private static string BuildEmojiHtml(string emoji)
@@ -788,6 +1018,229 @@ public sealed class GroupCandidateViewModel : INotifyPropertyChanged
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
+public sealed class GroupMemberViewModel : INotifyPropertyChanged
+{
+    private string _displayName = "";
+    private string _relayServer = "";
+    private string _avatarKind = "color";
+    private string _avatarPath = "";
+    private UserPresenceStatus _status = UserPresenceStatus.Offline;
+    private bool _isOwner;
+    private bool _isFriend;
+    private bool _isSelf;
+    private bool _canManageGroup;
+
+    public required string UserId { get; init; }
+
+    public required string DisplayName
+    {
+        get => _displayName;
+        set
+        {
+            if (_displayName == value)
+            {
+                return;
+            }
+
+            _displayName = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(Initials));
+        }
+    }
+
+    public string RelayServer
+    {
+        get => _relayServer;
+        set
+        {
+            if (_relayServer == value)
+            {
+                return;
+            }
+
+            _relayServer = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string AvatarKind
+    {
+        get => _avatarKind;
+        set
+        {
+            if (_avatarKind == value)
+            {
+                return;
+            }
+
+            _avatarKind = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsAvatarImage));
+            OnPropertyChanged(nameof(IsAvatarVideo));
+            OnPropertyChanged(nameof(HasAvatar));
+            OnPropertyChanged(nameof(AvatarImageSource));
+        }
+    }
+
+    public string AvatarPath
+    {
+        get => _avatarPath;
+        set
+        {
+            if (_avatarPath == value)
+            {
+                return;
+            }
+
+            _avatarPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasAvatar));
+            OnPropertyChanged(nameof(IsAvatarImage));
+            OnPropertyChanged(nameof(IsAvatarVideo));
+            OnPropertyChanged(nameof(AvatarImageSource));
+        }
+    }
+
+    public double AvatarScale { get; set; } = 1;
+    public double AvatarOffsetX { get; set; }
+    public double AvatarOffsetY { get; set; }
+    public double AvatarVideoStartSeconds { get; set; }
+    public double AvatarVideoDurationSeconds { get; set; } = 10;
+
+    public UserPresenceStatus Status
+    {
+        get => _status;
+        set
+        {
+            if (_status == value)
+            {
+                return;
+            }
+
+            _status = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StatusText));
+            OnPropertyChanged(nameof(StatusColor));
+        }
+    }
+
+    public bool IsOwner
+    {
+        get => _isOwner;
+        set
+        {
+            if (_isOwner == value)
+            {
+                return;
+            }
+
+            _isOwner = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsFriend
+    {
+        get => _isFriend;
+        set
+        {
+            if (_isFriend == value)
+            {
+                return;
+            }
+
+            _isFriend = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanAddFriend));
+            OnPropertyChanged(nameof(CanRenameContact));
+            OnPropertyChanged(nameof(CanWriteMessage));
+        }
+    }
+
+    public bool IsSelf
+    {
+        get => _isSelf;
+        set
+        {
+            if (_isSelf == value)
+            {
+                return;
+            }
+
+            _isSelf = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanAddFriend));
+            OnPropertyChanged(nameof(CanMakeOwner));
+            OnPropertyChanged(nameof(CanRemoveFromGroup));
+        }
+    }
+
+    public bool CanManageGroup
+    {
+        get => _canManageGroup;
+        set
+        {
+            if (_canManageGroup == value)
+            {
+                return;
+            }
+
+            _canManageGroup = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanMakeOwner));
+            OnPropertyChanged(nameof(CanRemoveFromGroup));
+        }
+    }
+
+    public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarPath);
+    public bool IsAvatarImage => HasAvatar && AvatarKind == "image";
+    public bool IsAvatarVideo => HasAvatar && AvatarKind == "video";
+    public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
+    public string ShortId => UserId.Length <= 8 ? UserId : UserId[..8];
+    public string StatusText => Status switch
+    {
+        UserPresenceStatus.Online => "online",
+        UserPresenceStatus.Idle => "idle",
+        _ => "offline"
+    };
+
+    public string StatusColor => Status switch
+    {
+        UserPresenceStatus.Online => "#35d07f",
+        UserPresenceStatus.Idle => "#f2b84b",
+        _ => "#687080"
+    };
+
+    public string Initials
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(DisplayName))
+            {
+                return "?";
+            }
+
+            var initials = string.Concat(DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => x[0])).ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(initials))
+            {
+                return "?";
+            }
+
+            return initials.Length <= 2 ? initials : initials[..2];
+        }
+    }
+    public bool CanAddFriend => !IsSelf && !IsFriend;
+    public bool CanRenameContact => IsFriend;
+    public bool CanWriteMessage => IsFriend;
+    public bool CanMakeOwner => CanManageGroup && !IsSelf && !IsOwner;
+    public bool CanRemoveFromGroup => CanManageGroup && !IsSelf;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
 public sealed class FriendRequestViewModel : INotifyPropertyChanged
 {
     private string _displayName = "";
@@ -899,6 +1352,8 @@ public sealed class FriendRequestViewModel : INotifyPropertyChanged
 
 internal static class AvatarImageLoader
 {
+    private static readonly ConcurrentDictionary<string, ImageSource> Cache = new(StringComparer.OrdinalIgnoreCase);
+
     public static ImageSource? Load(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -906,16 +1361,32 @@ internal static class AvatarImageLoader
             return null;
         }
 
+        FileInfo info;
         try
         {
-            using var stream = File.OpenRead(path);
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.CreateOptions = BitmapCreateOptions.None;
-            image.StreamSource = stream;
-            image.EndInit();
-            image.Freeze();
+            info = new FileInfo(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            AppLog.Write(ex, $"Avatar image stat failed: path={path}");
+            return null;
+        }
+
+        var key = $"{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+        if (Cache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        try
+        {
+            TrimCacheIfNeeded();
+            var image = LoadUncached(path);
+            if (image is not null)
+            {
+                Cache.TryAdd(key, image);
+            }
+
             return image;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException or ArgumentException)
@@ -923,5 +1394,31 @@ internal static class AvatarImageLoader
             AppLog.Write(ex, $"Avatar image load failed: path={path}");
             return null;
         }
+    }
+
+    private static ImageSource? LoadUncached(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        memory.Position = 0;
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.CreateOptions = BitmapCreateOptions.None;
+        image.StreamSource = memory;
+        image.EndInit();
+        image.Freeze();
+        return image;
+    }
+
+    private static void TrimCacheIfNeeded()
+    {
+        if (Cache.Count < 256)
+        {
+            return;
+        }
+
+        Cache.Clear();
     }
 }

@@ -41,7 +41,11 @@ public sealed record ChatPacket(
     [property: JsonPropertyName("fromAvatarOffsetX")] double FromAvatarOffsetX = 0,
     [property: JsonPropertyName("fromAvatarOffsetY")] double FromAvatarOffsetY = 0,
     [property: JsonPropertyName("fromAvatarVideoStartSeconds")] double FromAvatarVideoStartSeconds = 0,
-    [property: JsonPropertyName("fromAvatarVideoDurationSeconds")] double FromAvatarVideoDurationSeconds = 10)
+    [property: JsonPropertyName("fromAvatarVideoDurationSeconds")] double FromAvatarVideoDurationSeconds = 10,
+    [property: JsonPropertyName("fromPublicKey")] string? FromPublicKey = null,
+    [property: JsonPropertyName("identityNonce")] string? IdentityNonce = null,
+    [property: JsonPropertyName("identitySignature")] string? IdentitySignature = null,
+    [property: JsonPropertyName("badgeCertificate")] BadgeCertificate? BadgeCertificate = null)
 {
     public static ChatPacket Create(
         string fromUserId,
@@ -132,7 +136,11 @@ public sealed record RelayRegisterPacket(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("userId")] string UserId,
     [property: JsonPropertyName("displayName")] string DisplayName,
-    [property: JsonPropertyName("credential")] string Credential)
+    [property: JsonPropertyName("credential")] string Credential,
+    [property: JsonPropertyName("publicKey")] string? PublicKey = null,
+    [property: JsonPropertyName("identityNonce")] string? IdentityNonce = null,
+    [property: JsonPropertyName("identityTimestampUtc")] DateTimeOffset? IdentityTimestampUtc = null,
+    [property: JsonPropertyName("identitySignature")] string? IdentitySignature = null)
 {
     public static RelayRegisterPacket Create(string userId, string displayName, string credential)
         => new("fluxchat.relay-register.v1", userId, displayName, credential);
@@ -195,7 +203,11 @@ public sealed record RelayPresencePacket(
     [property: JsonPropertyName("avatarOffsetX")] double AvatarOffsetX = 0,
     [property: JsonPropertyName("avatarOffsetY")] double AvatarOffsetY = 0,
     [property: JsonPropertyName("avatarVideoStartSeconds")] double AvatarVideoStartSeconds = 0,
-    [property: JsonPropertyName("avatarVideoDurationSeconds")] double AvatarVideoDurationSeconds = 10)
+    [property: JsonPropertyName("avatarVideoDurationSeconds")] double AvatarVideoDurationSeconds = 10,
+    [property: JsonPropertyName("publicKey")] string? PublicKey = null,
+    [property: JsonPropertyName("identityNonce")] string? IdentityNonce = null,
+    [property: JsonPropertyName("identitySignature")] string? IdentitySignature = null,
+    [property: JsonPropertyName("badgeCertificate")] BadgeCertificate? BadgeCertificate = null)
 {
     public static RelayPresencePacket Create(
         string userId,
@@ -231,10 +243,11 @@ public sealed record RelayAudioPacket(
     [property: JsonPropertyName("fromUserId")] string FromUserId,
     [property: JsonPropertyName("toUserId")] string ToUserId,
     [property: JsonPropertyName("body")] string Body,
-    [property: JsonPropertyName("sentAtUtc")] DateTimeOffset SentAtUtc)
+    [property: JsonPropertyName("sentAtUtc")] DateTimeOffset SentAtUtc,
+    [property: JsonPropertyName("sequence")] long Sequence = 0)
 {
-    public static RelayAudioPacket Create(string fromUserId, string toUserId, string body)
-        => new("fluxchat.call-audio.v1", Guid.NewGuid(), fromUserId, toUserId, body, DateTimeOffset.UtcNow);
+    public static RelayAudioPacket Create(string fromUserId, string toUserId, string body, long sequence = 0)
+        => new("fluxchat.call-audio.v1", Guid.NewGuid(), fromUserId, toUserId, body, DateTimeOffset.UtcNow, sequence);
 }
 
 public sealed record RelayScreenFramePacket(

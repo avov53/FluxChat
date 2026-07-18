@@ -1,8 +1,13 @@
 bin/
 obj/
 dist/
+/v1.1.2/
+release-artifacts/
 dist-server-linux/
+dist-badge-authority-linux/
 fluxusui-github/
+.fluxusui-dist-publish/
+tools/
 .vs/
 .idea/
 *.user
@@ -11,3 +16,6 @@ fluxusui-github/
 *.db-shm
 *.db-wal
 *.log
+authority-key.pem
+*.pem
+badge-selftest.*
