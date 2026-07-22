@@ -40,6 +40,8 @@ internal sealed class SoundboardClipViewModel : INotifyPropertyChanged
 internal sealed class SoundboardLibrary
 {
     public double Volume { get; set; } = 0.8;
+    public double MonitorVolume { get; set; } = 0.8;
+    public bool IsMonitorMuted { get; set; }
     public List<SoundboardClipData> Clips { get; set; } = [];
 }
 
@@ -72,12 +74,18 @@ internal static class SoundboardLibraryStore
         }
     }
 
-    public static async Task SaveAsync(double volume, IEnumerable<SoundboardClipViewModel> clips)
+    public static async Task SaveAsync(
+        double volume,
+        double monitorVolume,
+        bool isMonitorMuted,
+        IEnumerable<SoundboardClipViewModel> clips)
     {
         AppPaths.EnsureSoundboardDirectoriesCreated();
         var library = new SoundboardLibrary
         {
             Volume = Math.Clamp(volume, 0, 1),
+            MonitorVolume = Math.Clamp(monitorVolume, 0, 1),
+            IsMonitorMuted = isMonitorMuted,
             Clips = clips.Select(x => new SoundboardClipData(
                 x.Id,
                 x.DisplayName,

@@ -69,10 +69,16 @@ internal sealed class BadgeAuthorityClient(UserProfile profile, string authority
     }
 
     public Task<BadgeAdminUserResponse> GrantTesterAsync(string userId, CancellationToken cancellationToken = default)
-        => MutateTesterAsync("api/v1/admin/grant-tester", userId, cancellationToken);
+        => MutateBadgeAsync("api/v1/admin/grant-tester", userId, cancellationToken);
 
     public Task<BadgeAdminUserResponse> RevokeTesterAsync(string userId, CancellationToken cancellationToken = default)
-        => MutateTesterAsync("api/v1/admin/revoke-tester", userId, cancellationToken);
+        => MutateBadgeAsync("api/v1/admin/revoke-tester", userId, cancellationToken);
+
+    public Task<BadgeAdminUserResponse> GrantSpecialAsync(string userId, CancellationToken cancellationToken = default)
+        => MutateBadgeAsync("api/v1/admin/grant-special", userId, cancellationToken);
+
+    public Task<BadgeAdminUserResponse> RevokeSpecialAsync(string userId, CancellationToken cancellationToken = default)
+        => MutateBadgeAsync("api/v1/admin/revoke-special", userId, cancellationToken);
 
     public bool VerifyRemoteCertificate(BadgeCertificate? certificate, string? publicKey, BadgeRevocationSnapshot? revocations)
     {
@@ -127,7 +133,7 @@ internal sealed class BadgeAuthorityClient(UserProfile profile, string authority
         await AcceptAndCacheAsync(auth.State);
     }
 
-    private async Task<BadgeAdminUserResponse> MutateTesterAsync(string path, string userId, CancellationToken cancellationToken)
+    private async Task<BadgeAdminUserResponse> MutateBadgeAsync(string path, string userId, CancellationToken cancellationToken)
     {
         await EnsureAuthenticatedAsync(cancellationToken);
         using var request = Authorized(HttpMethod.Post, path, new BadgeAdminMutationRequest(userId));

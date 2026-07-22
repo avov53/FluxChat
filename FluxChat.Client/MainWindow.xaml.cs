@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -79,11 +80,11 @@ public partial class MainWindow : Window
     private const long ScreenShareHighLoadJpegQuality = 58L;
     private const int ScreenShareMaxCompactHeight = 150;
     private static readonly TimeSpan ScreenShareSelfPreviewInterval = TimeSpan.FromMilliseconds(180);
-    private static readonly TimeSpan ScreenShareEncodedLocalPreviewInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan ScreenShareEncodedLocalPreviewInterval = TimeSpan.FromSeconds(1);
     private const int ScreenShareMinAdaptiveHeight = 720;
     private const int ScreenShareHighResolutionMinAdaptiveHeight = 1080;
     private const int ScreenShareAdaptiveStep = 120;
-    private const int ScreenShareHighResolutionMaxFrameRate = 30;
+    private const int ScreenShareHighResolutionMaxFrameRate = 60;
     private const int ScreenShareFallbackMaxHeight = 720;
     private const int ScreenShareFallbackMaxFrameRate = 15;
     private const int ScreenShareVoiceProtectedMaxHeight = 1080;
@@ -93,7 +94,7 @@ public partial class MainWindow : Window
     private const int ScreenShareMaxPeerRenderFrameRate = 60;
     private const int ScreenShareFullscreenMaxPeerRenderFrameRate = 60;
     private const int ScreenShareEncodedChunkSize = 32 * 1024;
-    private const int ScreenShareEncodedDataChannelBufferLimit = 4 * 1024 * 1024;
+    private const int ScreenShareEncodedDataChannelBufferLimit = 512 * 1024;
     private static readonly TimeSpan ScreenShareSendTimeout = TimeSpan.FromMilliseconds(250);
     private static readonly bool ScreenSharePreferWebRtc = true;
     private static readonly bool ScreenSharePreferEncodedWebRtc = true;
@@ -163,6 +164,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, DateTimeOffset> _profileRequestAttempts = [];
     private readonly Dictionary<CoreWebView2, WeakReference<Microsoft.Web.WebView2.Wpf.WebView2CompositionControl>> _messageGifViews = [];
     private readonly Dictionary<string, GifRenderDimensions> _messageGifDimensions = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, List<WeakReference<MediaElement>>> _videoPlayers = [];
+    private readonly Dictionary<Guid, CancellationTokenSource> _videoDownloads = [];
     private readonly HistoryStore _history = new();
     private readonly CancellationTokenSource _stop = new();
     private AppSettings _settings = new();
@@ -180,11 +183,16 @@ public partial class MainWindow : Window
     private MessageViewModel? _forwardTarget;
     private MessageViewModel? _reactionTarget;
     private MessageViewModel? _imageViewerMessage;
+    private MessageViewModel? _videoViewerMessage;
     private double _imageViewerSourceWidth;
     private double _imageViewerSourceHeight;
     private double _imageViewerZoom = 1;
     private double _imageViewerFitZoom = 1;
     private string _draftImagePath = "";
+    private string _draftFilePath = "";
+    private CancellationTokenSource? _fileUploadCancellation;
+    private GoogleDriveService? _googleDrive;
+    private bool _isInitializingDataSettings;
     private bool _emojiWebViewReady;
     private Task? _emojiWebViewInitializationTask;
     private bool _emojiViewportUpdatePending;
@@ -219,10 +227,12 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _badgeRefreshTimer;
     private readonly DispatcherTimer _callRingtoneTimer;
     private readonly DispatcherTimer _callNetworkMetricsTimer;
+    private readonly DispatcherTimer _videoPlaybackTimer;
     private readonly Queue<CallAudioSendReport> _peerAudioSendReports = new();
     private UserPresenceStatus _lastPublishedStatus = UserPresenceStatus.Offline;
     private bool _isWindowActive = true;
     private ContactViewModel? _activeCallContact;
+    private ContactViewModel? _activeCallPeerContact;
     private string _activeCallState = "";
     private bool _selfInCall;
     private bool _peerInCall;
@@ -241,9 +251,10 @@ public partial class MainWindow : Window
     private WindowStyle _screenSharePreviousWindowStyle;
     private WindowState _screenSharePreviousWindowState;
     private ResizeMode _screenSharePreviousResizeMode;
-    private int _screenShareResolution = 1080;
-    private int _screenShareFrameRate = 30;
-    private int _screenShareAdaptiveHeight = 1080;
+    private int _screenShareResolution = 1440;
+    private int _screenShareFrameRate = 60;
+    private int _screenShareAdaptiveHeight = 1440;
+    private string _screenShareRuntimeStatus = "Ready for hardware H.264";
     private bool _screenShareMuteAudio = true;
     private string _screenShareQualityPreset = "Balanced";
     private string _screenShareSourceFilter = "All";
@@ -259,6 +270,9 @@ public partial class MainWindow : Window
     private bool _screenShareStartSignalSent;
     private bool _screenShareUsingEncodedWebRtc;
     private bool _screenShareEncodedChannelOpen;
+    private bool _screenShareEncodedBackpressured;
+    private readonly object _screenShareEncodedFlowGate = new();
+    private TaskCompletionSource<bool>? _screenShareEncodedDrainWaiter;
     private bool _peerScreenShareUsingWebRtc;
     private long _sentScreenShareFrames;
     private long _sentEncodedScreenShareChunks;
@@ -325,6 +339,8 @@ public partial class MainWindow : Window
     private int _activeSoundboardOffset;
     private SoundboardClipViewModel? _activeSoundboardClip;
     private double _soundboardVolume = 0.8;
+    private double _soundboardMonitorVolume = 0.8;
+    private bool _isSoundboardMonitorMuted;
     private CallAudioPreferences _callAudioPreferences = new();
     private bool _isInitializingAudioFeatureControls;
     private double _noiseFloorRms = 90;
@@ -370,6 +386,8 @@ public partial class MainWindow : Window
         _callRingtoneTimer.Tick += (_, _) => System.Media.SystemSounds.Exclamation.Play();
         _callNetworkMetricsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _callNetworkMetricsTimer.Tick += CallNetworkMetricsTimer_OnTick;
+        _videoPlaybackTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _videoPlaybackTimer.Tick += VideoPlaybackTimer_OnTick;
         ProfileAvatarVideo.MediaOpened += AvatarVideo_OnMediaOpened;
         ProfileAvatarVideo.MediaEnded += AvatarVideo_OnMediaEnded;
         SettingsAvatarVideo.MediaOpened += AvatarVideo_OnMediaOpened;
@@ -503,6 +521,8 @@ public partial class MainWindow : Window
         AppLog.Write("Main window initialization started");
         var isFirstRun = !AppSettingsStore.Exists();
         _settings = await AppSettingsStore.LoadAsync();
+        _googleDrive = new GoogleDriveService(_httpClient, _settings);
+        _ = Task.Run(VideoCacheStore.Trim);
         _isInitializingAudioFeatureControls = true;
         SettingsNoiseSuppressionCheck.IsChecked = _settings.NoiseSuppressionEnabled;
         _isInitializingAudioFeatureControls = false;
@@ -523,6 +543,7 @@ public partial class MainWindow : Window
         SettingsServerAddressInput.Text = _settings.RelayServer;
         SettingsServerAccessKeyInput.Text = _settings.RelayAccessKey;
         SettingsTenorApiKeyInput.Text = _settings.TenorApiKey;
+        RefreshDataSettingsUi();
         LoadFavoriteGifs();
         RefreshAudioDeviceSelectors();
         FirstRunServerAddressInput.Text = _settings.RelayServer;
@@ -675,11 +696,18 @@ public partial class MainWindow : Window
                     break;
                 case "encoded-channel-open":
                     _screenShareEncodedChannelOpen = true;
+                    SetEncodedScreenShareBackpressure(false);
                     StartEncodedScreenShareEncoderIfReady();
                     AppLog.Write("Screen share encoded WebRTC data channel opened");
                     break;
+                case "encoded-pressure":
+                    var isBackpressured = root.TryGetProperty("high", out var pressureProperty) &&
+                                          pressureProperty.ValueKind == JsonValueKind.True;
+                    SetEncodedScreenShareBackpressure(isBackpressured);
+                    break;
                 case "encoded-channel-closed":
                     _screenShareEncodedChannelOpen = false;
+                    SetEncodedScreenShareBackpressure(false);
                     if (_screenShareUsingEncodedWebRtc)
                     {
                         FallbackScreenShareFromWebRtc("encoded WebRTC data channel closed");
@@ -901,21 +929,17 @@ public partial class MainWindow : Window
 
     private int GetScreenShareWebRtcMaxBitrate()
     {
-        var voiceProtected = IsScreenShareVoiceProtectionActive();
         if (_screenShareResolution >= 1440)
         {
-            var bitrate = _screenShareFrameRate >= 60 ? 30_000_000 : 18_000_000;
-            return voiceProtected ? Math.Min(bitrate, ScreenShareVoiceProtectedWebRtcMaxBitrate) : bitrate;
+            return _screenShareFrameRate >= 60 ? 30_000_000 : 18_000_000;
         }
 
         if (_screenShareResolution >= 1080)
         {
-            var bitrate = _screenShareFrameRate >= 60 ? 14_000_000 : 8_000_000;
-            return voiceProtected ? Math.Min(bitrate, ScreenShareVoiceProtectedWebRtcMaxBitrate) : bitrate;
+            return _screenShareFrameRate >= 60 ? 14_000_000 : 8_000_000;
         }
 
-        var lowBitrate = _screenShareFrameRate >= 60 ? 6_000_000 : 3_500_000;
-        return voiceProtected ? Math.Min(lowBitrate, ScreenShareVoiceProtectedWebRtcMaxBitrate) : lowBitrate;
+        return _screenShareFrameRate >= 60 ? 6_000_000 : 3_500_000;
     }
 
     private bool IsScreenShareVoiceProtectionActive()
@@ -1000,31 +1024,17 @@ public partial class MainWindow : Window
 
     private void FallbackScreenShareFromWebRtc(string reason)
     {
-        var source = _activeScreenShareSource;
-        var stop = _screenShareStop;
-        if (!_isScreenSharing || source is null || stop is null)
+        if (!_isScreenSharing || _activeScreenShareSource is null || _screenShareStop is null)
         {
             return;
         }
 
-        _screenShareUsingNativeWebRtc = false;
-        _screenShareUsingEncodedWebRtc = false;
-        _screenShareEncodedChannelOpen = false;
-        StopScreenShareEncoderProcess();
-        if (Interlocked.Exchange(ref _screenShareJpegLoopStarted, 1) != 0)
-        {
-            return;
-        }
-
-        AppLog.Write($"Screen share WebRTC fallback to JPEG: {reason}");
-        PostScreenShareWebRtcMessage(new { type = "stop-local" });
-        _screenShareWebRtcActive = _peerScreenShareUsingWebRtc;
-        SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
-        ApplyCompatibleScreenShareFallbackQuality();
-        UpdateScreenSharePickerState();
-        NetworkStatusText.Text = "WebRTC failed. Using compatible 720p screen share.";
-        SendScreenShareStartSignal(source, useWebRtc: false);
-        _ = Task.Run(() => RunScreenShareLoopAsync(source, stop.Token));
+        var selectedQuality = $"{_screenShareResolution}p {_screenShareFrameRate} fps";
+        var status = $"Screen share stopped: {selectedQuality} hardware stream failed ({reason}).";
+        AppLog.Write($"Screen share stopped without automatic quality downgrade: selected={selectedQuality}, reason={reason}");
+        StopScreenShare(sendSignal: true);
+        NetworkStatusText.Text = status;
+        SetScreenShareRuntimeStatus(status);
     }
 
     private static bool IsScreenSharePickerCancellation(string message)
@@ -1066,6 +1076,14 @@ public partial class MainWindow : Window
         _presenceTimer.Stop();
         _badgeRefreshTimer.Stop();
         _callRingtoneTimer.Stop();
+        _videoPlaybackTimer.Stop();
+        CloseVideoViewer();
+        foreach (var download in _videoDownloads.Values.ToArray())
+        {
+            download.Cancel();
+            download.Dispose();
+        }
+        _videoDownloads.Clear();
         StopVoiceTest(restoreCallAudio: false);
         var activeCallContact = _activeCallContact;
         if (activeCallContact is not null)
@@ -1167,12 +1185,6 @@ public partial class MainWindow : Window
 
     private Task HandleIncomingMessageAsync(ChatPacket packet, string statusText, string source)
     {
-        var badgeContact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId && !x.IsGroup);
-        if (badgeContact is not null)
-        {
-            ApplyVerifiedBadge(badgeContact, packet.FromPublicKey, packet.BadgeCertificate,
-                _badgeAuthority?.VerifyChatIdentity(packet) == true);
-        }
         packet = ApplyControlBodyFallback(packet);
         if (packet.Intent == CallAudioIntent)
         {
@@ -1194,6 +1206,13 @@ public partial class MainWindow : Window
         AppLog.Write($"Incoming message: from={packet.FromUserId}, source={source}, messageId={packet.MessageId}, intent={packet.Intent}, bodyLength={packet.Body.Length}, avatarKind={packet.FromAvatarKind}, avatarBytes={packet.FromAvatarMediaBase64?.Length ?? 0}");
         Dispatcher.Invoke(() =>
         {
+            var badgeContact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId && !x.IsGroup);
+            if (badgeContact is not null)
+            {
+                ApplyVerifiedBadge(badgeContact, packet.FromPublicKey, packet.BadgeCertificate,
+                    _badgeAuthority?.VerifyChatIdentity(packet) == true);
+            }
+
             if (IsFriendRequestPacket(packet))
             {
                 UpsertFriendRequest(packet);
@@ -1382,6 +1401,8 @@ public partial class MainWindow : Window
     private async Task OpenContactAsync(ContactViewModel contact)
     {
         ExitScreenShareFocusMode();
+        CloseVideoViewer();
+        PauseAllMessageVideos();
         _selectedContact = contact;
         ContactsList.SelectedItem = contact;
         AddFriendPanel.Visibility = Visibility.Collapsed;
@@ -1469,6 +1490,7 @@ public partial class MainWindow : Window
         }
 
         _activeCallContact = _selectedContact;
+        _activeCallPeerContact = _selectedContact.IsGroup ? null : _selectedContact;
         _activeCallState = "outgoing";
         _selfInCall = true;
         _peerInCall = false;
@@ -1920,7 +1942,7 @@ public partial class MainWindow : Window
                 break;
             case "Sharp":
                 _screenShareResolution = 1440;
-                _screenShareFrameRate = 30;
+                _screenShareFrameRate = 60;
                 break;
         }
 
@@ -1996,7 +2018,7 @@ public partial class MainWindow : Window
         {
             (720, 60) => "Smooth",
             (1080, 30) => "Balanced",
-            (1440, 30) => "Sharp",
+            (1440, 60) => "Sharp",
             _ => "Custom"
         };
     }
@@ -2014,8 +2036,8 @@ public partial class MainWindow : Window
                 : $"Native capture: {selected.Title}";
         ScreenShareStreamAudioCheck.IsChecked = !_screenShareMuteAudio;
         ScreenShareQualityWarningText.Text = IsScreenShareWebRtcPreferred()
-            ? "1440p60 is available in WebRTC mode, but it needs a strong GPU and network. Voice stays on a separate audio path."
-            : "Native capture avoids the browser sharing banner. 1440p is capped at 30 fps to keep voice stable.";
+            ? "Fixed quality mode keeps the selected resolution and frame rate. 1440p60 requires hardware H.264 and a strong connection."
+            : "Compatibility capture cannot guarantee 1440p60. FluxChat will not silently lower the selected quality.";
         ScreenShareQualityWarningText.Visibility = _screenShareResolution >= 1440 || _screenShareFrameRate >= 60
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -2039,6 +2061,7 @@ public partial class MainWindow : Window
         SetScreenSharePickerButtonState(ScreenShare30FpsButton, _screenShareFrameRate == 30);
         SetScreenSharePickerButtonState(ScreenShare60FpsButton, _screenShareFrameRate == 60);
         ScreenShare60FpsButton.IsEnabled = _screenShareResolution < 1440 || IsScreenShareWebRtcPreferred();
+        ScreenShareRuntimeStatusText.Text = _screenShareRuntimeStatus;
     }
 
     private static void SetScreenSharePickerButtonState(System.Windows.Controls.Button button, bool active)
@@ -2868,11 +2891,58 @@ public partial class MainWindow : Window
         _isInitializingAudioFeatureControls = true;
         SettingsNoiseSuppressionCheck.IsChecked = _settings.NoiseSuppressionEnabled;
         _isInitializingAudioFeatureControls = false;
+        RefreshDataSettingsUi();
         RefreshAudioDeviceSelectors();
         ShowSettingsTab("account");
         ProfileFlyout.Visibility = Visibility.Collapsed;
         SettingsOverlay.Visibility = Visibility.Visible;
         SettingsServerAddressInput.Focus();
+    }
+
+    private void AnimatedButton_OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.RenderTransform is not TranslateTransform)
+        {
+            button.RenderTransform = new TranslateTransform();
+        }
+    }
+
+    private void AnimatedButton_OnMouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        => AnimateButtonState(sender as System.Windows.Controls.Button, -1, 140);
+
+    private void AnimatedButton_OnMouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        => AnimateButtonState(sender as System.Windows.Controls.Button, 0, 150);
+
+    private void AnimatedButton_OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        => AnimateButtonState(sender as System.Windows.Controls.Button, 1, 80);
+
+    private void AnimatedButton_OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        => AnimateButtonState(sender as System.Windows.Controls.Button, sender is System.Windows.Controls.Button { IsMouseOver: true } ? -1 : 0, 120);
+
+    private void AnimateButtonState(System.Windows.Controls.Button? button, double translateY, int durationMs)
+    {
+        if (button is null || !button.IsEnabled)
+        {
+            return;
+        }
+
+        if (button.RenderTransform is not TranslateTransform transform)
+        {
+            transform = new TranslateTransform();
+            button.RenderTransform = transform;
+        }
+
+        if (_settings.ReducedMotionEnabled)
+        {
+            transform.BeginAnimation(TranslateTransform.YProperty, null);
+            transform.Y = translateY;
+            return;
+        }
+
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        transform.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation(translateY, TimeSpan.FromMilliseconds(durationMs)) { EasingFunction = easing });
     }
 
     private void SettingsCloseButton_OnClick(object sender, RoutedEventArgs e)
@@ -2889,23 +2959,193 @@ public partial class MainWindow : Window
         ShowSettingsTab("voice");
     }
 
+    private void SettingsDataTabButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshDataSettingsUi();
+        ShowSettingsTab("data");
+    }
+
     private void SettingsBadgeAdminTabButton_OnClick(object sender, RoutedEventArgs e)
         => ShowSettingsTab("badges");
 
     private void ShowSettingsTab(string tab)
     {
         var isVoice = string.Equals(tab, "voice", StringComparison.OrdinalIgnoreCase);
+        var isData = string.Equals(tab, "data", StringComparison.OrdinalIgnoreCase);
         var isBadges = string.Equals(tab, "badges", StringComparison.OrdinalIgnoreCase) && _badgeState?.CanManageBadges == true;
-        var isAccount = !isVoice && !isBadges;
+        var isAccount = !isVoice && !isData && !isBadges;
         SettingsAccountHeader.Visibility = isAccount ? Visibility.Visible : Visibility.Collapsed;
         SettingsAccountContent.Visibility = isAccount ? Visibility.Visible : Visibility.Collapsed;
         SettingsVoiceHeader.Visibility = isVoice ? Visibility.Visible : Visibility.Collapsed;
         SettingsVoiceContent.Visibility = isVoice ? Visibility.Visible : Visibility.Collapsed;
+        SettingsDataHeader.Visibility = isData ? Visibility.Visible : Visibility.Collapsed;
+        SettingsDataContent.Visibility = isData ? Visibility.Visible : Visibility.Collapsed;
         SettingsBadgeAdminHeader.Visibility = isBadges ? Visibility.Visible : Visibility.Collapsed;
         SettingsBadgeAdminContent.Visibility = isBadges ? Visibility.Visible : Visibility.Collapsed;
         SettingsAccountTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isAccount ? "#404249" : "#00000000"));
         SettingsVoiceTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isVoice ? "#404249" : "#00000000"));
+        SettingsDataTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isData ? "#404249" : "#00000000"));
         SettingsBadgeAdminTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isBadges ? "#404249" : "#00000000"));
+    }
+
+    private void RefreshDataSettingsUi()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        _isInitializingDataSettings = true;
+        SettingsChatStorageCombo.SelectedIndex = _settings.ChatHistoryStorage == DataStorageLocation.GoogleDrive ? 1 : 0;
+        SettingsImageStorageCombo.SelectedIndex = _settings.ImageStorage == DataStorageLocation.GoogleDrive ? 1 : 0;
+        SettingsFileStorageCombo.SelectedIndex = 0;
+        SettingsReducedMotionCheck.IsChecked = _settings.ReducedMotionEnabled;
+        GoogleDriveClientIdInput.Text = _settings.GoogleDriveClientId;
+        var connected = _googleDrive?.IsConnected == true;
+        GoogleDriveStatusText.Text = connected
+            ? string.IsNullOrWhiteSpace(_settings.GoogleDriveAccountName) ? "Connected" : _settings.GoogleDriveAccountName
+            : "Not connected";
+        GoogleDriveConnectButton.Visibility = connected ? Visibility.Collapsed : Visibility.Visible;
+        GoogleDriveDisconnectButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        GoogleDriveBackupButton.IsEnabled = connected;
+        _isInitializingDataSettings = false;
+    }
+
+    private async void SettingsDataStorageCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingDataSettings)
+        {
+            return;
+        }
+
+        _settings.ChatHistoryStorage = SettingsChatStorageCombo.SelectedIndex == 1
+            ? DataStorageLocation.GoogleDrive
+            : DataStorageLocation.LocalComputer;
+        _settings.ImageStorage = SettingsImageStorageCombo.SelectedIndex == 1
+            ? DataStorageLocation.GoogleDrive
+            : DataStorageLocation.LocalComputer;
+        _settings.FileStorage = DataStorageLocation.GoogleDrive;
+        await AppSettingsStore.SaveAsync(_settings);
+    }
+
+    private async void SettingsReducedMotionCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingDataSettings)
+        {
+            return;
+        }
+
+        _settings.ReducedMotionEnabled = SettingsReducedMotionCheck.IsChecked == true;
+        await AppSettingsStore.SaveAsync(_settings);
+    }
+
+    private async void GoogleDriveConnectButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_googleDrive is null)
+        {
+            return;
+        }
+
+        try
+        {
+            GoogleDriveConnectButton.IsEnabled = false;
+            GoogleDriveStatusText.Text = "Waiting for Google authorization...";
+            _settings.GoogleDriveClientId = GoogleDriveClientIdInput.Text.Trim();
+            await _googleDrive.ConnectAsync(_stop.Token);
+            await AppSettingsStore.SaveAsync(_settings);
+            RefreshDataSettingsUi();
+            GoogleDriveStatusText.Text = "Connected. Files will upload directly to Google Drive.";
+        }
+        catch (OperationCanceledException)
+        {
+            AppLog.Write("Google Drive authorization canceled by user or timed out");
+            if (!_stop.IsCancellationRequested)
+            {
+                GoogleDriveStatusText.Text = "Google Drive authorization was canceled.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Write(ex, "Google Drive connect failed");
+            GoogleDriveStatusText.Text = ex.Message;
+        }
+        finally
+        {
+            GoogleDriveConnectButton.IsEnabled = true;
+        }
+    }
+
+    private async void GoogleDriveDisconnectButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _googleDrive?.Disconnect();
+        await AppSettingsStore.SaveAsync(_settings);
+        RefreshDataSettingsUi();
+    }
+
+    private async void GoogleDriveBackupButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_googleDrive?.IsConnected != true)
+        {
+            GoogleDriveBackupStatusText.Text = "Connect Google Drive first.";
+            return;
+        }
+
+        var snapshotPath = Path.Combine(Path.GetTempPath(), $"fluxchat-backup-{Guid.NewGuid():N}.zip");
+        try
+        {
+            GoogleDriveBackupButton.IsEnabled = false;
+            GoogleDriveBackupStatusText.Text = "Preparing an encrypted-transport Drive snapshot...";
+            await Task.Run(() => CreateDriveBackupSnapshot(snapshotPath), _stop.Token);
+            var progress = new Progress<double>(value =>
+                GoogleDriveBackupStatusText.Text = $"Uploading private snapshot - {value * 100:0}%");
+            _settings.GoogleDriveBackupFileId = await _googleDrive.UploadPrivateSnapshotAsync(
+                snapshotPath,
+                "FluxChat backup.zip",
+                _settings.GoogleDriveBackupFileId,
+                progress,
+                _stop.Token);
+            await AppSettingsStore.SaveAsync(_settings);
+            GoogleDriveBackupStatusText.Text = $"Backup completed at {DateTime.Now:HH:mm}. It is private in your Drive.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLog.Write(ex, "Google Drive backup failed");
+            GoogleDriveBackupStatusText.Text = ex.Message;
+        }
+        finally
+        {
+            GoogleDriveBackupButton.IsEnabled = _googleDrive?.IsConnected == true;
+            try
+            {
+                if (File.Exists(snapshotPath)) File.Delete(snapshotPath);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    private void CreateDriveBackupSnapshot(string destinationPath)
+    {
+        using var archive = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
+        if (_settings.ChatHistoryStorage == DataStorageLocation.GoogleDrive && File.Exists(AppPaths.HistoryPath))
+        {
+            archive.CreateEntryFromFile(AppPaths.HistoryPath, "history.db", CompressionLevel.Fastest);
+        }
+
+        if (_settings.ImageStorage == DataStorageLocation.GoogleDrive && Directory.Exists(AppPaths.AttachmentsDirectory))
+        {
+            foreach (var imagePath in Directory.EnumerateFiles(AppPaths.AttachmentsDirectory).Where(IsSupportedImagePath))
+            {
+                archive.CreateEntryFromFile(imagePath, $"images/{Path.GetFileName(imagePath)}", CompressionLevel.Fastest);
+            }
+        }
+
+        var manifest = archive.CreateEntry("backup-info.txt", CompressionLevel.Fastest);
+        using var writer = new StreamWriter(manifest.Open(), Encoding.UTF8);
+        writer.WriteLine($"FluxChat backup created {DateTimeOffset.UtcNow:O}");
+        writer.WriteLine($"ChatHistory={_settings.ChatHistoryStorage}");
+        writer.WriteLine($"Images={_settings.ImageStorage}");
     }
 
     private async void BadgeSelectButton_OnClick(object sender, RoutedEventArgs e)
@@ -2926,7 +3166,7 @@ public partial class MainWindow : Window
             _badgeAdminSessionAuthenticated = true;
             ApplyBadgeState(state, badgeId is null ? "Profile badge disabled." : $"{badgeId} badge selected.");
             if (_relayClient is not null) _relayClient.ActiveBadgeCertificate = GetActiveBadgeCertificate();
-            await PublishPresenceAsync();
+            await PublishPresenceAsync(force: true);
         }
         catch (Exception ex)
         {
@@ -2962,15 +3202,49 @@ public partial class MainWindow : Window
     private async void BadgeAdminTesterButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_badgeAuthority is null || _badgeAdminTarget is null || _badgeState?.CanManageBadges != true) return;
+        await MutateAdminBadgeAsync(
+            BadgeAdminTesterButton,
+            BadgeIds.Tester,
+            grant => grant
+                ? _badgeAuthority.GrantTesterAsync(_badgeAdminTarget.UserId, _stop.Token)
+                : _badgeAuthority.RevokeTesterAsync(_badgeAdminTarget.UserId, _stop.Token));
+    }
+
+    private async void BadgeAdminSpecialButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_badgeAuthority is null || _badgeAdminTarget is null || _badgeState?.CanManageBadges != true) return;
+        await MutateAdminBadgeAsync(
+            BadgeAdminSpecialButton,
+            BadgeIds.Special,
+            grant => grant
+                ? _badgeAuthority.GrantSpecialAsync(_badgeAdminTarget.UserId, _stop.Token)
+                : _badgeAuthority.RevokeSpecialAsync(_badgeAdminTarget.UserId, _stop.Token));
+    }
+
+    private async Task MutateAdminBadgeAsync(
+        System.Windows.Controls.Button button,
+        string badgeId,
+        Func<bool, Task<BadgeAdminUserResponse>> mutate)
+    {
+        if (_badgeAuthority is null || _badgeAdminTarget is null) return;
+        var authority = _badgeAuthority;
         try
         {
-            BadgeAdminTesterButton.IsEnabled = false;
-            var revoke = Equals(BadgeAdminTesterButton.Tag, "revoke");
-            _badgeAdminTarget = revoke
-                ? await _badgeAuthority.RevokeTesterAsync(_badgeAdminTarget.UserId, _stop.Token)
-                : await _badgeAuthority.GrantTesterAsync(_badgeAdminTarget.UserId, _stop.Token);
+            button.IsEnabled = false;
+            var revoke = Equals(button.Tag, "revoke");
+            _badgeAdminTarget = await mutate(!revoke);
             RefreshBadgeAdminTarget();
-            BadgeAdminStatusText.Text = revoke ? "Tester certificate revoked and audited." : "Tester certificate granted and audited.";
+            if (_profile is not null && string.Equals(_badgeAdminTarget.UserId, _profile.UserId, StringComparison.Ordinal))
+            {
+                var state = await authority.RefreshAsync(_stop.Token);
+                _badgeAdminSessionAuthenticated = true;
+                ApplyBadgeState(state, revoke ? $"{GetBadgeDisplayName(badgeId)} badge revoked." : $"{GetBadgeDisplayName(badgeId)} badge added to your collection.");
+                if (_relayClient is not null) _relayClient.ActiveBadgeCertificate = GetActiveBadgeCertificate();
+                await PublishPresenceAsync(force: true);
+            }
+            BadgeAdminStatusText.Text = revoke
+                ? $"{GetBadgeDisplayName(badgeId)} certificate revoked and audited."
+                : $"{GetBadgeDisplayName(badgeId)} certificate granted and audited.";
         }
         catch (Exception ex)
         {
@@ -2978,7 +3252,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            BadgeAdminTesterButton.IsEnabled = true;
+            button.IsEnabled = true;
         }
     }
 
@@ -2988,10 +3262,29 @@ public partial class MainWindow : Window
         BadgeAdminResultPanel.Visibility = Visibility.Visible;
         BadgeAdminResultName.Text = string.IsNullOrWhiteSpace(_badgeAdminTarget.DisplayName) ? "Registered user" : _badgeAdminTarget.DisplayName;
         BadgeAdminResultId.Text = _badgeAdminTarget.UserId;
-        var hasTester = _badgeAdminTarget.Certificates.Any(x => x.BadgeId == BadgeIds.Tester);
-        BadgeAdminTesterButton.Tag = hasTester ? "revoke" : "grant";
-        BadgeAdminTesterButton.Content = hasTester ? "Revoke Tester" : "Grant Tester";
-        BadgeAdminTesterButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hasTester ? "#b83a42" : "#5865f2"));
+        RefreshBadgeAdminButton(BadgeAdminTesterButton, BadgeIds.Tester);
+        RefreshBadgeAdminButton(BadgeAdminSpecialButton, BadgeIds.Special);
+    }
+
+    private void RefreshBadgeAdminButton(System.Windows.Controls.Button button, string badgeId)
+    {
+        if (_badgeAdminTarget is null) return;
+        var hasBadge = _badgeAdminTarget.Certificates.Any(x => x.BadgeId == badgeId);
+        var displayName = GetBadgeDisplayName(badgeId);
+        button.Tag = hasBadge ? "revoke" : "grant";
+        button.Content = hasBadge ? $"Revoke {displayName}" : $"Grant {displayName}";
+        button.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hasBadge ? "#b83a42" : "#5865f2"));
+    }
+
+    private static string GetBadgeDisplayName(string badgeId)
+    {
+        return badgeId switch
+        {
+            BadgeIds.Owner => "Owner",
+            BadgeIds.Tester => "Tester",
+            BadgeIds.Special => "Special",
+            _ => badgeId
+        };
     }
 
     private async Task RefreshBadgeStateAsync()
@@ -2999,6 +3292,7 @@ public partial class MainWindow : Window
         if (_badgeAuthority is null) return;
         try
         {
+            var previousBadgeSerial = GetActiveBadgeCertificate()?.Serial;
             var state = await _badgeAuthority.RefreshAsync(_stop.Token);
             await Dispatcher.InvokeAsync(() =>
             {
@@ -3006,7 +3300,7 @@ public partial class MainWindow : Window
                 ApplyBadgeState(state, "Official badge state verified.");
                 if (_relayClient is not null) _relayClient.ActiveBadgeCertificate = GetActiveBadgeCertificate();
             });
-            await PublishPresenceAsync();
+            await PublishPresenceAsync(force: !string.Equals(previousBadgeSerial, GetActiveBadgeCertificate()?.Serial, StringComparison.Ordinal));
         }
         catch (OperationCanceledException)
         {
@@ -3031,10 +3325,12 @@ public partial class MainWindow : Window
         _badgeState = state;
         var hasTester = state?.Certificates.Any(x => x.BadgeId == BadgeIds.Tester) == true;
         var hasOwner = state?.Certificates.Any(x => x.BadgeId == BadgeIds.Owner) == true;
+        var hasSpecial = state?.Certificates.Any(x => x.BadgeId == BadgeIds.Special) == true;
         BadgeTesterButton.IsEnabled = hasTester;
         BadgeTesterButton.Opacity = hasTester ? 1 : 0.48;
         BadgeTesterLock.Visibility = hasTester ? Visibility.Collapsed : Visibility.Visible;
         BadgeOwnerButton.Visibility = hasOwner ? Visibility.Visible : Visibility.Collapsed;
+        BadgeSpecialButton.Visibility = hasSpecial ? Visibility.Visible : Visibility.Collapsed;
         var canManageNow = state?.CanManageBadges == true && _badgeAdminSessionAuthenticated;
         SettingsBadgeAdminTabButton.Visibility = canManageNow ? Visibility.Visible : Visibility.Collapsed;
         if (!canManageNow && SettingsBadgeAdminContent.Visibility == Visibility.Visible) ShowSettingsTab("account");
@@ -3046,13 +3342,31 @@ public partial class MainWindow : Window
         BadgeNoneButton.Background = selected is null ? accent : normal;
         BadgeTesterButton.Background = selected == BadgeIds.Tester ? accent : normal;
         BadgeOwnerButton.Background = selected == BadgeIds.Owner ? accent : normal;
+        BadgeSpecialButton.Background = selected == BadgeIds.Special ? accent : normal;
+
+        if (state is not null)
+        {
+            foreach (var contact in _contacts.Where(x => !x.IsGroup))
+            {
+                ValidateStoredContactBadge(contact);
+                _ = _history.SaveContactAsync(contact);
+            }
+
+            if (_selectedContact is { IsGroup: false } selectedContact)
+            {
+                ChatBadgeImage.Source = selectedContact.BadgeImageSource;
+                ChatBadgeImage.ToolTip = selectedContact.BadgeToolTip;
+                ChatBadgeImage.Visibility = selectedContact.HasVerifiedBadge ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
     }
 
     private void SetBadgeButtonsEnabled(bool enabled)
     {
         BadgeNoneButton.IsEnabled = enabled;
         BadgeTesterButton.IsEnabled = enabled && _badgeState?.Certificates.Any(x => x.BadgeId == BadgeIds.Tester) == true;
-        BadgeOwnerButton.IsEnabled = enabled;
+        BadgeOwnerButton.IsEnabled = enabled && _badgeState?.Certificates.Any(x => x.BadgeId == BadgeIds.Owner) == true;
+        BadgeSpecialButton.IsEnabled = enabled && _badgeState?.Certificates.Any(x => x.BadgeId == BadgeIds.Special) == true;
     }
 
     private BadgeCertificate? GetActiveBadgeCertificate()
@@ -3063,8 +3377,14 @@ public partial class MainWindow : Window
     private void ValidateStoredContactBadge(ContactViewModel contact)
     {
         var certificate = BadgeCrypto.DeserializeCertificate(contact.BadgeCertificateJson);
-        if (_badgeAuthority is null || _badgeState is null ||
-            !_badgeAuthority.VerifyRemoteCertificate(certificate, contact.IdentityPublicKey, _badgeState.Revocations))
+        if (_badgeAuthority is null || _badgeState is null)
+        {
+            contact.VerifiedBadgeId = "";
+            contact.BadgeVerifiedAtUtc = null;
+            return;
+        }
+
+        if (!_badgeAuthority.VerifyRemoteCertificate(certificate, contact.IdentityPublicKey, _badgeState.Revocations))
         {
             ClearVerifiedBadge(contact);
             return;
@@ -3077,10 +3397,7 @@ public partial class MainWindow : Window
     {
         if (!identityVerified)
         {
-            if (string.IsNullOrWhiteSpace(publicKey) && certificate is null)
-            {
-                ClearVerifiedBadge(contact);
-            }
+            // Unsigned relay-generated offline/legacy presence must not erase a previously verified badge.
             return;
         }
 
@@ -3176,8 +3493,13 @@ public partial class MainWindow : Window
         var library = await SoundboardLibraryStore.LoadAsync();
         _isInitializingAudioFeatureControls = true;
         _soundboardVolume = Math.Clamp(library.Volume, 0, 1);
+        _soundboardMonitorVolume = Math.Clamp(library.MonitorVolume, 0, 1);
+        _isSoundboardMonitorMuted = library.IsMonitorMuted;
         SoundboardVolumeSlider.Value = _soundboardVolume * 100;
         SoundboardVolumeText.Text = $"{Math.Round(_soundboardVolume * 100):0}%";
+        SoundboardMonitorVolumeSlider.Value = _soundboardMonitorVolume * 100;
+        SoundboardMonitorVolumeText.Text = $"{Math.Round(_soundboardMonitorVolume * 100):0}%";
+        UpdateSoundboardMonitorUi();
         _soundboardClips.Clear();
         foreach (var clip in library.Clips
                      .Where(x => File.Exists(x.PcmPath))
@@ -3337,6 +3659,46 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void SoundboardMonitorButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _isSoundboardMonitorMuted = !_isSoundboardMonitorMuted;
+        UpdateSoundboardMonitorUi();
+        if (!_isInitializingAudioFeatureControls)
+        {
+            await SaveSoundboardLibraryAsync();
+        }
+    }
+
+    private async void SoundboardMonitorVolumeSlider_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        _soundboardMonitorVolume = Math.Clamp(e.NewValue / 100d, 0, 1);
+        if (SoundboardMonitorVolumeText is not null)
+        {
+            SoundboardMonitorVolumeText.Text = $"{Math.Round(e.NewValue):0}%";
+        }
+
+        if (IsLoaded && !_isInitializingAudioFeatureControls)
+        {
+            await SaveSoundboardLibraryAsync();
+        }
+    }
+
+    private void UpdateSoundboardMonitorUi()
+    {
+        if (SoundboardMonitorSlash is null || SoundboardMonitorButton is null)
+        {
+            return;
+        }
+
+        SoundboardMonitorSlash.Visibility = _isSoundboardMonitorMuted
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SoundboardMonitorButton.ToolTip = _isSoundboardMonitorMuted
+            ? "Hear my soundboard"
+            : "Mute my soundboard preview";
+        SoundboardMonitorButton.Opacity = _isSoundboardMonitorMuted ? 0.62 : 1;
+    }
+
     private void SoundboardPlayButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.Controls.Button { Tag: SoundboardClipViewModel clip })
@@ -3418,7 +3780,11 @@ public partial class MainWindow : Window
     {
         try
         {
-            await SoundboardLibraryStore.SaveAsync(_soundboardVolume, _soundboardClips);
+            await SoundboardLibraryStore.SaveAsync(
+                _soundboardVolume,
+                _soundboardMonitorVolume,
+                _isSoundboardMonitorMuted,
+                _soundboardClips);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -4221,7 +4587,7 @@ public partial class MainWindow : Window
 
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.gif|All files|*.*"
+            Filter = "All supported files|*.*|Images|*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.gif"
         };
 
         if (dialog.ShowDialog(this) != true)
@@ -5680,15 +6046,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        StageImageDraft(dialog.FileName);
+        if (IsSupportedImagePath(dialog.FileName))
+        {
+            StageImageDraft(dialog.FileName);
+        }
+        else
+        {
+            StageFileDraft(dialog.FileName);
+        }
     }
 
     private void ClearImageDraftButton_OnClick(object sender, RoutedEventArgs e)
         => ClearImageDraft();
 
+    private void ClearFileDraftButton_OnClick(object sender, RoutedEventArgs e)
+        => ClearFileDraft();
+
     private void ComposerPanel_OnPreviewDragOver(object sender, System.Windows.DragEventArgs e)
     {
-        e.Effects = TryGetImagePathFromDrop(e.Data, out _)
+        e.Effects = TryGetFilePathFromDrop(e.Data, out _)
             ? System.Windows.DragDropEffects.Copy
             : System.Windows.DragDropEffects.None;
         e.Handled = true;
@@ -5696,9 +6072,16 @@ public partial class MainWindow : Window
 
     private void ComposerPanel_OnDrop(object sender, System.Windows.DragEventArgs e)
     {
-        if (TryGetImagePathFromDrop(e.Data, out var path))
+        if (TryGetFilePathFromDrop(e.Data, out var path))
         {
-            StageImageDraft(path);
+            if (IsSupportedImagePath(path))
+            {
+                StageImageDraft(path);
+            }
+            else
+            {
+                StageFileDraft(path);
+            }
             e.Handled = true;
         }
     }
@@ -5731,6 +6114,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        ClearFileDraft();
         _draftImagePath = path;
         var preview = AvatarImageLoader.Load(path);
         if (preview is null)
@@ -5750,6 +6134,125 @@ public partial class MainWindow : Window
         _draftImagePath = "";
         ImageDraftPreview.Source = null;
         ImageDraftBar.Visibility = Visibility.Collapsed;
+    }
+
+    private void StageFileDraft(string path)
+    {
+        if (!File.Exists(path))
+        {
+            NetworkStatusText.Text = "The selected file no longer exists.";
+            return;
+        }
+
+        var file = new FileInfo(path);
+        if (file.Length <= 0 || file.Length > 5L * 1024 * 1024 * 1024)
+        {
+            NetworkStatusText.Text = "Files must be between 1 byte and 5 GB.";
+            return;
+        }
+
+        ClearImageDraft();
+        _draftFilePath = path;
+        FileDraftNameText.Text = file.Name;
+        FileDraftStatusText.Text = $"{FormatFileSize(file.Length)} - ready for Google Drive";
+        FileDraftProgress.Value = 0;
+        FileDraftProgress.Visibility = Visibility.Collapsed;
+        FileDraftBar.Visibility = Visibility.Visible;
+        MessageInput.Focus();
+    }
+
+    private void ClearFileDraft()
+    {
+        _fileUploadCancellation?.Cancel();
+        _fileUploadCancellation?.Dispose();
+        _fileUploadCancellation = null;
+        _draftFilePath = "";
+        FileDraftNameText.Text = "";
+        FileDraftStatusText.Text = "Ready to upload to Google Drive";
+        FileDraftProgress.Value = 0;
+        FileDraftProgress.Visibility = Visibility.Collapsed;
+        FileDraftBar.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task UploadAndSendDraftFileAsync(string caption)
+    {
+        if (_googleDrive is null || _selectedContact is null || _selectedContact.IsGroup)
+        {
+            NetworkStatusText.Text = _selectedContact?.IsGroup == true
+                ? "Files in group chats are not supported yet."
+                : "Open a direct message before sending a file.";
+            return;
+        }
+        if (!_googleDrive.IsConnected)
+        {
+            NetworkStatusText.Text = "Connect Google Drive in Settings > Data before sending files.";
+            return;
+        }
+
+        var path = _draftFilePath;
+        var targetUserId = _selectedContact.UserId;
+        _fileUploadCancellation?.Cancel();
+        _fileUploadCancellation?.Dispose();
+        _fileUploadCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        var progress = new Progress<double>(value =>
+        {
+            FileDraftProgress.Visibility = Visibility.Visible;
+            FileDraftProgress.Value = value * 100;
+            FileDraftStatusText.Text = $"Uploading to Google Drive - {value * 100:0}%";
+        });
+
+        try
+        {
+            SendButton.IsEnabled = false;
+            var uploaded = await _googleDrive.UploadAsync(path, progress, _fileUploadCancellation.Token);
+            await AppSettingsStore.SaveAsync(_settings);
+            if (_selectedContact?.UserId != targetUserId)
+            {
+                throw new InvalidOperationException("Return to the original chat to finish sending this file.");
+            }
+
+            await SendRichMessageAsync(
+                MessageKinds.File,
+                caption,
+                replyTarget: _replyTarget,
+                fileName: uploaded.FileName,
+                fileSizeBytes: uploaded.FileSizeBytes,
+                mimeType: uploaded.MimeType,
+                driveFileId: uploaded.FileId,
+                downloadUrl: uploaded.DownloadUrl,
+                storageProvider: "GoogleDrive");
+            MessageInput.Clear();
+            ClearFileDraft();
+            NetworkStatusText.Text = "File uploaded and sent. The VPS received only its Drive link.";
+        }
+        catch (OperationCanceledException) when (!_stop.IsCancellationRequested)
+        {
+            FileDraftStatusText.Text = "Upload canceled";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, "Google Drive file send failed");
+            FileDraftStatusText.Text = ex.Message;
+            NetworkStatusText.Text = "File upload failed. You can retry without selecting it again.";
+        }
+        finally
+        {
+            SendButton.IsEnabled = true;
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        var value = (double)Math.Max(0, bytes);
+        var index = 0;
+        while (value >= 1024 && index < suffixes.Length - 1)
+        {
+            value /= 1024;
+            index++;
+        }
+
+        return $"{value:0.#} {suffixes[index]}";
     }
 
     private async Task<bool> TryStageImageFromClipboardAsync()
@@ -5891,7 +6394,7 @@ public partial class MainWindow : Window
         return false;
     }
 
-    private static bool TryGetImagePathFromDrop(System.Windows.IDataObject data, out string path)
+    private static bool TryGetFilePathFromDrop(System.Windows.IDataObject data, out string path)
     {
         path = "";
         if (!data.GetDataPresent(System.Windows.DataFormats.FileDrop) ||
@@ -5900,7 +6403,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        path = files.FirstOrDefault(file => File.Exists(file) && IsSupportedImagePath(file)) ?? "";
+        path = files.FirstOrDefault(File.Exists) ?? "";
         return !string.IsNullOrWhiteSpace(path);
     }
 
@@ -6084,6 +6587,502 @@ public partial class MainWindow : Window
 
         OpenImageViewer(message);
         e.Handled = true;
+    }
+
+    private void MessageFileOpenButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: MessageViewModel { IsFileMessage: true } message } ||
+            string.IsNullOrWhiteSpace(message.DownloadUrl) ||
+            !Uri.TryCreate(message.DownloadUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("https" or "http"))
+        {
+            NetworkStatusText.Text = "This file does not have a valid download link.";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, "Open Drive file failed");
+            NetworkStatusText.Text = "Could not open the file link.";
+        }
+    }
+
+    private async void VideoDownloadButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: MessageViewModel { IsVideoFileMessage: true } message })
+        {
+            return;
+        }
+
+        await DownloadVideoAsync(message);
+        e.Handled = true;
+    }
+
+    private async Task DownloadVideoAsync(MessageViewModel message)
+    {
+        if (_googleDrive is null || !message.HasRemoteVideo || message.IsVideoDownloading)
+        {
+            return;
+        }
+
+        var cachedPath = VideoCacheStore.TryGetExistingPath(message);
+        if (!string.IsNullOrWhiteSpace(cachedPath))
+        {
+            message.MarkVideoReady(cachedPath);
+            NetworkStatusText.Text = "Video is ready.";
+            return;
+        }
+
+        if (_videoDownloads.Remove(message.MessageId, out var previous))
+        {
+            previous.Cancel();
+            previous.Dispose();
+        }
+
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        _videoDownloads[message.MessageId] = cancellation;
+        message.MarkVideoDownloading();
+        var progress = new Progress<double>(value => message.UpdateVideoDownloadProgress(value * 100));
+        var targetPath = VideoCacheStore.GetPath(message);
+
+        try
+        {
+            await _googleDrive.DownloadFileAsync(
+                message.DriveFileId,
+                message.DownloadUrl,
+                targetPath,
+                message.FileSizeBytes,
+                progress,
+                cancellation.Token);
+            message.MarkVideoReady(targetPath);
+            VideoCacheStore.Trim();
+            NetworkStatusText.Text = "Video downloaded. Press play to watch it.";
+        }
+        catch (OperationCanceledException) when (!_stop.IsCancellationRequested)
+        {
+            message.MarkVideoDownloadFailed("Video download canceled. Click to retry.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, $"Video download failed: messageId={message.MessageId}, driveFileId={message.DriveFileId}");
+            message.MarkVideoDownloadFailed("Video download failed. Click to retry.");
+            NetworkStatusText.Text = ex.Message;
+        }
+        finally
+        {
+            if (_videoDownloads.TryGetValue(message.MessageId, out var current) && ReferenceEquals(current, cancellation))
+            {
+                _videoDownloads.Remove(message.MessageId);
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private void VideoMessagePlayer_OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MediaElement { Tag: MessageViewModel message } player)
+        {
+            return;
+        }
+
+        RegisterVideoPlayer(message, player);
+        player.Volume = message.VideoVolume;
+        if (message.IsVideoReady && message.VideoSource is not null)
+        {
+            player.Source = message.VideoSource;
+            player.Position = TimeSpan.FromSeconds(message.VideoPositionSeconds);
+            player.Pause();
+        }
+    }
+
+    private void VideoMessagePlayer_OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MediaElement { Tag: MessageViewModel message } player)
+        {
+            return;
+        }
+
+        player.Pause();
+        player.Close();
+        message.IsVideoPlaying = false;
+        UnregisterVideoPlayer(message, player);
+    }
+
+    private void VideoMessagePlayer_OnMediaOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is MediaElement { Tag: MessageViewModel message } player)
+        {
+            ApplyOpenedVideoState(player, message);
+        }
+    }
+
+    private void VideoViewerPlayer_OnMediaOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is MediaElement { Tag: MessageViewModel message } player)
+        {
+            ApplyOpenedVideoState(player, message);
+        }
+    }
+
+    private static void ApplyOpenedVideoState(MediaElement player, MessageViewModel message)
+    {
+        if (player.NaturalDuration.HasTimeSpan)
+        {
+            message.VideoDurationSeconds = player.NaturalDuration.TimeSpan.TotalSeconds;
+        }
+
+        player.Volume = message.VideoVolume;
+        player.Position = TimeSpan.FromSeconds(Math.Min(message.VideoPositionSeconds, message.VideoDurationSeconds));
+        if (message.IsVideoPlaying) player.Play();
+        else player.Pause();
+    }
+
+    private void VideoMessagePlayer_OnMediaEnded(object sender, RoutedEventArgs e)
+        => ResetEndedVideo(sender as MediaElement);
+
+    private void VideoViewerPlayer_OnMediaEnded(object sender, RoutedEventArgs e)
+        => ResetEndedVideo(sender as MediaElement);
+
+    private static void ResetEndedVideo(MediaElement? player)
+    {
+        if (player?.Tag is not MessageViewModel message) return;
+        player.Pause();
+        player.Position = TimeSpan.Zero;
+        message.VideoPositionSeconds = 0;
+        message.IsVideoPlaying = false;
+    }
+
+    private void VideoMessagePlayer_OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
+        => HandleVideoPlaybackFailure(sender as MediaElement, e.ErrorException);
+
+    private void VideoViewerPlayer_OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
+        => HandleVideoPlaybackFailure(sender as MediaElement, e.ErrorException);
+
+    private void HandleVideoPlaybackFailure(MediaElement? player, Exception? exception)
+    {
+        if (player?.Tag is not MessageViewModel message) return;
+        AppLog.Write(exception ?? new InvalidOperationException("Unknown media error"), $"Video playback failed: messageId={message.MessageId}");
+        message.MarkVideoPlaybackFailed("This video format cannot be played. MP4 with H.264 is recommended.");
+        NetworkStatusText.Text = "FluxChat could not decode this video.";
+        if (ReferenceEquals(_videoViewerMessage, message)) CloseVideoViewer();
+    }
+
+    private void VideoMessagePlayer_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is MediaElement { Tag: MessageViewModel message })
+        {
+            ToggleVideoPlayback(message);
+            e.Handled = true;
+        }
+    }
+
+    private void VideoPlayPauseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button { Tag: MessageViewModel message })
+        {
+            ToggleVideoPlayback(message);
+            e.Handled = true;
+        }
+    }
+
+    private void ToggleVideoPlayback(MessageViewModel message)
+    {
+        if (!message.IsVideoReady) return;
+        var player = GetPreferredVideoPlayer(message);
+        if (player is null) return;
+
+        if (message.IsVideoPlaying)
+        {
+            player.Pause();
+            message.IsVideoPlaying = false;
+        }
+        else
+        {
+            PauseOtherVideos(message);
+            player.Volume = message.VideoVolume;
+            player.Play();
+            message.IsVideoPlaying = true;
+            _videoPlaybackTimer.Start();
+        }
+    }
+
+    private void VideoTimeline_OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Slider { Tag: MessageViewModel message } slider || slider.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var ratio = Math.Clamp(e.GetPosition(slider).X / slider.ActualWidth, 0, 1);
+        var position = ratio * message.VideoDurationSeconds;
+        message.VideoPositionSeconds = position;
+        foreach (var player in GetVideoPlayers(message))
+        {
+            player.Position = TimeSpan.FromSeconds(position);
+        }
+    }
+
+    private void VideoVolume_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (sender is not Slider { Tag: MessageViewModel message }) return;
+        message.VideoVolume = e.NewValue;
+        foreach (var player in GetVideoPlayers(message)) player.Volume = message.VideoVolume;
+    }
+
+    private void VideoFullscreenButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button { Tag: MessageViewModel { IsVideoReady: true } message })
+        {
+            OpenVideoViewer(message);
+            e.Handled = true;
+        }
+    }
+
+    private void OpenVideoViewer(MessageViewModel message)
+    {
+        var wasPlaying = message.IsVideoPlaying;
+        foreach (var player in GetVideoPlayers(message)) player.Pause();
+        message.IsVideoPlaying = wasPlaying;
+        _videoViewerMessage = message;
+        VideoViewerOverlay.DataContext = message;
+        VideoViewerPlayer.Tag = message;
+        VideoViewerPlayer.Source = message.VideoSource;
+        VideoViewerPlayer.Volume = message.VideoVolume;
+        VideoViewerOverlay.BeginAnimation(OpacityProperty, null);
+        VideoViewerOverlay.Opacity = 1;
+        VideoViewerOverlay.Visibility = Visibility.Visible;
+        VideoViewerOverlay.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    private void VideoViewerBackdrop_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        CloseVideoViewer();
+        e.Handled = true;
+    }
+
+    private void VideoViewerCloseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        CloseVideoViewer();
+        e.Handled = true;
+    }
+
+    private void CloseVideoViewer()
+    {
+        if (VideoViewerOverlay is null || VideoViewerPlayer is null) return;
+        if (_videoViewerMessage is not null)
+        {
+            _videoViewerMessage.VideoPositionSeconds = Math.Max(0, VideoViewerPlayer.Position.TotalSeconds);
+            _videoViewerMessage.IsVideoPlaying = false;
+        }
+        VideoViewerPlayer.Pause();
+        VideoViewerPlayer.Close();
+        VideoViewerPlayer.Source = null;
+        VideoViewerPlayer.Tag = null;
+        VideoViewerOverlay.Visibility = Visibility.Collapsed;
+        VideoViewerOverlay.DataContext = null;
+        _videoViewerMessage = null;
+    }
+
+    private async void VideoDeleteLocalButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: MessageViewModel { IsVideoFileMessage: true } message }) return;
+        if (MessageBox.Show(this,
+                "Delete the downloaded copy from this device? The message and Google Drive file will stay available.",
+                "Delete local video",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        if (_videoDownloads.Remove(message.MessageId, out var download))
+        {
+            download.Cancel();
+            download.Dispose();
+        }
+        if (ReferenceEquals(_videoViewerMessage, message)) CloseVideoViewer();
+        CloseVideoPlayers(message);
+        await Task.Delay(120);
+
+        try
+        {
+            await DeleteVideoCacheWithRetryAsync(message);
+            message.ClearLocalVideo();
+            NetworkStatusText.Text = "Downloaded video removed from this device.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLog.Write(ex, $"Delete local video failed: messageId={message.MessageId}");
+            NetworkStatusText.Text = "Could not delete the local video because it is still in use.";
+        }
+        e.Handled = true;
+    }
+
+    private async void VideoDeleteDriveButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: MessageViewModel { CanDeleteDriveVideo: true } message } ||
+            _googleDrive is null)
+        {
+            return;
+        }
+        if (MessageBox.Show(this,
+                "Permanently delete this video from your Google Drive? People who have not downloaded it will no longer be able to watch it.",
+                "Delete from Google Drive",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            await _googleDrive.DeleteFileAsync(message.DriveFileId, _stop.Token);
+            message.MarkDriveVideoDeleted();
+            await _history.UpdateMessageAsync(message);
+            NetworkStatusText.Text = "Video deleted from Google Drive. The local downloaded copy was kept.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or OperationCanceledException)
+        {
+            AppLog.Write(ex, $"Delete Drive video failed: messageId={message.MessageId}");
+            NetworkStatusText.Text = ex.Message;
+        }
+        e.Handled = true;
+    }
+
+    private static async Task DeleteVideoCacheWithRetryAsync(MessageViewModel message)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                VideoCacheStore.Delete(message);
+                return;
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                await Task.Delay(100);
+            }
+        }
+    }
+
+    private void RegisterVideoPlayer(MessageViewModel message, MediaElement player)
+    {
+        if (!_videoPlayers.TryGetValue(message.MessageId, out var players))
+        {
+            players = [];
+            _videoPlayers[message.MessageId] = players;
+        }
+        players.RemoveAll(x => !x.TryGetTarget(out var target) || ReferenceEquals(target, player));
+        players.Add(new WeakReference<MediaElement>(player));
+    }
+
+    private void UnregisterVideoPlayer(MessageViewModel message, MediaElement player)
+    {
+        if (!_videoPlayers.TryGetValue(message.MessageId, out var players)) return;
+        players.RemoveAll(x => !x.TryGetTarget(out var target) || ReferenceEquals(target, player));
+        if (players.Count == 0) _videoPlayers.Remove(message.MessageId);
+    }
+
+    private IReadOnlyList<MediaElement> GetVideoPlayers(MessageViewModel message)
+    {
+        var result = new List<MediaElement>();
+        if (_videoPlayers.TryGetValue(message.MessageId, out var players))
+        {
+            players.RemoveAll(x => !x.TryGetTarget(out _));
+            foreach (var reference in players)
+            {
+                if (reference.TryGetTarget(out var player)) result.Add(player);
+            }
+        }
+        if (ReferenceEquals(_videoViewerMessage, message) && VideoViewerPlayer.Source is not null)
+        {
+            result.Add(VideoViewerPlayer);
+        }
+        return result;
+    }
+
+    private MediaElement? GetPreferredVideoPlayer(MessageViewModel message)
+    {
+        if (ReferenceEquals(_videoViewerMessage, message) && VideoViewerOverlay.Visibility == Visibility.Visible)
+        {
+            return VideoViewerPlayer;
+        }
+        return GetVideoPlayers(message).FirstOrDefault(x => x.IsVisible);
+    }
+
+    private void PauseOtherVideos(MessageViewModel activeMessage)
+    {
+        foreach (var pair in _videoPlayers.ToArray())
+        {
+            foreach (var reference in pair.Value.ToArray())
+            {
+                if (!reference.TryGetTarget(out var player)) continue;
+                if (player.Tag is MessageViewModel message && !ReferenceEquals(message, activeMessage))
+                {
+                    player.Pause();
+                    message.IsVideoPlaying = false;
+                }
+            }
+        }
+        if (_videoViewerMessage is not null && !ReferenceEquals(_videoViewerMessage, activeMessage))
+        {
+            VideoViewerPlayer.Pause();
+            _videoViewerMessage.IsVideoPlaying = false;
+        }
+    }
+
+    private void PauseAllMessageVideos()
+    {
+        foreach (var pair in _videoPlayers.ToArray())
+        {
+            foreach (var reference in pair.Value.ToArray())
+            {
+                if (!reference.TryGetTarget(out var player)) continue;
+                player.Pause();
+                if (player.Tag is MessageViewModel message) message.IsVideoPlaying = false;
+            }
+        }
+    }
+
+    private void CloseVideoPlayers(MessageViewModel message)
+    {
+        foreach (var player in GetVideoPlayers(message))
+        {
+            player.Pause();
+            player.Close();
+        }
+        message.IsVideoPlaying = false;
+    }
+
+    private void VideoPlaybackTimer_OnTick(object? sender, EventArgs e)
+    {
+        var hasPlayingVideo = false;
+        foreach (var pair in _videoPlayers.ToArray())
+        {
+            pair.Value.RemoveAll(x => !x.TryGetTarget(out _));
+            foreach (var reference in pair.Value)
+            {
+                if (!reference.TryGetTarget(out var player) || player.Tag is not MessageViewModel message || !message.IsVideoPlaying) continue;
+                message.VideoPositionSeconds = player.Position.TotalSeconds;
+                hasPlayingVideo = true;
+            }
+            if (pair.Value.Count == 0) _videoPlayers.Remove(pair.Key);
+        }
+        if (_videoViewerMessage?.IsVideoPlaying == true)
+        {
+            _videoViewerMessage.VideoPositionSeconds = VideoViewerPlayer.Position.TotalSeconds;
+            hasPlayingVideo = true;
+        }
+        if (!hasPlayingVideo) _videoPlaybackTimer.Stop();
     }
 
     private void OpenImageViewer(MessageViewModel message)
@@ -6728,6 +7727,12 @@ public partial class MainWindow : Window
         }
 
         var body = MessageInput.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(_draftFilePath))
+        {
+            await UploadAndSendDraftFileAsync(body);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(_draftImagePath))
         {
             if (_selectedContact.IsGroup)
@@ -6849,7 +7854,13 @@ public partial class MainWindow : Window
         string attachmentPath = "",
         string attachmentUrl = "",
         MessageViewModel? replyTarget = null,
-        string forwardedFrom = "")
+        string forwardedFrom = "",
+        string fileName = "",
+        long fileSizeBytes = 0,
+        string mimeType = "",
+        string driveFileId = "",
+        string downloadUrl = "",
+        string storageProvider = "")
     {
         if (_profile is null || _selectedContact is null || _selectedContact.IsGroup)
         {
@@ -6866,7 +7877,9 @@ public partial class MainWindow : Window
             attachmentFileName = Path.GetFileName(storedAttachmentPath);
         }
 
-        var payload = CreateRichPayload(kind, text, attachmentFileName, attachmentBase64, attachmentUrl, replyTarget, forwardedFrom);
+        var payload = CreateRichPayload(
+            kind, text, attachmentFileName, attachmentBase64, attachmentUrl, replyTarget, forwardedFrom,
+            fileName, fileSizeBytes, mimeType, driveFileId, downloadUrl, storageProvider);
         var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
         var message = new MessageViewModel
         {
@@ -6881,7 +7894,13 @@ public partial class MainWindow : Window
             AttachmentUrl = attachmentUrl,
             ReplyToMessageId = replyTarget?.MessageId,
             ReplyPreview = replyTarget?.PreviewText ?? "",
-            ForwardedFrom = forwardedFrom
+            ForwardedFrom = forwardedFrom,
+            FileName = fileName,
+            FileSizeBytes = fileSizeBytes,
+            MimeType = mimeType,
+            DriveFileId = driveFileId,
+            DownloadUrl = downloadUrl,
+            StorageProvider = storageProvider
         };
         PrepareMessageForUi(message);
 
@@ -6907,7 +7926,9 @@ public partial class MainWindow : Window
             attachmentFileName = Path.GetFileName(source.AttachmentPath);
         }
 
-        var payload = CreateRichPayload(source.Kind, source.Text, attachmentFileName, attachmentBase64, source.AttachmentUrl, null, _profile.DisplayName);
+        var payload = CreateRichPayload(
+            source.Kind, source.Text, attachmentFileName, attachmentBase64, source.AttachmentUrl, null, _profile.DisplayName,
+            source.FileName, source.FileSizeBytes, source.MimeType, source.DriveFileId, source.DownloadUrl, source.StorageProvider);
         var packet = CreateProfilePacket(contact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
         var message = new MessageViewModel
         {
@@ -6920,7 +7941,13 @@ public partial class MainWindow : Window
             Kind = source.Kind,
             AttachmentPath = source.AttachmentPath,
             AttachmentUrl = source.AttachmentUrl,
-            ForwardedFrom = _profile.DisplayName
+            ForwardedFrom = _profile.DisplayName,
+            FileName = source.FileName,
+            FileSizeBytes = source.FileSizeBytes,
+            MimeType = source.MimeType,
+            DriveFileId = source.DriveFileId,
+            DownloadUrl = source.DownloadUrl,
+            StorageProvider = source.StorageProvider
         };
         PrepareMessageForUi(message);
 
@@ -6941,7 +7968,13 @@ public partial class MainWindow : Window
         string attachmentBase64,
         string? attachmentUrl,
         MessageViewModel? replyTarget,
-        string forwardedFrom)
+        string forwardedFrom,
+        string fileName = "",
+        long fileSizeBytes = 0,
+        string mimeType = "",
+        string driveFileId = "",
+        string downloadUrl = "",
+        string storageProvider = "")
         => new(
             kind,
             text,
@@ -6950,7 +7983,13 @@ public partial class MainWindow : Window
             attachmentUrl ?? "",
             replyTarget?.MessageId,
             replyTarget?.PreviewText ?? "",
-            forwardedFrom);
+            forwardedFrom,
+            fileName,
+            fileSizeBytes,
+            mimeType,
+            driveFileId,
+            downloadUrl,
+            storageProvider);
 
     private static string CopyAttachmentIntoStore(string sourcePath)
     {
@@ -7020,6 +8059,12 @@ public partial class MainWindow : Window
             ReplyToMessageId = payload.ReplyToMessageId,
             ReplyPreview = payload.ReplyPreview,
             ForwardedFrom = payload.ForwardedFrom,
+            FileName = payload.FileName,
+            FileSizeBytes = payload.FileSizeBytes,
+            MimeType = payload.MimeType,
+            DriveFileId = payload.DriveFileId,
+            DownloadUrl = payload.DownloadUrl,
+            StorageProvider = payload.StorageProvider,
             SenderUserId = packet.FromUserId,
             SenderDisplayName = packet.FromDisplayName
         };
@@ -7149,6 +8194,11 @@ public partial class MainWindow : Window
     {
         message.CurrentUserId = _profile?.UserId ?? "";
         ApplyMessageSenderMetadata(message);
+        if (message.IsVideoFileMessage)
+        {
+            var cachedPath = VideoCacheStore.TryGetExistingPath(message);
+            if (!string.IsNullOrWhiteSpace(cachedPath)) message.MarkVideoReady(cachedPath);
+        }
         if (message.IsGifMessage &&
             !string.IsNullOrWhiteSpace(message.AttachmentUrl) &&
             _messageGifDimensions.TryGetValue(message.AttachmentUrl, out var dimensions))
@@ -7382,7 +8432,8 @@ public partial class MainWindow : Window
                     window.Description,
                     false,
                     window.WindowHandle,
-                    window.Bounds));
+                    window.Bounds,
+                    window.WindowTitle));
             }
         }
         finally
@@ -7415,9 +8466,10 @@ public partial class MainWindow : Window
         string description,
         bool isScreen,
         IntPtr windowHandle,
-        Rectangle bounds)
+        Rectangle bounds,
+        string? windowTitle = null)
     {
-        var source = new ScreenShareSourceItem(title, description, isScreen, windowHandle, bounds, null);
+        var source = new ScreenShareSourceItem(title, description, isScreen, windowHandle, bounds, null, windowTitle);
         return source with { Preview = CreateScreenSharePreviewImage(source) };
     }
 
@@ -7446,7 +8498,7 @@ public partial class MainWindow : Window
         _activeScreenShareSource = source;
         _isScreenSharing = true;
         _isWatchingPeerScreen = _peerScreenSharing;
-        ApplyScreenShareVoiceProtectionIfNeeded();
+        var ffmpegPath = FindFfmpegExecutable();
         _screenShareAdaptiveHeight = GetInitialScreenShareAdaptiveHeight();
         Interlocked.Exchange(ref _sentScreenShareFrames, 0);
         Interlocked.Exchange(ref _sentEncodedScreenShareChunks, 0);
@@ -7467,15 +8519,6 @@ public partial class MainWindow : Window
         UpdateScreenShareStageVisibility();
 
         var useWebRtc = IsScreenShareWebRtcPreferred() && ScreenShareWebView.CoreWebView2 is not null;
-        if (useWebRtc && ShouldUseCompatibleScreenShareForSimultaneousStart())
-        {
-            useWebRtc = false;
-            ApplyCompatibleScreenShareFallbackQuality();
-            UpdateScreenSharePickerState();
-            NetworkStatusText.Text = "Using compatible screen share while both screens are active.";
-            AppLog.Write($"Screen share WebRTC skipped for simultaneous share: peerWebRtc={_peerScreenShareUsingWebRtc}, source={source.Title}, resolution={_screenShareResolution}, fps={_screenShareFrameRate}");
-        }
-
         if (!useWebRtc)
         {
             _screenShareFrameRate = ClampScreenShareFrameRate(_screenShareResolution, _screenShareFrameRate);
@@ -7483,7 +8526,6 @@ public partial class MainWindow : Window
 
         if (useWebRtc)
         {
-            var ffmpegPath = FindFfmpegExecutable();
             if (ScreenSharePreferEncodedWebRtc && !string.IsNullOrWhiteSpace(ffmpegPath))
             {
                 _screenShareUsingEncodedWebRtc = true;
@@ -7510,6 +8552,7 @@ public partial class MainWindow : Window
                     }),
                     DispatcherPriority.Loaded);
                 AppLog.Write($"Screen share encoded WebRTC requested: source={source.Title}, resolution={_screenShareResolution}, effectiveHeight={encodedHeight}, fps={_screenShareFrameRate}, ffmpeg={ffmpegPath}");
+                SetScreenShareRuntimeStatus($"Hardware H.264 requested: {source.Title}, {encodedHeight}p {_screenShareFrameRate} fps");
                 return;
             }
 
@@ -7544,6 +8587,7 @@ public partial class MainWindow : Window
                 DispatcherPriority.Loaded);
             _ = Task.Run(() => RunNativeWebRtcScreenShareLoopAsync(source, _screenShareStop.Token));
             AppLog.Write($"Screen share native WebRTC requested: source={source.Title}, resolution={_screenShareResolution}, effectiveHeight={targetHeight}, fps={_screenShareFrameRate}, maxBitrate={GetScreenShareWebRtcMaxBitrate()}");
+            SetScreenShareRuntimeStatus($"Compatibility native capture: {targetHeight}p {_screenShareFrameRate} fps");
             return;
         }
 
@@ -7551,7 +8595,29 @@ public partial class MainWindow : Window
         Interlocked.Exchange(ref _screenShareJpegLoopStarted, 1);
         NetworkStatusText.Text = $"Screen sharing {source.Title} at {_screenShareResolution}p {_screenShareFrameRate} fps.";
         AppLog.Write($"Screen share native capture started: source={source.Title}, resolution={_screenShareResolution}, fps={_screenShareFrameRate}, jpegQuality={ScreenShareJpegQuality}");
+        SetScreenShareRuntimeStatus($"Compatibility JPEG capture: {_screenShareResolution}p {_screenShareFrameRate} fps");
         _ = Task.Run(() => RunScreenShareLoopAsync(source, _screenShareStop.Token));
+    }
+
+    private void SetScreenShareRuntimeStatus(string status)
+    {
+        _screenShareRuntimeStatus = status;
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (IsLoaded && string.Equals(_screenShareRuntimeStatus, status, StringComparison.Ordinal))
+                {
+                    ScreenShareRuntimeStatusText.Text = status;
+                }
+            }), DispatcherPriority.Background);
+            return;
+        }
+
+        if (IsLoaded)
+        {
+            ScreenShareRuntimeStatusText.Text = status;
+        }
     }
 
     private void SendScreenShareStartSignal(ScreenShareSourceItem source, bool useWebRtc)
@@ -7589,6 +8655,7 @@ public partial class MainWindow : Window
         _screenShareUsingNativeWebRtc = false;
         _screenShareUsingEncodedWebRtc = false;
         _screenShareEncodedChannelOpen = false;
+        SetEncodedScreenShareBackpressure(false);
         StopScreenShareEncoderProcess();
         if (wasUsingNativeWebRtc || wasUsingEncodedWebRtc || _screenShareWebRtcActive || ScreenShareWebView.Visibility == Visibility.Visible)
         {
@@ -7840,7 +8907,7 @@ public partial class MainWindow : Window
         Process? process = null;
         try
         {
-            var arguments = CreateFfmpegScreenShareArguments(bounds, encoder);
+            var arguments = CreateFfmpegScreenShareArguments(source, bounds, encoder);
             var startInfo = new ProcessStartInfo
             {
                 FileName = ffmpegPath,
@@ -7863,12 +8930,15 @@ public partial class MainWindow : Window
             _screenShareEncoderProcess = process;
             _ = Task.Run(() => ReadScreenShareEncoderLogAsync(process, cancellationToken), cancellationToken);
             var effectiveHeight = GetScreenShareTargetHeight(bounds, _screenShareResolution);
-            AppLog.Write($"Screen share H.264 encoder started: encoder={encoder}, source={source.Title}, bounds={bounds.Width}x{bounds.Height}+{bounds.Left}+{bounds.Top}, resolution={_screenShareResolution}, effectiveHeight={effectiveHeight}, fps={_screenShareFrameRate}");
+            var sourceKind = source.IsScreen ? "monitor" : "window";
+            AppLog.Write($"Screen share H.264 encoder started: encoder={encoder}, source={source.Title}, kind={sourceKind}, bounds={bounds.Width}x{bounds.Height}+{bounds.Left}+{bounds.Top}, resolution={_screenShareResolution}, effectiveHeight={effectiveHeight}, fps={_screenShareFrameRate}");
+            SetScreenShareRuntimeStatus($"{encoder}: {effectiveHeight}p {_screenShareFrameRate} fps ({sourceKind})");
 
             long chunks = 0;
             var buffer = new byte[ScreenShareEncodedChunkSize];
             while (_screenShareUsingEncodedWebRtc && !cancellationToken.IsCancellationRequested)
             {
+                await WaitForEncodedScreenShareDrainAsync(cancellationToken);
                 var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, cancellationToken);
                 if (read <= 0)
                 {
@@ -7878,7 +8948,7 @@ public partial class MainWindow : Window
                 chunks++;
                 var chunk = new byte[read];
                 Buffer.BlockCopy(buffer, 0, chunk, 0, read);
-                PostEncodedScreenShareChunk(chunk);
+                await PostEncodedScreenShareChunkAsync(chunk, cancellationToken);
                 PostEncodedScreenShareLocalPreview(source);
             }
 
@@ -7905,7 +8975,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void PostEncodedScreenShareChunk(byte[] chunk)
+    private async Task PostEncodedScreenShareChunkAsync(byte[] chunk, CancellationToken cancellationToken)
     {
         if (!_screenShareUsingEncodedWebRtc || chunk.Length == 0)
         {
@@ -7920,7 +8990,7 @@ public partial class MainWindow : Window
             dataBase64 = Convert.ToBase64String(chunk)
         });
 
-        _ = Dispatcher.BeginInvoke(
+        await Dispatcher.InvokeAsync(
             new Action(() =>
             {
                 if (_screenShareUsingEncodedWebRtc && ScreenShareWebView.CoreWebView2 is not null)
@@ -7928,12 +8998,55 @@ public partial class MainWindow : Window
                     PostScreenShareWebRtcMessageJson(json);
                 }
             }),
-            DispatcherPriority.Background);
+            DispatcherPriority.Background,
+            cancellationToken);
 
         if (sent == 1 || sent % 200 == 0)
         {
             AppLog.Write($"Screen share H.264 chunk queued: chunks={sent}, bytes={chunk.Length}");
         }
+    }
+
+    private Task WaitForEncodedScreenShareDrainAsync(CancellationToken cancellationToken)
+    {
+        lock (_screenShareEncodedFlowGate)
+        {
+            return _screenShareEncodedBackpressured && _screenShareEncodedDrainWaiter is not null
+                ? _screenShareEncodedDrainWaiter.Task.WaitAsync(cancellationToken)
+                : Task.CompletedTask;
+        }
+    }
+
+    private void SetEncodedScreenShareBackpressure(bool high)
+    {
+        TaskCompletionSource<bool>? release = null;
+        lock (_screenShareEncodedFlowGate)
+        {
+            if (high)
+            {
+                if (_screenShareEncodedBackpressured)
+                {
+                    return;
+                }
+
+                _screenShareEncodedBackpressured = true;
+                _screenShareEncodedDrainWaiter = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                AppLog.Write("Screen share H.264 flow paused: WebRTC data channel is draining");
+                return;
+            }
+
+            if (!_screenShareEncodedBackpressured)
+            {
+                return;
+            }
+
+            _screenShareEncodedBackpressured = false;
+            release = _screenShareEncodedDrainWaiter;
+            _screenShareEncodedDrainWaiter = null;
+        }
+
+        release?.TrySetResult(true);
+        AppLog.Write("Screen share H.264 flow resumed: WebRTC data channel is ready");
     }
 
     private void PostEncodedScreenShareLocalPreview(ScreenShareSourceItem source)
@@ -7951,14 +9064,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        var jpeg = CaptureScreenShareFrame(source, 360);
+        // The encoder already owns the high-resolution stream. Keep the local preview cheap
+        // so it cannot compete with a game for GPU/CPU time.
+        var jpeg = CaptureScreenShareFrame(source, 180);
         if (jpeg is null)
         {
             return;
         }
 
         var base64 = Convert.ToBase64String(jpeg);
-        var image = CreateBitmapImage(jpeg, 360);
+        var image = CreateBitmapImage(jpeg, 180);
         _ = Dispatcher.BeginInvoke(
             new Action(() =>
             {
@@ -8000,41 +9115,63 @@ public partial class MainWindow : Window
         }
     }
 
-    private IReadOnlyList<string> CreateFfmpegScreenShareArguments(Rectangle bounds, string encoder)
+    private IReadOnlyList<string> CreateFfmpegScreenShareArguments(ScreenShareSourceItem source, Rectangle bounds, string encoder)
     {
         var fps = Math.Clamp(_screenShareFrameRate, 15, 60);
         var effectiveHeight = GetScreenShareTargetHeight(bounds, _screenShareResolution);
+        var effectiveWidth = GetScreenShareTargetWidth(bounds, effectiveHeight);
         var bitrateKbps = GetScreenShareH264BitrateKbps(effectiveHeight);
         var arguments = new List<string>
         {
             "-hide_banner",
             "-loglevel",
             "warning",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-thread_queue_size",
+            "2",
+            "-use_wallclock_as_timestamps",
+            "1",
             "-f",
             "gdigrab",
             "-draw_mouse",
-            "1",
+            source.IsScreen ? "1" : "0",
             "-framerate",
-            fps.ToString(CultureInfo.InvariantCulture),
-            "-offset_x",
-            bounds.Left.ToString(CultureInfo.InvariantCulture),
-            "-offset_y",
-            bounds.Top.ToString(CultureInfo.InvariantCulture),
-            "-video_size",
-            $"{bounds.Width}x{bounds.Height}",
-            "-i",
-            "desktop",
-            "-vf",
-            $"scale=-2:{effectiveHeight},format=yuv420p",
-            "-an"
+            fps.ToString(CultureInfo.InvariantCulture)
         };
+
+        if (source.IsScreen)
+        {
+            arguments.AddRange([
+                "-offset_x", bounds.Left.ToString(CultureInfo.InvariantCulture),
+                "-offset_y", bounds.Top.ToString(CultureInfo.InvariantCulture),
+                "-video_size", $"{bounds.Width}x{bounds.Height}",
+                "-i", "desktop"
+            ]);
+        }
+        else
+        {
+            // Bind capture to the exact selected HWND. Unlike a title lookup, this remains
+            // attached to the same game window when F11 changes its title or window style.
+            arguments.AddRange(["-i", $"hwnd=0x{source.WindowHandle.ToInt64():X}"]);
+        }
+
+        arguments.AddRange([
+            "-vf",
+            $"scale={effectiveWidth}:{effectiveHeight}:force_original_aspect_ratio=decrease,pad={effectiveWidth}:{effectiveHeight}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p",
+            "-fps_mode",
+            "passthrough",
+            "-an"
+        ]);
 
         AddFfmpegEncoderArguments(arguments, encoder, bitrateKbps, fps);
         arguments.AddRange([
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof",
             "-frag_duration",
-            "250000",
+            "100000",
             "-flush_packets",
             "1",
             "-f",
@@ -8042,6 +9179,21 @@ public partial class MainWindow : Window
             "pipe:1"
         ]);
         return arguments;
+    }
+
+    private void ApplySoftwareScreenShareLimit()
+    {
+        if (_screenShareResolution <= 720 && _screenShareFrameRate <= 30)
+        {
+            return;
+        }
+
+        _screenShareResolution = Math.Min(_screenShareResolution, 720);
+        _screenShareFrameRate = Math.Min(_screenShareFrameRate, 30);
+        _screenShareAdaptiveHeight = Math.Min(_screenShareAdaptiveHeight, _screenShareResolution);
+        _screenShareQualityPreset = "Custom";
+        SetScreenShareRuntimeStatus("Software H.264 compatibility mode: capped at 720p30");
+        _ = Dispatcher.BeginInvoke(new Action(UpdateScreenSharePickerState), DispatcherPriority.Background);
     }
 
     private static void AddFfmpegEncoderArguments(List<string> arguments, string encoder, int bitrateKbps, int fps)
@@ -8081,27 +9233,17 @@ public partial class MainWindow : Window
 
     private int GetScreenShareH264BitrateKbps(int effectiveHeight)
     {
-        int bitrate;
         if (effectiveHeight >= 1440)
         {
-            bitrate = _screenShareFrameRate >= 60 ? 28_000 : 16_000;
-            return IsScreenShareVoiceProtectionActive()
-                ? Math.Min(bitrate, ScreenShareVoiceProtectedH264MaxBitrateKbps)
-                : bitrate;
+            return _screenShareFrameRate >= 60 ? 16_000 : 12_000;
         }
 
         if (effectiveHeight >= 1080)
         {
-            bitrate = _screenShareFrameRate >= 60 ? 14_000 : 8_000;
-            return IsScreenShareVoiceProtectionActive()
-                ? Math.Min(bitrate, ScreenShareVoiceProtectedH264MaxBitrateKbps)
-                : bitrate;
+            return _screenShareFrameRate >= 60 ? 14_000 : 8_000;
         }
 
-        bitrate = _screenShareFrameRate >= 60 ? 7_000 : 4_500;
-        return IsScreenShareVoiceProtectionActive()
-            ? Math.Min(bitrate, ScreenShareVoiceProtectedH264MaxBitrateKbps)
-            : bitrate;
+        return _screenShareFrameRate >= 60 ? 7_000 : 4_500;
     }
 
     private static IReadOnlyList<string> DetectFfmpegH264Encoders(string ffmpegPath)
@@ -8393,9 +9535,7 @@ public partial class MainWindow : Window
         => Math.Clamp(_screenShareAdaptiveHeight, GetMinimumAdaptiveScreenShareHeight(), _screenShareResolution);
 
     private int GetInitialScreenShareAdaptiveHeight()
-        => _screenShareFrameRate >= 45
-            ? Math.Min(_screenShareResolution, GetMinimumAdaptiveScreenShareHeight())
-            : _screenShareResolution;
+        => _screenShareResolution;
 
     private int GetMinimumAdaptiveScreenShareHeight()
         => _screenShareResolution >= 1440
@@ -8404,38 +9544,7 @@ public partial class MainWindow : Window
 
     private void AdjustAdaptiveScreenShareHeight(TimeSpan elapsed, int bodyLength)
     {
-        var minimumHeight = GetMinimumAdaptiveScreenShareHeight();
-        if (_screenShareResolution <= minimumHeight)
-        {
-            _screenShareAdaptiveHeight = _screenShareResolution;
-            return;
-        }
-
-        var current = GetAdaptiveScreenShareHeight();
-        var targetFrameMs = 1000d / Math.Max(1, _screenShareFrameRate);
-        if (_screenShareFrameRate >= 45 &&
-            elapsed.TotalMilliseconds > targetFrameMs * 1.65 &&
-            current > minimumHeight)
-        {
-            _screenShareAdaptiveHeight = Math.Max(minimumHeight, current - ScreenShareAdaptiveStep);
-            return;
-        }
-
-        if (bodyLength > ScreenShareMaxFrameBodyChars * 0.92 &&
-            current > minimumHeight)
-        {
-            _screenShareAdaptiveHeight = Math.Max(minimumHeight, current - ScreenShareAdaptiveStep);
-            return;
-        }
-
-        var isFastEnough = _screenShareFrameRate < 45 ||
-            elapsed.TotalMilliseconds < targetFrameMs * 1.15;
-        if (isFastEnough &&
-            bodyLength < ScreenShareMaxFrameBodyChars * 0.55 &&
-            current < _screenShareResolution)
-        {
-            _screenShareAdaptiveHeight = Math.Min(_screenShareResolution, current + ScreenShareAdaptiveStep);
-        }
+        _screenShareAdaptiveHeight = _screenShareResolution;
     }
 
     private bool ShouldUpdateSelfScreenSharePreview()
@@ -8452,6 +9561,12 @@ public partial class MainWindow : Window
 
     private byte[]? CaptureScreenShareFrame(ScreenShareSourceItem source, int targetHeight)
     {
+        if (!source.IsScreen && !IsShareableWindowAvailable(source.WindowHandle))
+        {
+            ReportUnavailableScreenShareSource(source);
+            return null;
+        }
+
         var bounds = source.IsScreen ? source.Bounds : GetWindowBounds(source.WindowHandle);
         if (bounds.Width <= 0 || bounds.Height <= 0)
         {
@@ -8460,7 +9575,12 @@ public partial class MainWindow : Window
 
         using var capture = source.IsScreen
             ? CaptureScreenBounds(bounds)
-            : CaptureWindowFrame(source.WindowHandle, bounds) ?? CaptureScreenBounds(bounds);
+            : CaptureWindowFrame(source.WindowHandle, bounds);
+        if (capture is null)
+        {
+            ReportUnavailableScreenShareSource(source);
+            return null;
+        }
 
         var scale = Math.Min(1d, (double)Math.Max(1, targetHeight) / capture.Height);
         var width = Math.Max(2, (int)Math.Round(capture.Width * scale));
@@ -8498,6 +9618,26 @@ public partial class MainWindow : Window
         }
 
         return stream.ToArray();
+    }
+
+    private static bool IsShareableWindowAvailable(IntPtr handle)
+        => handle != IntPtr.Zero && IsWindow(handle) && IsWindowVisible(handle) && !IsIconic(handle);
+
+    private void ReportUnavailableScreenShareSource(ScreenShareSourceItem source)
+    {
+        if (!_isScreenSharing || !ReferenceEquals(source, _activeScreenShareSource))
+        {
+            return;
+        }
+
+        var status = $"Selected app is unavailable: {source.Title}. Restore it or choose another source.";
+        AppLog.Write($"Screen share source paused: source={source.Title}, handle={source.WindowHandle}");
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+        {
+            NetworkStatusText.Text = status;
+            SetScreenShareRuntimeStatus(status);
+            StopScreenShare(sendSignal: true);
+        }), DispatcherPriority.Background);
     }
 
     private long GetScreenShareJpegQuality(int targetHeight)
@@ -8854,25 +9994,11 @@ public partial class MainWindow : Window
         => source.IsScreen ? source.Bounds : GetWindowBounds(source.WindowHandle);
 
     private static int GetScreenShareTargetHeight(Rectangle bounds, int requestedHeight)
-    {
-        var targetHeight = EnsureEvenScreenShareDimension(requestedHeight);
-        if (bounds.Height <= 0)
-        {
-            return targetHeight;
-        }
-
-        return EnsureEvenScreenShareDimension(Math.Min(targetHeight, bounds.Height));
-    }
+        => EnsureEvenScreenShareDimension(requestedHeight);
 
     private static int GetScreenShareTargetWidth(Rectangle bounds, int targetHeight)
     {
-        if (bounds.Width <= 0 || bounds.Height <= 0)
-        {
-            return EnsureEvenScreenShareDimension(targetHeight * 16 / 9);
-        }
-
-        var scale = (double)Math.Max(1, targetHeight) / bounds.Height;
-        return EnsureEvenScreenShareDimension((int)Math.Round(bounds.Width * scale));
+        return EnsureEvenScreenShareDimension(targetHeight * 16 / 9);
     }
 
     private static int EnsureEvenScreenShareDimension(int value)
@@ -8960,7 +10086,7 @@ public partial class MainWindow : Window
         CallPanel.MaxHeight = 260;
         CallPanel.Height = hasScreenShare ? 260 : 150;
         CallContentPanel.VerticalAlignment = System.Windows.VerticalAlignment.Center;
-        var compactWidth = visibleTileCount > 1 ? 520 : 300;
+        var compactWidth = visibleTileCount > 1 ? 536 : 268;
         CallScreenShareStage.Width = Math.Min(compactWidth, GetAvailableScreenShareStageWidth(minWidth: 220));
         CallScreenShareStage.Height = ScreenShareMaxCompactHeight;
         CallScreenShareStage.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
@@ -8972,7 +10098,9 @@ public partial class MainWindow : Window
 
     private double GetAvailableScreenShareStageWidth(double minWidth)
     {
-        var panelWidth = CallPanel.ActualWidth;
+        var panelWidth = _isScreenShareFullscreenMode
+            ? CallContentPanel.ActualWidth
+            : CallPanel.ActualWidth;
         if (double.IsNaN(panelWidth) || panelWidth <= 0)
         {
             return minWidth;
@@ -9038,6 +10166,12 @@ public partial class MainWindow : Window
         CallTitleText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         CallStatusText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         CallParticipantsPanel.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        CallNetworkStatsCard.Visibility = enabled
+            ? Visibility.Collapsed
+            : _selfInCall && string.Equals(CallStatusText.Text, "Connected", StringComparison.Ordinal)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        ChatBodyPanel.Margin = enabled ? new Thickness(0) : new Thickness(20, 16, 20, 8);
         CallPanel.Padding = enabled ? new Thickness(0) : new Thickness(14);
         CallPanel.BorderThickness = enabled ? new Thickness(0) : new Thickness(1);
         CallPanel.CornerRadius = enabled ? new CornerRadius(0) : new CornerRadius(8);
@@ -9217,13 +10351,14 @@ public partial class MainWindow : Window
                 return true;
             }
 
-            windows.Add(new ScreenShareSourceItem(title, $"{bounds.Width}x{bounds.Height}", false, handle, bounds, null));
+            var displayTitle = windows.Any(x => string.Equals(x.WindowTitle, title, StringComparison.OrdinalIgnoreCase))
+                ? $"{title} ({processId})"
+                : title;
+            windows.Add(new ScreenShareSourceItem(displayTitle, $"{bounds.Width}x{bounds.Height}", false, handle, bounds, null, title));
             return true;
         }, IntPtr.Zero);
 
         return windows
-            .GroupBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
-            .Select(x => x.First())
             .OrderBy(x => x.Title, StringComparer.CurrentCultureIgnoreCase);
     }
 
@@ -9298,6 +10433,10 @@ public partial class MainWindow : Window
         _ = _history.SaveContactAsync(senderContact);
 
         var contact = ResolveCallContact(packet, senderContact, out packet);
+        if (!contact.IsGroup || packet.Intent is CallInviteIntent or CallAcceptIntent or CallJoinIntent)
+        {
+            _activeCallPeerContact = senderContact;
+        }
 
         switch (packet.Intent)
         {
@@ -9986,10 +11125,11 @@ public partial class MainWindow : Window
         CallPeerParticipant.Visibility = _peerInCall ? Visibility.Visible : Visibility.Collapsed;
 
         CallSelfInitials.Text = _profile is null ? "ME" : GetInitials(_profile.DisplayName);
-        CallPeerInitials.Text = contact.Initials;
+        var peerContact = _activeCallPeerContact ?? contact;
+        CallPeerInitials.Text = peerContact.Initials;
 
         ApplyCallProfileAvatar();
-        ApplyCallContactAvatar(contact);
+        ApplyCallContactAvatar(peerContact);
     }
 
     private void ApplyCallProfileAvatar()
@@ -10062,6 +11202,7 @@ public partial class MainWindow : Window
         StopAudioCall();
         StopCallNetworkMetrics();
         _activeCallContact = null;
+        _activeCallPeerContact = null;
         _activeCallState = "";
         _selfInCall = false;
         _peerInCall = false;
@@ -10390,6 +11531,7 @@ public partial class MainWindow : Window
                 }
 
                 var soundboardPcm = TakeNextSoundboardFrame();
+                PlayLocalSoundboardFrame(soundboardPcm);
                 var voicePcm = _isMicrophoneMuted ? null : pcm;
                 if (voicePcm is null && soundboardPcm is null)
                 {
@@ -10406,6 +11548,28 @@ public partial class MainWindow : Window
         catch (Exception ex) when (!_stop.IsCancellationRequested)
         {
             AppLog.Write(ex, $"Call audio send loop failed: to={contact.UserId}");
+        }
+    }
+
+    private void PlayLocalSoundboardFrame(byte[]? soundboardPcm)
+    {
+        var session = _audioCall;
+        if (soundboardPcm is not { Length: > 0 } ||
+            session is null ||
+            _isHeadphonesMuted ||
+            _isSoundboardMonitorMuted ||
+            _soundboardMonitorVolume <= 0)
+        {
+            return;
+        }
+
+        var monitorPcm = ApplyGainAndLimiter(
+            soundboardPcm,
+            _soundboardMonitorVolume,
+            CallAudioOutputLimitPeak);
+        if (!session.Play(monitorPcm, out var error))
+        {
+            AppLog.Write($"Soundboard local preview failed: {error}");
         }
     }
 
@@ -11784,7 +12948,13 @@ public partial class MainWindow : Window
         string AttachmentUrl,
         Guid? ReplyToMessageId,
         string ReplyPreview,
-        string ForwardedFrom);
+        string ForwardedFrom,
+        string FileName = "",
+        long FileSizeBytes = 0,
+        string MimeType = "",
+        string DriveFileId = "",
+        string DownloadUrl = "",
+        string StorageProvider = "");
 
     private sealed record ChatEditPayload(Guid MessageId, string Text, DateTimeOffset EditedAtUtc);
 
@@ -11882,7 +13052,8 @@ public partial class MainWindow : Window
         bool IsScreen,
         IntPtr WindowHandle,
         Rectangle Bounds,
-        BitmapImage? Preview)
+        BitmapImage? Preview,
+        string? WindowTitle = null)
     {
         public string BadgeText => $"{(IsScreen ? "Screen" : "App")} · {Description}";
     }
@@ -11898,7 +13069,7 @@ public partial class MainWindow : Window
     #stage { width: 100%; height: 100%; display: grid; grid-template-columns: 1fr; grid-auto-rows: 100%; gap: 8px; padding: 0; box-sizing: border-box; }
     #stage.both { grid-template-columns: 1fr 1fr; }
     .tile { position: relative; min-width: 0; min-height: 0; background: #111214; overflow: hidden; }
-    video, .preview { width: 100%; height: 100%; object-fit: contain; background: #111214; }
+    video, .preview { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; background: #111214; }
     .label { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 4px; background: rgba(0,0,0,.62); font-size: 11px; font-weight: 600; }
     #localTile.hidden, #remoteTile.hidden { display: none; }
     .preview.hidden, video.hidden { display: none; }
@@ -11947,6 +13118,7 @@ public partial class MainWindow : Window
     let encodedMimeType = 'video/mp4; codecs="avc1.640033"';
     let encodedSendQueue = [];
     let encodedSendBusy = false;
+    let encodedPressureHigh = false;
     let encodedBufferLimit = 4194304;
     let encodedMediaSource = null;
     let encodedSourceBuffer = null;
@@ -11954,6 +13126,7 @@ public partial class MainWindow : Window
     let encodedReceivedChunks = 0;
     let encodedReceivedBytes = 0;
     let encodedObjectUrl = null;
+    let encodedLiveEdgeTimer = null;
     let screenShareFocusTarget = 'auto';
     let localPreviewActive = false;
     let remoteAudioMuted = false;
@@ -12246,6 +13419,7 @@ public partial class MainWindow : Window
     function resetEncodedSender() {
       encodedSendQueue = [];
       encodedSendBusy = false;
+      reportEncodedPressure(false);
       if (encodedSendChannel) {
         const channel = encodedSendChannel;
         encodedSendChannel = null;
@@ -12257,6 +13431,8 @@ public partial class MainWindow : Window
     }
     function resetEncodedReceiver() {
       clearRemoteDecodeWatchdog();
+      if (encodedLiveEdgeTimer) clearInterval(encodedLiveEdgeTimer);
+      encodedLiveEdgeTimer = null;
       remoteDecodeFailedNotified = false;
       encodedReceivedChunks = 0;
       encodedReceivedBytes = 0;
@@ -12311,7 +13487,12 @@ public partial class MainWindow : Window
         post({ type: 'encoded-channel-closed' });
       };
       channel.onerror = error => post({ type: 'error', message: 'Encoded WebRTC send channel error: ' + String(error && error.message ? error.message : error) });
-      channel.onbufferedamountlow = flushEncodedSendQueue;
+      channel.onbufferedamountlow = () => {
+        flushEncodedSendQueue();
+        if (encodedSendQueue.length === 0 && channel.bufferedAmount < channel.bufferedAmountLowThreshold) {
+          reportEncodedPressure(false);
+        }
+      };
     }
     function setupEncodedReceiveChannel(channel, options) {
       resetEncodedReceiver();
@@ -12357,6 +13538,7 @@ public partial class MainWindow : Window
       post({ type: 'remote-started' });
       setStatus('Encoded WebRTC remote stream');
       armRemoteDecodeWatchdog('encoded WebRTC video did not render');
+      encodedLiveEdgeTimer = setInterval(keepEncodedPlaybackLive, 200);
       encodedMediaSource.addEventListener('sourceopen', () => {
         try {
           if (!MediaSource.isTypeSupported(encodedMimeType)) {
@@ -12364,7 +13546,10 @@ public partial class MainWindow : Window
           }
           encodedSourceBuffer = encodedMediaSource.addSourceBuffer(encodedMimeType);
           encodedSourceBuffer.mode = 'segments';
-          encodedSourceBuffer.addEventListener('updateend', flushEncodedAppendQueue);
+          encodedSourceBuffer.addEventListener('updateend', () => {
+            keepEncodedPlaybackLive();
+            flushEncodedAppendQueue();
+          });
           encodedSourceBuffer.addEventListener('error', () => notifyRemoteDecodeFailed('encoded SourceBuffer error'));
           flushEncodedAppendQueue();
           playRemoteVideo();
@@ -12400,24 +13585,46 @@ public partial class MainWindow : Window
         encodedAppendQueue = [];
       }
     }
+    function keepEncodedPlaybackLive() {
+      if (!encodedSourceBuffer || remoteVideo.buffered.length === 0) return;
+      try {
+        const lastRange = remoteVideo.buffered.length - 1;
+        const rangeStart = remoteVideo.buffered.start(lastRange);
+        const liveEdge = remoteVideo.buffered.end(lastRange);
+        const lag = liveEdge - Number(remoteVideo.currentTime || 0);
+        if (lag > 0.55) {
+          remoteVideo.currentTime = Math.max(rangeStart, liveEdge - 0.12);
+        }
+        remoteVideo.playbackRate = lag > 0.22 && lag <= 0.55 ? 1.08 : 1;
+        if (remoteVideo.paused) playRemoteVideo();
+      } catch {}
+    }
+    function reportEncodedPressure(high) {
+      high = Boolean(high);
+      if (encodedPressureHigh === high) return;
+      encodedPressureHigh = high;
+      post({ type: 'encoded-pressure', high });
+    }
     function enqueueEncodedLocalChunk(message) {
       const base64 = message.dataBase64 || message.DataBase64 || '';
       if (!base64) return;
       encodedSendQueue.push(base64ToBytes(base64));
-      if (encodedSendQueue.length > 240) encodedSendQueue.shift();
+      if (encodedSendQueue.length >= 8) reportEncodedPressure(true);
       flushEncodedSendQueue();
     }
     function flushEncodedSendQueue() {
       if (encodedSendBusy || !encodedSendChannel || encodedSendChannel.readyState !== 'open') return;
       encodedSendBusy = true;
       try {
-        while (encodedSendQueue.length > 0 && encodedSendChannel.bufferedAmount < encodedBufferLimit) {
+        while (encodedSendQueue.length > 0 &&
+               encodedSendChannel.bufferedAmount + encodedSendQueue[0].byteLength <= encodedBufferLimit) {
           encodedSendChannel.send(encodedSendQueue.shift());
         }
       } catch (error) {
         post({ type: 'error', message: 'Encoded WebRTC send failed: ' + String(error && error.message ? error.message : error) });
       } finally {
         encodedSendBusy = false;
+        reportEncodedPressure(encodedSendQueue.length > 0 || encodedSendChannel.bufferedAmount >= encodedBufferLimit);
       }
     }
     async function decodeNativeFrame(base64) {
@@ -12814,6 +14021,9 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr handle);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr handle);
 
     [DllImport("user32.dll")]
     private static extern bool IsIconic(IntPtr handle);

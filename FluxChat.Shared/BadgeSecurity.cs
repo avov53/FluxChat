@@ -9,9 +9,10 @@ public static class BadgeIds
 {
     public const string Owner = "owner";
     public const string Tester = "tester";
+    public const string Special = "special";
 
     public static bool IsKnown(string? badgeId)
-        => badgeId is Owner or Tester;
+        => badgeId is Owner or Tester or Special;
 }
 
 public sealed record BadgeCertificate(

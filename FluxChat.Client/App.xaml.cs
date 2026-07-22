@@ -21,11 +21,18 @@ public partial class App : System.Windows.Application
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
+        if (e.Exception is OperationCanceledException)
+        {
+            CrashLog.Write(e.Exception, "Recovered canceled UI operation");
+            e.Handled = true;
+            return;
+        }
+
         if (IsRecoverableWebViewCompositionResizeException(e.Exception))
         {
             CrashLog.Write(e.Exception, "Recovered WebView2 composition resize exception");
             e.Handled = true;
-            if (Current.MainWindow is MainWindow window)
+            if (Current?.MainWindow is MainWindow window)
             {
                 window.RecoverFromWebViewCompositionResizeFault();
             }
@@ -40,7 +47,7 @@ public partial class App : System.Windows.Application
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         e.Handled = true;
-        Current.Shutdown();
+        Current?.Shutdown();
     }
 
     private static bool IsRecoverableWebViewCompositionResizeException(Exception exception)

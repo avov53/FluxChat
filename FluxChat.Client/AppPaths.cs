@@ -16,6 +16,8 @@ internal static class AppPaths
 
     public static string AttachmentsDirectory => Path.Combine(DataDirectory, "attachments");
 
+    public static string VideoCacheDirectory => Path.Combine(DataDirectory, "video-cache");
+
     public static string GifFavoritesPath => Path.Combine(DataDirectory, "gif-favorites.json");
 
     public static string SoundboardDirectory => Path.Combine(DataDirectory, "soundboard");
@@ -38,6 +40,12 @@ internal static class AppPaths
     {
         EnsureCreated();
         Directory.CreateDirectory(AttachmentsDirectory);
+    }
+
+    public static void EnsureVideoCacheDirectoryCreated()
+    {
+        EnsureCreated();
+        Directory.CreateDirectory(VideoCacheDirectory);
     }
 
     public static void EnsureSoundboardDirectoriesCreated()

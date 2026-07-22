@@ -447,6 +447,18 @@ public sealed class RelayDatabase
         }
     }
 
+    public int DeletePendingOlderThan(DateTimeOffset cutoffUtc)
+    {
+        lock (_sync)
+        {
+            using var connection = OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM PendingMessages WHERE StoredAtUtc < $cutoffUtc;";
+            command.Parameters.AddWithValue("$cutoffUtc", cutoffUtc.UtcDateTime.ToString("O"));
+            return command.ExecuteNonQuery();
+        }
+    }
+
     public IReadOnlyList<PendingSummaryRow> GetPendingSummary()
     {
         lock (_sync)
@@ -480,7 +492,8 @@ public sealed class RelayDatabase
                 Count(connection, "Users"),
                 Count(connection, "Invites", "UsedAtUtc IS NULL"),
                 Count(connection, "PendingMessages"),
-                onlineCount);
+                onlineCount,
+                File.Exists(ServerPaths.DatabasePath) ? new FileInfo(ServerPaths.DatabasePath).Length : 0);
         }
     }
 
@@ -577,5 +590,11 @@ public sealed record AuthResult(bool IsAccepted, string Message, string? ClientT
 public sealed record InviteRow(string Code, DateTimeOffset CreatedAtUtc, DateTimeOffset? UsedAtUtc, string? UsedByUserId, string Note);
 public sealed record UserRow(string UserId, string DisplayName, bool IsBanned, DateTimeOffset CreatedAtUtc, DateTimeOffset LastSeenUtc);
 public sealed record PendingSummaryRow(string UserId, int Count);
-public sealed record ServerStats(string DatabasePath, int Users, int ActiveInvites, int PendingMessages, int OnlineUsers);
+public sealed record ServerStats(
+    string DatabasePath,
+    int Users,
+    int ActiveInvites,
+    int PendingMessages,
+    int OnlineUsers,
+    long DatabaseSizeBytes);
 internal sealed record UserRecord(string UserId, string DisplayName, string TokenHash, bool IsBanned);

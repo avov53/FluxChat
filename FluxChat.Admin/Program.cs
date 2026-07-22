@@ -4,7 +4,14 @@ var database = new RelayDatabase();
 database.Initialize();
 
 var app = new FluxusApp(database);
-app.Run();
+if (args.Length > 0)
+{
+    Environment.ExitCode = app.RunCommand(args);
+}
+else
+{
+    app.Run();
+}
 
 internal sealed class FluxusApp
 {
@@ -61,6 +68,19 @@ internal sealed class FluxusApp
                     return;
             }
         }
+    }
+
+    public int RunCommand(IReadOnlyList<string> arguments)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        if (arguments.Count == 1 && string.Equals(arguments[0], "status", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowStatus();
+            return 0;
+        }
+
+        Console.WriteLine("Usage: fluxus status");
+        return 2;
     }
 
     private void RenderMenu()
@@ -181,13 +201,66 @@ internal sealed class FluxusApp
     private void ShowStatus()
     {
         var stats = _database.GetStats(onlineCount: 0);
+        var relay = FindRelayProcess();
         Console.WriteLine($"Port: 42800");
         Console.WriteLine($"Database: {stats.DatabasePath}");
+        Console.WriteLine($"Database size: {FormatBytes(stats.DatabaseSizeBytes)}");
         Console.WriteLine($"Users: {stats.Users}");
         Console.WriteLine($"Active invites: {stats.ActiveInvites}");
         Console.WriteLine($"Pending messages: {stats.PendingMessages}");
-        Console.WriteLine("Online users: shown in relay server console");
+        if (relay is null)
+        {
+            Console.WriteLine("Relay process: not found");
+            return;
+        }
+
+        Console.WriteLine($"Relay process: PID {relay.Id}");
+        Console.WriteLine($"Memory RSS: {FormatBytes(relay.WorkingSet64)}");
+        try
+        {
+            Console.WriteLine($"Uptime: {FormatDuration(DateTimeOffset.Now - relay.StartTime)}");
+        }
+        catch
+        {
+            Console.WriteLine("Uptime: unavailable");
+        }
+        Console.WriteLine("Online users and call-route loss are printed once per minute in: journalctl -u fluxchat -f");
     }
+
+    private static System.Diagnostics.Process? FindRelayProcess()
+    {
+        foreach (var name in new[] { "FluxChat.Server", "fluxchat-server", "FluxChatServer" })
+        {
+            var process = System.Diagnostics.Process.GetProcessesByName(name)
+                .OrderByDescending(candidate => candidate.StartTime)
+                .FirstOrDefault();
+            if (process is not null)
+            {
+                return process;
+            }
+        }
+
+        return null;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        var value = (double)Math.Max(0, bytes);
+        var index = 0;
+        while (value >= 1024 && index < suffixes.Length - 1)
+        {
+            value /= 1024;
+            index++;
+        }
+
+        return $"{value:0.0} {suffixes[index]}";
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+        => duration.TotalDays >= 1
+            ? $"{(int)duration.TotalDays}d {duration.Hours:00}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}";
 
     private static void Pause()
     {

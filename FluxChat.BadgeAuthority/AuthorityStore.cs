@@ -231,28 +231,40 @@ internal sealed class AuthorityStore(string databasePath, ECDsa authorityKey)
     }
 
     public BadgeAdminUserResponse GrantTester(string actorUserId, string targetUserId)
+        => GrantBadge(actorUserId, targetUserId, BadgeIds.Tester);
+
+    public BadgeAdminUserResponse RevokeTester(string actorUserId, string targetUserId)
+        => RevokeBadge(actorUserId, targetUserId, BadgeIds.Tester);
+
+    public BadgeAdminUserResponse GrantSpecial(string actorUserId, string targetUserId)
+        => GrantBadge(actorUserId, targetUserId, BadgeIds.Special);
+
+    public BadgeAdminUserResponse RevokeSpecial(string actorUserId, string targetUserId)
+        => RevokeBadge(actorUserId, targetUserId, BadgeIds.Special);
+
+    private BadgeAdminUserResponse GrantBadge(string actorUserId, string targetUserId, string badgeId)
     {
         lock (_sync)
         {
             using var connection = Open();
             using var transaction = connection.BeginTransaction();
             var publicKey = GetSubjectPublicKey(connection, transaction, targetUserId);
-            if (GetCertificate(connection, transaction, targetUserId, BadgeIds.Tester) is null)
+            if (GetCertificate(connection, transaction, targetUserId, badgeId) is null)
             {
-                InsertCertificate(connection, transaction, Issue(targetUserId, publicKey, BadgeIds.Tester), actorUserId);
+                InsertCertificate(connection, transaction, Issue(targetUserId, publicKey, badgeId), actorUserId);
             }
             transaction.Commit();
         }
         return Lookup(targetUserId);
     }
 
-    public BadgeAdminUserResponse RevokeTester(string actorUserId, string targetUserId)
+    private BadgeAdminUserResponse RevokeBadge(string actorUserId, string targetUserId, string badgeId)
     {
         lock (_sync)
         {
             using var connection = Open();
             using var transaction = connection.BeginTransaction();
-            var certificate = GetCertificate(connection, transaction, targetUserId, BadgeIds.Tester);
+            var certificate = GetCertificate(connection, transaction, targetUserId, badgeId);
             if (certificate is not null)
             {
                 using var revoke = connection.CreateCommand();
@@ -262,12 +274,12 @@ internal sealed class AuthorityStore(string databasePath, ECDsa authorityKey)
                 revoke.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
                 revoke.Parameters.AddWithValue("$actor", actorUserId);
                 revoke.ExecuteNonQuery();
-                Audit(connection, transaction, actorUserId, targetUserId, "revoke", BadgeIds.Tester, certificate.Serial);
+                Audit(connection, transaction, actorUserId, targetUserId, "revoke", badgeId, certificate.Serial);
                 using var clear = connection.CreateCommand();
                 clear.Transaction = transaction;
                 clear.CommandText = "UPDATE BadgeSubjects SET SelectedBadgeId = NULL WHERE UserId = $userId AND SelectedBadgeId = $badgeId;";
                 clear.Parameters.AddWithValue("$userId", targetUserId);
-                clear.Parameters.AddWithValue("$badgeId", BadgeIds.Tester);
+                clear.Parameters.AddWithValue("$badgeId", badgeId);
                 clear.ExecuteNonQuery();
             }
             transaction.Commit();

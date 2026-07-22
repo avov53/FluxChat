@@ -72,6 +72,8 @@ app.MapPost("/api/v1/select", (HttpRequest request, BadgeSelectRequest body) => 
 app.MapGet("/api/v1/admin/users/{userId}", (HttpRequest request, string userId) => WithSession(request, true, _ => authorityStore.Lookup(userId)));
 app.MapPost("/api/v1/admin/grant-tester", (HttpRequest request, BadgeAdminMutationRequest body) => WithSession(request, true, s => authorityStore.GrantTester(s.UserId, body.UserId)));
 app.MapPost("/api/v1/admin/revoke-tester", (HttpRequest request, BadgeAdminMutationRequest body) => WithSession(request, true, s => authorityStore.RevokeTester(s.UserId, body.UserId)));
+app.MapPost("/api/v1/admin/grant-special", (HttpRequest request, BadgeAdminMutationRequest body) => WithSession(request, true, s => authorityStore.GrantSpecial(s.UserId, body.UserId)));
+app.MapPost("/api/v1/admin/revoke-special", (HttpRequest request, BadgeAdminMutationRequest body) => WithSession(request, true, s => authorityStore.RevokeSpecial(s.UserId, body.UserId)));
 
 app.Run();
 
@@ -153,6 +155,14 @@ static void RunSecuritySelfTest()
         Must(revoked.Certificates.All(x => x.BadgeId != BadgeIds.Tester), "tester revoke");
         var testerState = store.GetState(testerUserId);
         Must(testerState.Revocations.RevokedSerials.Contains(testerSerial), "revocation publication");
+        var specialGranted = store.GrantSpecial(ownerUserId, testerUserId);
+        Console.WriteLine("Self-test: special grant");
+        Must(specialGranted.Certificates.Any(x => x.BadgeId == BadgeIds.Special), "special grant");
+        var specialSerial = specialGranted.Certificates.Single(x => x.BadgeId == BadgeIds.Special).Serial;
+        var specialRevoked = store.RevokeSpecial(ownerUserId, testerUserId);
+        Console.WriteLine("Self-test: special revoke");
+        Must(specialRevoked.Certificates.All(x => x.BadgeId != BadgeIds.Special), "special revoke");
+        Must(store.GetState(testerUserId).Revocations.RevokedSerials.Contains(specialSerial), "special revocation publication");
     }
     finally
     {

@@ -8,9 +8,13 @@ internal static class BadgeVisuals
 {
     private static readonly ImageSource Owner = Load("owner.png");
     private static readonly ImageSource Tester = Load("tester.png");
+    private static readonly ImageSource Special = Load("special.png");
 
     public static ImageSource? GetImage(string? badgeId)
-        => badgeId == BadgeIds.Owner ? Owner : badgeId == BadgeIds.Tester ? Tester : null;
+        => badgeId == BadgeIds.Owner ? Owner :
+           badgeId == BadgeIds.Tester ? Tester :
+           badgeId == BadgeIds.Special ? Special :
+           null;
 
     private static ImageSource Load(string file)
     {

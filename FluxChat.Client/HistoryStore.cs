@@ -86,6 +86,12 @@ internal sealed class HistoryStore
         await AddMessageColumnAsync(connection, "SenderDisplayName TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "SenderAvatarKind TEXT NOT NULL DEFAULT 'color'");
         await AddMessageColumnAsync(connection, "SenderAvatarPath TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "FileName TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "FileSizeBytes INTEGER NOT NULL DEFAULT 0");
+        await AddMessageColumnAsync(connection, "MimeType TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "DriveFileId TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "DownloadUrl TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "StorageProvider TEXT NOT NULL DEFAULT ''");
         await DeleteEmptyMessagesAsync(connection);
     }
 
@@ -142,11 +148,13 @@ internal sealed class HistoryStore
             INSERT OR REPLACE INTO Messages (
                 MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
                 ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson,
-                SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath)
+                SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath,
+                FileName, FileSizeBytes, MimeType, DriveFileId, DownloadUrl, StorageProvider)
             VALUES (
                 $messageId, $peerUserId, $body, $isOutgoing, $sentAtUtc, $kind, $text, $attachmentPath, $attachmentUrl,
                 $replyToMessageId, $replyPreview, $forwardedFrom, $editedAtUtc, $reactionsJson,
-                $senderUserId, $senderDisplayName, $senderAvatarKind, $senderAvatarPath);
+                $senderUserId, $senderDisplayName, $senderAvatarKind, $senderAvatarPath,
+                $fileName, $fileSizeBytes, $mimeType, $driveFileId, $downloadUrl, $storageProvider);
             """;
         command.Parameters.AddWithValue("$messageId", message.MessageId.ToString());
         command.Parameters.AddWithValue("$peerUserId", message.PeerUserId);
@@ -166,6 +174,12 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$senderDisplayName", message.SenderDisplayName);
         command.Parameters.AddWithValue("$senderAvatarKind", message.SenderAvatarKind);
         command.Parameters.AddWithValue("$senderAvatarPath", message.SenderAvatarPath);
+        command.Parameters.AddWithValue("$fileName", message.FileName);
+        command.Parameters.AddWithValue("$fileSizeBytes", message.FileSizeBytes);
+        command.Parameters.AddWithValue("$mimeType", message.MimeType);
+        command.Parameters.AddWithValue("$driveFileId", message.DriveFileId);
+        command.Parameters.AddWithValue("$downloadUrl", message.DownloadUrl);
+        command.Parameters.AddWithValue("$storageProvider", message.StorageProvider);
 
         await command.ExecuteNonQueryAsync();
     }
@@ -239,7 +253,8 @@ internal sealed class HistoryStore
         command.CommandText = """
             SELECT MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
                    ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson,
-                   SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath
+                   SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath,
+                   FileName, FileSizeBytes, MimeType, DriveFileId, DownloadUrl, StorageProvider
             FROM Messages
             WHERE PeerUserId = $peerUserId
             ORDER BY SentAtUtc ASC;
@@ -273,7 +288,13 @@ internal sealed class HistoryStore
                 SenderUserId = reader.IsDBNull(14) ? "" : reader.GetString(14),
                 SenderDisplayName = reader.IsDBNull(15) ? "" : reader.GetString(15),
                 SenderAvatarKind = reader.IsDBNull(16) ? "color" : reader.GetString(16),
-                SenderAvatarPath = reader.IsDBNull(17) ? "" : reader.GetString(17)
+                SenderAvatarPath = reader.IsDBNull(17) ? "" : reader.GetString(17),
+                FileName = reader.IsDBNull(18) ? "" : reader.GetString(18),
+                FileSizeBytes = reader.IsDBNull(19) ? 0 : reader.GetInt64(19),
+                MimeType = reader.IsDBNull(20) ? "" : reader.GetString(20),
+                DriveFileId = reader.IsDBNull(21) ? "" : reader.GetString(21),
+                DownloadUrl = reader.IsDBNull(22) ? "" : reader.GetString(22),
+                StorageProvider = reader.IsDBNull(23) ? "" : reader.GetString(23)
             });
         }
 

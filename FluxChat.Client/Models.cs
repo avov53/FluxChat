@@ -367,7 +367,10 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     public DateTimeOffset? BadgeVerifiedAtUtc { get => _badgeVerifiedAtUtc; set { if (_badgeVerifiedAtUtc == value) return; _badgeVerifiedAtUtc = value; OnPropertyChanged(); } }
     public bool HasVerifiedBadge => BadgeIds.IsKnown(VerifiedBadgeId);
     public ImageSource? BadgeImageSource => BadgeVisuals.GetImage(VerifiedBadgeId);
-    public string BadgeToolTip => VerifiedBadgeId == BadgeIds.Owner ? "Owner" : VerifiedBadgeId == BadgeIds.Tester ? "Tester" : "";
+    public string BadgeToolTip => VerifiedBadgeId == BadgeIds.Owner ? "Owner" :
+                                  VerifiedBadgeId == BadgeIds.Tester ? "Tester" :
+                                  VerifiedBadgeId == BadgeIds.Special ? "Special" :
+                                  "";
 
     public DateTimeOffset LastSeenUtc
     {
@@ -459,6 +462,17 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     private DateTimeOffset? _editedAtUtc;
     private double _gifRenderWidth = 300;
     private double _gifRenderHeight = 170;
+    private string _driveFileId = "";
+    private string _downloadUrl = "";
+    private string _storageProvider = "";
+    private string _videoLocalPath = "";
+    private VideoDownloadState _videoDownloadState;
+    private double _videoDownloadProgress;
+    private string _videoError = "";
+    private double _videoDurationSeconds;
+    private double _videoPositionSeconds;
+    private double _videoVolume = 0.8;
+    private bool _isVideoPlaying;
 
     public required Guid MessageId { get; init; }
     public required string PeerUserId { get; init; }
@@ -467,6 +481,48 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public string Kind { get; init; } = MessageKinds.Text;
     public string AttachmentPath { get; init; } = "";
     public string AttachmentUrl { get; init; } = "";
+    public string FileName { get; init; } = "";
+    public long FileSizeBytes { get; init; }
+    public string MimeType { get; init; } = "";
+    public string DriveFileId
+    {
+        get => _driveFileId;
+        set
+        {
+            if (_driveFileId == value) return;
+            _driveFileId = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanDeleteDriveVideo));
+            OnPropertyChanged(nameof(HasRemoteVideo));
+            OnPropertyChanged(nameof(VideoStatusText));
+        }
+    }
+
+    public string DownloadUrl
+    {
+        get => _downloadUrl;
+        set
+        {
+            if (_downloadUrl == value) return;
+            _downloadUrl = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasDownloadUrl));
+            OnPropertyChanged(nameof(HasRemoteVideo));
+            OnPropertyChanged(nameof(VideoStatusText));
+        }
+    }
+
+    public string StorageProvider
+    {
+        get => _storageProvider;
+        set
+        {
+            if (_storageProvider == value) return;
+            _storageProvider = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanDeleteDriveVideo));
+        }
+    }
     public Guid? ReplyToMessageId { get; init; }
     public string ReplyPreview { get; init; } = "";
     public string ForwardedFrom { get; init; } = "";
@@ -644,6 +700,11 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool IsTextMessage => Kind == MessageKinds.Text;
     public bool IsImageMessage => Kind == MessageKinds.Image;
     public bool IsGifMessage => Kind == MessageKinds.Gif;
+    public bool IsFileMessage => Kind == MessageKinds.File;
+    public bool IsVideoFileMessage => IsFileMessage &&
+        (MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+         IsVideoExtension(FileName));
+    public bool IsGenericFileMessage => IsFileMessage && !IsVideoFileMessage;
     public bool HasText => !string.IsNullOrWhiteSpace(Text) && !IsGifMessage;
     public bool IsEmojiOnlyText => IsTextMessage && HasText && IsEmojiOnly(Text);
     public bool ShowsPlainText => HasText && !IsEmojiOnlyText;
@@ -653,7 +714,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool IsEdited => EditedAtUtc is not null;
     public bool CanEdit => IsOutgoing && IsTextMessage;
     public bool CanDelete => IsOutgoing;
-    public bool CanShowMessageActions => !IsImageMessage;
+    public bool CanShowMessageActions => !IsImageMessage && !IsFileMessage;
     public bool HasReactions => ReactionItems.Count > 0;
     public bool HasSenderName => !string.IsNullOrWhiteSpace(SenderDisplayName);
     public bool HasSenderAvatar => !string.IsNullOrWhiteSpace(SenderAvatarPath);
@@ -661,7 +722,178 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool IsSenderAvatarVideo => HasSenderAvatar && SenderAvatarKind == "video";
     public ImageSource? SenderAvatarImageSource => IsSenderAvatarImage ? AvatarImageLoader.Load(SenderAvatarPath) : null;
     public string SenderInitials => BuildInitials(SenderDisplayName);
-    public string PreviewText => IsImageMessage ? "Image" : IsGifMessage ? "GIF" : Text;
+    public string PreviewText => IsImageMessage ? "Image" : IsGifMessage ? "GIF" : IsFileMessage ? FileName : Text;
+    public string FileSizeText => FormatFileSize(FileSizeBytes);
+    public string FileTypeText => string.IsNullOrWhiteSpace(MimeType) ? "FILE" : MimeType.Split('/').LastOrDefault()?.ToUpperInvariant() ?? "FILE";
+    public bool HasDownloadUrl => !string.IsNullOrWhiteSpace(DownloadUrl);
+    public string VideoLocalPath
+    {
+        get => _videoLocalPath;
+        private set
+        {
+            if (_videoLocalPath == value) return;
+            _videoLocalPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VideoSource));
+            OnPropertyChanged(nameof(HasLocalVideo));
+            OnPropertyChanged(nameof(CanDeleteLocalVideo));
+        }
+    }
+    public Uri? VideoSource => HasLocalVideo ? new Uri(VideoLocalPath, UriKind.Absolute) : null;
+    public VideoDownloadState VideoDownloadState
+    {
+        get => _videoDownloadState;
+        private set
+        {
+            if (_videoDownloadState == value) return;
+            _videoDownloadState = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsVideoReady));
+            OnPropertyChanged(nameof(IsVideoDownloading));
+            OnPropertyChanged(nameof(IsVideoWaiting));
+            OnPropertyChanged(nameof(IsVideoFailed));
+            OnPropertyChanged(nameof(VideoStatusText));
+            OnPropertyChanged(nameof(CanDeleteDriveVideo));
+        }
+    }
+    public double VideoDownloadProgress
+    {
+        get => _videoDownloadProgress;
+        private set
+        {
+            var clamped = Math.Clamp(value, 0, 100);
+            if (Math.Abs(_videoDownloadProgress - clamped) < 0.05) return;
+            _videoDownloadProgress = clamped;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VideoProgressText));
+        }
+    }
+    public string VideoError
+    {
+        get => _videoError;
+        private set
+        {
+            if (_videoError == value) return;
+            _videoError = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VideoStatusText));
+        }
+    }
+    public bool IsVideoReady => VideoDownloadState == VideoDownloadState.Ready && HasLocalVideo;
+    public bool IsVideoDownloading => VideoDownloadState == VideoDownloadState.Downloading;
+    public bool IsVideoWaiting => VideoDownloadState == VideoDownloadState.NotDownloaded;
+    public bool IsVideoFailed => VideoDownloadState == VideoDownloadState.Failed;
+    public bool HasLocalVideo => !string.IsNullOrWhiteSpace(VideoLocalPath) && File.Exists(VideoLocalPath);
+    public bool CanDeleteLocalVideo => HasLocalVideo;
+    public bool CanDeleteDriveVideo => IsVideoFileMessage && IsOutgoing &&
+        string.Equals(StorageProvider, "GoogleDrive", StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(DriveFileId) && !IsVideoDownloading;
+    public bool HasRemoteVideo => !string.IsNullOrWhiteSpace(DriveFileId) || HasDownloadUrl;
+    public string VideoProgressText => $"{VideoDownloadProgress:0}%";
+    public string VideoStatusText => IsVideoFailed
+        ? (string.IsNullOrWhiteSpace(VideoError) ? "Download failed. Click to retry." : VideoError)
+        : IsVideoDownloading
+            ? "Downloading video..."
+            : HasRemoteVideo ? "Click to download video" : "Video was deleted from Google Drive";
+    public double VideoDurationSeconds
+    {
+        get => _videoDurationSeconds;
+        set
+        {
+            var normalized = Math.Max(0, value);
+            if (Math.Abs(_videoDurationSeconds - normalized) < 0.01) return;
+            _videoDurationSeconds = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VideoDurationText));
+        }
+    }
+    public double VideoPositionSeconds
+    {
+        get => _videoPositionSeconds;
+        set
+        {
+            var normalized = Math.Clamp(value, 0, Math.Max(VideoDurationSeconds, value));
+            if (Math.Abs(_videoPositionSeconds - normalized) < 0.01) return;
+            _videoPositionSeconds = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VideoPositionText));
+        }
+    }
+    public double VideoVolume
+    {
+        get => _videoVolume;
+        set
+        {
+            var normalized = Math.Clamp(value, 0, 1);
+            if (Math.Abs(_videoVolume - normalized) < 0.001) return;
+            _videoVolume = normalized;
+            OnPropertyChanged();
+        }
+    }
+    public bool IsVideoPlaying
+    {
+        get => _isVideoPlaying;
+        set
+        {
+            if (_isVideoPlaying == value) return;
+            _isVideoPlaying = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VideoPlayPauseIcon));
+        }
+    }
+    public string VideoPositionText => FormatMediaTime(VideoPositionSeconds);
+    public string VideoDurationText => FormatMediaTime(VideoDurationSeconds);
+    public string VideoPlayPauseIcon => IsVideoPlaying ? "Pause" : "Play";
+
+    public void MarkVideoReady(string path)
+    {
+        VideoLocalPath = path;
+        VideoError = "";
+        VideoDownloadProgress = 100;
+        VideoDownloadState = VideoDownloadState.Ready;
+    }
+
+    public void MarkVideoDownloading(double progressPercent = 0)
+    {
+        VideoError = "";
+        VideoDownloadProgress = progressPercent;
+        VideoDownloadState = VideoDownloadState.Downloading;
+    }
+
+    public void UpdateVideoDownloadProgress(double progressPercent)
+        => VideoDownloadProgress = progressPercent;
+
+    public void MarkVideoDownloadFailed(string error)
+    {
+        VideoLocalPath = "";
+        VideoError = error;
+        VideoDownloadState = VideoDownloadState.Failed;
+    }
+
+    public void MarkVideoPlaybackFailed(string error)
+    {
+        IsVideoPlaying = false;
+        VideoError = error;
+        VideoDownloadState = VideoDownloadState.Failed;
+    }
+
+    public void ClearLocalVideo()
+    {
+        IsVideoPlaying = false;
+        VideoPositionSeconds = 0;
+        VideoDurationSeconds = 0;
+        VideoLocalPath = "";
+        VideoError = "";
+        VideoDownloadProgress = 0;
+        VideoDownloadState = VideoDownloadState.NotDownloaded;
+    }
+
+    public void MarkDriveVideoDeleted()
+    {
+        DriveFileId = "";
+        DownloadUrl = "";
+        StorageProvider = "";
+    }
     public Uri EmojiHtmlSource => IsEmojiOnlyText
         ? new Uri($"data:text/html;charset=utf-8,{Uri.EscapeDataString(BuildEmojiHtml(Text))}")
         : new Uri("about:blank");
@@ -743,6 +975,31 @@ public sealed class MessageViewModel : INotifyPropertyChanged
         return codepoints.Length == 0
             ? ""
             : $"https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{string.Join("-", codepoints)}.png";
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        var value = (double)Math.Max(0, bytes);
+        var index = 0;
+        while (value >= 1024 && index < suffixes.Length - 1)
+        {
+            value /= 1024;
+            index++;
+        }
+
+        return $"{value:0.#} {suffixes[index]}";
+    }
+
+    private static bool IsVideoExtension(string fileName)
+        => Path.GetExtension(fileName).ToLowerInvariant() is ".mp4" or ".webm" or ".mov" or ".m4v" or ".avi" or ".mkv";
+
+    private static string FormatMediaTime(double seconds)
+    {
+        var duration = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return duration.TotalHours >= 1
+            ? duration.ToString(@"h\:mm\:ss")
+            : duration.ToString(@"m\:ss");
     }
 
     private static bool IsEmojiOnly(string text)
@@ -932,6 +1189,15 @@ public static class MessageKinds
     public const string Text = "Text";
     public const string Image = "Image";
     public const string Gif = "Gif";
+    public const string File = "File";
+}
+
+public enum VideoDownloadState
+{
+    NotDownloaded,
+    Downloading,
+    Ready,
+    Failed
 }
 
 public sealed class TenorGifViewModel : INotifyPropertyChanged

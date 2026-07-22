@@ -47,6 +47,12 @@
         </Style>
 
         <Style x:Key="PrimaryButton" TargetType="Button">
+            <EventSetter Event="Loaded" Handler="AnimatedButton_OnLoaded"/>
+            <EventSetter Event="MouseEnter" Handler="AnimatedButton_OnMouseEnter"/>
+            <EventSetter Event="MouseLeave" Handler="AnimatedButton_OnMouseLeave"/>
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="AnimatedButton_OnPreviewMouseLeftButtonDown"/>
+            <EventSetter Event="PreviewMouseLeftButtonUp" Handler="AnimatedButton_OnPreviewMouseLeftButtonUp"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
             <Setter Property="Height" Value="40"/>
             <Setter Property="MinWidth" Value="72"/>
             <Setter Property="Padding" Value="16,0"/>
@@ -228,16 +234,54 @@
                                     </RepeatButton>
                                 </Track.DecreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb Width="15" Height="15">
+                                    <Thumb Width="16" Height="16">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Ellipse x:Name="AudioSliderThumb" Fill="#f2f3f5" Stroke="#111214" StrokeThickness="2"/>
+                                                <Grid x:Name="AudioSliderThumb"
+                                                      Width="16"
+                                                      Height="16"
+                                                      RenderTransformOrigin="0.5,0.5">
+                                                    <Grid.RenderTransform>
+                                                        <ScaleTransform x:Name="AudioSliderThumbScale" ScaleX="1" ScaleY="1"/>
+                                                    </Grid.RenderTransform>
+                                                    <Ellipse Fill="#25272d"
+                                                             Stroke="#7983ff"
+                                                             StrokeThickness="2"/>
+                                                    <Ellipse x:Name="AudioSliderThumbCore"
+                                                             Width="8"
+                                                             Height="8"
+                                                             Fill="#7983ff"/>
+                                                </Grid>
                                                 <ControlTemplate.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter TargetName="AudioSliderThumb" Property="Fill" Value="#ffffff"/>
+                                                        <Setter TargetName="AudioSliderThumbCore" Property="Fill" Value="#aeb6ff"/>
+                                                        <Trigger.EnterActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <DoubleAnimation Storyboard.TargetName="AudioSliderThumbScale"
+                                                                                     Storyboard.TargetProperty="ScaleX"
+                                                                                     To="1.12" Duration="0:0:0.12"/>
+                                                                    <DoubleAnimation Storyboard.TargetName="AudioSliderThumbScale"
+                                                                                     Storyboard.TargetProperty="ScaleY"
+                                                                                     To="1.12" Duration="0:0:0.12"/>
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </Trigger.EnterActions>
+                                                        <Trigger.ExitActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <DoubleAnimation Storyboard.TargetName="AudioSliderThumbScale"
+                                                                                     Storyboard.TargetProperty="ScaleX"
+                                                                                     To="1" Duration="0:0:0.12"/>
+                                                                    <DoubleAnimation Storyboard.TargetName="AudioSliderThumbScale"
+                                                                                     Storyboard.TargetProperty="ScaleY"
+                                                                                     To="1" Duration="0:0:0.12"/>
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </Trigger.ExitActions>
                                                     </Trigger>
                                                     <Trigger Property="IsDragging" Value="True">
-                                                        <Setter TargetName="AudioSliderThumb" Property="Fill" Value="#aeb6ff"/>
+                                                        <Setter TargetName="AudioSliderThumbCore" Property="Fill" Value="#ffffff"/>
                                                     </Trigger>
                                                 </ControlTemplate.Triggers>
                                             </ControlTemplate>
@@ -259,6 +303,8 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style TargetType="{x:Type Slider}" BasedOn="{StaticResource AudioSlider}"/>
 
         <Style x:Key="ComposerIconButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
             <Setter Property="Width" Value="40"/>
@@ -300,6 +346,12 @@
         </Style>
 
         <Style x:Key="StatusMenuButton" TargetType="Button">
+            <EventSetter Event="Loaded" Handler="AnimatedButton_OnLoaded"/>
+            <EventSetter Event="MouseEnter" Handler="AnimatedButton_OnMouseEnter"/>
+            <EventSetter Event="MouseLeave" Handler="AnimatedButton_OnMouseLeave"/>
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="AnimatedButton_OnPreviewMouseLeftButtonDown"/>
+            <EventSetter Event="PreviewMouseLeftButtonUp" Handler="AnimatedButton_OnPreviewMouseLeftButtonUp"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
             <Setter Property="Height" Value="32"/>
             <Setter Property="Padding" Value="10,0"/>
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
@@ -553,8 +605,8 @@
         </Style>
 
         <Style x:Key="ChatScrollBarStyle" TargetType="{x:Type ScrollBar}">
-            <Setter Property="Width" Value="14"/>
-            <Setter Property="MinWidth" Value="14"/>
+            <Setter Property="Width" Value="12"/>
+            <Setter Property="MinWidth" Value="12"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -585,6 +637,8 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource ChatScrollBarStyle}"/>
 
         <Style TargetType="ListBox">
             <Setter Property="Background" Value="Transparent"/>
@@ -1743,7 +1797,10 @@
                                     </UniformGrid>
                                     <wv2:WebView2 x:Name="ScreenShareWebView"
                                                   Visibility="Collapsed"
-                                                  Margin="6"/>
+                                                  Margin="6"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Stretch"
+                                                  ClipToBounds="True"/>
                                     <StackPanel HorizontalAlignment="Right"
                                                 VerticalAlignment="Bottom"
                                                 Orientation="Horizontal"
@@ -1995,6 +2052,8 @@
                                             <RowDefinition Height="12"/>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
                                             <RowDefinition Height="*"/>
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
@@ -2045,7 +2104,50 @@
                                                        TextAlignment="Right"
                                                        VerticalAlignment="Center"/>
                                         </Grid>
-                                        <ScrollViewer Grid.Row="6"
+                                        <Grid Grid.Row="6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="34"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="42"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Button x:Name="SoundboardMonitorButton"
+                                                    Width="32"
+                                                    Height="30"
+                                                    Padding="0"
+                                                    Style="{StaticResource GhostButton}"
+                                                    Click="SoundboardMonitorButton_OnClick">
+                                                <Grid Width="18" Height="18">
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Path Fill="#f2f3f5"
+                                                              Data="M12,3C7.58,3 4,6.58 4,11V18C4,19.1 4.9,20 6,20H9V12H6V11C6,7.69 8.69,5 12,5C15.31,5 18,7.69 18,11V12H15V20H18C19.1,20 20,19.1 20,18V11C20,6.58 16.42,3 12,3Z"/>
+                                                    </Viewbox>
+                                                    <Path x:Name="SoundboardMonitorSlash"
+                                                          Data="M3,3 L21,21"
+                                                          Stroke="#ff8f98"
+                                                          StrokeThickness="2.4"
+                                                          StrokeStartLineCap="Round"
+                                                          StrokeEndLineCap="Round"
+                                                          Visibility="Collapsed"/>
+                                                </Grid>
+                                            </Button>
+                                            <Slider x:Name="SoundboardMonitorVolumeSlider"
+                                                    Grid.Column="2"
+                                                    Minimum="0"
+                                                    Maximum="100"
+                                                    Value="80"
+                                                    VerticalAlignment="Center"
+                                                    ValueChanged="SoundboardMonitorVolumeSlider_OnValueChanged"/>
+                                            <TextBlock x:Name="SoundboardMonitorVolumeText"
+                                                       Grid.Column="4"
+                                                       Text="80%"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="12"
+                                                       TextAlignment="Right"
+                                                       VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <ScrollViewer Grid.Row="8"
                                                       MaxHeight="300"
                                                       VerticalScrollBarVisibility="Auto">
                                             <ItemsControl x:Name="SoundboardClipsList">
@@ -2100,7 +2202,7 @@
                                             </ItemsControl>
                                         </ScrollViewer>
                                         <TextBlock x:Name="SoundboardEmptyText"
-                                                   Grid.Row="7"
+                                                   Grid.Row="9"
                                                    Text="Add a sound to play it during calls."
                                                    Foreground="{StaticResource MutedBrush}"
                                                    FontSize="11"
@@ -2416,6 +2518,12 @@
                                                    FontSize="11"
                                                    Margin="0,12,0,0"
                                                    Visibility="Collapsed"
+                                                   TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="ScreenShareRuntimeStatusText"
+                                                   Text="Ready for hardware H.264"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   FontSize="11"
+                                                   Margin="0,8,0,0"
                                                    TextWrapping="Wrap"/>
                                     </StackPanel>
                                     </ScrollViewer>
@@ -3098,6 +3206,10 @@
                                                     <Setter Property="Background" Value="Transparent"/>
                                                     <Setter Property="Padding" Value="0"/>
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsVideoFileMessage}" Value="True">
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                    <Setter Property="Padding" Value="0"/>
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
@@ -3259,6 +3371,313 @@
                                                                             VerticalAlignment="Stretch"
                                                                             Focusable="False"
                                                                             IsHitTestVisible="False"/>
+                                        </Border>
+                                        <Border Width="500"
+                                                Height="281"
+                                                MaxWidth="520"
+                                                Margin="0,2,0,0"
+                                                Background="#1d1f24"
+                                                BorderBrush="#454954"
+                                                BorderThickness="1"
+                                                CornerRadius="10"
+                                                ClipToBounds="True"
+                                                HorizontalAlignment="Left">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsVideoFileMessage}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Grid Background="#202228">
+                                                <MediaElement Source="{Binding VideoSource}"
+                                                              Tag="{Binding}"
+                                                              Stretch="Uniform"
+                                                              LoadedBehavior="Manual"
+                                                              UnloadedBehavior="Manual"
+                                                              ScrubbingEnabled="True"
+                                                              Loaded="VideoMessagePlayer_OnLoaded"
+                                                              Unloaded="VideoMessagePlayer_OnUnloaded"
+                                                              MediaOpened="VideoMessagePlayer_OnMediaOpened"
+                                                              MediaEnded="VideoMessagePlayer_OnMediaEnded"
+                                                              MediaFailed="VideoMessagePlayer_OnMediaFailed"
+                                                              MouseLeftButtonUp="VideoMessagePlayer_OnMouseLeftButtonUp">
+                                                    <MediaElement.Style>
+                                                        <Style TargetType="MediaElement">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsVideoReady}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </MediaElement.Style>
+                                                </MediaElement>
+
+                                                <Button Tag="{Binding}"
+                                                        Click="VideoDownloadButton_OnClick"
+                                                        Cursor="Hand"
+                                                        BorderThickness="0"
+                                                        Background="#202228"
+                                                        Foreground="{StaticResource TextBrush}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsVideoReady}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsVideoDownloading}" Value="True">
+                                                                    <Setter Property="IsEnabled" Value="False"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding HasRemoteVideo}" Value="False">
+                                                                    <Setter Property="IsEnabled" Value="False"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                        <Border Width="54" Height="54" CornerRadius="27" Background="#D93a3d45">
+                                                            <Viewbox Width="25" Height="25" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                                <Path Fill="#ffffff" Data="M8,5V19L19,12Z"/>
+                                                            </Viewbox>
+                                                        </Border>
+                                                        <TextBlock Text="{Binding VideoStatusText}"
+                                                                   Margin="0,12,0,0"
+                                                                   MaxWidth="330"
+                                                                   TextAlignment="Center"
+                                                                   TextWrapping="Wrap"
+                                                                   Foreground="#d8dae0"
+                                                                   FontSize="12"/>
+                                                        <TextBlock Text="{Binding FileSizeText}"
+                                                                   Margin="0,4,0,0"
+                                                                   HorizontalAlignment="Center"
+                                                                   Foreground="{StaticResource MutedBrush}"
+                                                                   FontSize="11"/>
+                                                    </StackPanel>
+                                                </Button>
+
+                                                <Border HorizontalAlignment="Right"
+                                                        VerticalAlignment="Top"
+                                                        Margin="10,10,88,10"
+                                                        Padding="8,5"
+                                                        CornerRadius="6"
+                                                        Background="#D926282E"
+                                                        Panel.ZIndex="4">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsVideoDownloading}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <ProgressBar Width="74" Height="4"
+                                                                     Minimum="0" Maximum="100"
+                                                                     Value="{Binding VideoDownloadProgress, Mode=OneWay}"
+                                                                     VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding VideoProgressText}"
+                                                                   Margin="8,0,0,0"
+                                                                   VerticalAlignment="Center"
+                                                                   Foreground="#ffffff"
+                                                                   FontSize="11"
+                                                                   FontWeight="SemiBold"/>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Right"
+                                                            VerticalAlignment="Top"
+                                                            Margin="10"
+                                                            Panel.ZIndex="5">
+                                                    <Button Tag="{Binding}"
+                                                            Width="34" Height="34" Padding="0"
+                                                            Style="{StaticResource GhostButton}"
+                                                            ToolTip="Delete downloaded video from this device"
+                                                            IsEnabled="{Binding CanDeleteLocalVideo}"
+                                                            Click="VideoDeleteLocalButton_OnClick">
+                                                        <Viewbox Width="17" Height="17">
+                                                            <Path Fill="{StaticResource TextBrush}" Data="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6Z"/>
+                                                        </Viewbox>
+                                                    </Button>
+                                                    <Button Tag="{Binding}"
+                                                            Margin="5,0,0,0"
+                                                            Width="34" Height="34" Padding="0"
+                                                            ToolTip="Delete video from Google Drive"
+                                                            Click="VideoDeleteDriveButton_OnClick">
+                                                        <Button.Style>
+                                                            <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding CanDeleteDriveVideo}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                        <Viewbox Width="18" Height="18">
+                                                            <Path Fill="#ff777f" Data="M7.71,3.5L1.15,15L4.58,21L11.15,9.5M9.73,3.5L16.3,15H9.44L6,21H19.7L23.15,15L16.58,3.5Z"/>
+                                                        </Viewbox>
+                                                    </Button>
+                                                </StackPanel>
+
+                                                <Border VerticalAlignment="Bottom"
+                                                        Padding="10,8"
+                                                        Background="#D91B1D22"
+                                                        Panel.ZIndex="4">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsVideoReady}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="32"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="70"/>
+                                                            <ColumnDefinition Width="32"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Button Tag="{Binding}" Width="30" Height="30" Padding="0"
+                                                                Style="{StaticResource GhostButton}"
+                                                                ToolTip="Play or pause"
+                                                                Click="VideoPlayPauseButton_OnClick">
+                                                            <Grid Width="17" Height="17">
+                                                                <Path Fill="#ffffff" Data="M8,5V19L19,12Z">
+                                                                    <Path.Style>
+                                                                        <Style TargetType="Path">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsVideoPlaying}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Path.Style>
+                                                                </Path>
+                                                                <Path Fill="#ffffff" Data="M6,5H10V19H6M14,5H18V19H14">
+                                                                    <Path.Style>
+                                                                        <Style TargetType="Path">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsVideoPlaying}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Path.Style>
+                                                                </Path>
+                                                            </Grid>
+                                                        </Button>
+                                                        <TextBlock Grid.Column="1"
+                                                                   Margin="7,0,8,0"
+                                                                   Text="{Binding VideoPositionText}"
+                                                                   Foreground="#ffffff"
+                                                                   FontSize="11"
+                                                                   VerticalAlignment="Center"/>
+                                                        <Slider Grid.Column="2"
+                                                                Tag="{Binding}"
+                                                                Minimum="0"
+                                                                Maximum="{Binding VideoDurationSeconds}"
+                                                                Value="{Binding VideoPositionSeconds, Mode=OneWay}"
+                                                                VerticalAlignment="Center"
+                                                                PreviewMouseLeftButtonUp="VideoTimeline_OnPreviewMouseLeftButtonUp"/>
+                                                        <TextBlock Grid.Column="3"
+                                                                   Margin="8,0"
+                                                                   Text="{Binding VideoDurationText}"
+                                                                   Foreground="#ffffff"
+                                                                   FontSize="11"
+                                                                   VerticalAlignment="Center"/>
+                                                        <Slider Grid.Column="4"
+                                                                Tag="{Binding}"
+                                                                Minimum="0" Maximum="1"
+                                                                Value="{Binding VideoVolume}"
+                                                                VerticalAlignment="Center"
+                                                                ValueChanged="VideoVolume_OnValueChanged"
+                                                                ToolTip="Volume"/>
+                                                        <Button Grid.Column="5"
+                                                                Tag="{Binding}"
+                                                                Width="30" Height="30" Padding="0"
+                                                                Style="{StaticResource GhostButton}"
+                                                                ToolTip="Fullscreen"
+                                                                Click="VideoFullscreenButton_OnClick">
+                                                            <Viewbox Width="17" Height="17">
+                                                                <Path Fill="#ffffff" Data="M7,14H5V19H10V17H7V14M5,10H7V7H10V5H5V10M17,17H14V19H19V14H17V17M14,5V7H17V10H19V5H14Z"/>
+                                                            </Viewbox>
+                                                        </Button>
+                                                    </Grid>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                        <Border MaxWidth="430"
+                                                Margin="0,2,0,0"
+                                                Padding="12"
+                                                Background="#25282e"
+                                                BorderBrush="#474b55"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                HorizontalAlignment="Left">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsGenericFileMessage}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="44"/>
+                                                    <ColumnDefinition Width="12"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="12"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="44" Height="44" CornerRadius="7" Background="#343956">
+                                                    <TextBlock Text="{Binding FileTypeText}"
+                                                               Foreground="#c8ceff"
+                                                               FontSize="9"
+                                                               FontWeight="Bold"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"/>
+                                                </Border>
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="270">
+                                                    <TextBlock Text="{Binding FileName}"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding FileSizeText}"
+                                                               Margin="0,3,0,0"
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               FontSize="11"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="4"
+                                                        Tag="{Binding}"
+                                                        Width="36"
+                                                        Height="36"
+                                                        Padding="0"
+                                                        Style="{StaticResource GhostButton}"
+                                                        ToolTip="Download or open file"
+                                                        Click="MessageFileOpenButton_OnClick">
+                                                    <Path Width="18" Height="18" Stretch="Uniform"
+                                                          Fill="{StaticResource TextBrush}"
+                                                          Data="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
+                                                </Button>
+                                            </Grid>
                                         </Border>
                                         <ItemsControl ItemsSource="{Binding ReactionItems}"
                                                       Margin="0,8,0,0">
@@ -3759,6 +4178,39 @@
                         </DockPanel>
                     </Border>
 
+                    <Border x:Name="FileDraftBar"
+                            Grid.Row="1"
+                            Visibility="Collapsed"
+                            Background="#25272d"
+                            BorderBrush="#45474f"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10"
+                            Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="44"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Width="44" Height="44" CornerRadius="7" Background="#343956">
+                                <Path Width="22" Height="22" Stretch="Uniform" Fill="#c8ceff"
+                                      Data="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8M14,2V8H20M8,13H16M8,17H14"/>
+                            </Border>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                <TextBlock x:Name="FileDraftNameText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="FileDraftStatusText" Text="Ready to upload to Google Drive"
+                                           Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,0,0"/>
+                                <ProgressBar x:Name="FileDraftProgress" Height="4" Minimum="0" Maximum="100"
+                                             Value="0" Visibility="Collapsed" Margin="0,7,12,0"/>
+                            </StackPanel>
+                            <Button Grid.Column="3" Content="x" Width="28" Height="28" Padding="0"
+                                    Style="{StaticResource GhostButton}" ToolTip="Remove attachment"
+                                    Click="ClearFileDraftButton_OnClick"/>
+                        </Grid>
+                    </Border>
+
                     <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -3799,7 +4251,7 @@
                             <Button Content="+"
                                     Margin="6,0,0,0"
                                     Style="{StaticResource ComposerIconButton}"
-                                    ToolTip="Attach image"
+                                    ToolTip="Attach image or file"
                                     Click="AttachImageButton_OnClick"/>
                         </StackPanel>
 
@@ -4220,6 +4672,17 @@
                                         <TextBlock Text="Voice" FontWeight="SemiBold"/>
                                     </DockPanel>
                                 </Button>
+                                <Button x:Name="SettingsDataTabButton"
+                                        Style="{StaticResource StatusMenuButton}"
+                                        Background="Transparent"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,6,0,0"
+                                        Click="SettingsDataTabButton_OnClick">
+                                    <DockPanel>
+                                        <TextBlock Text="&#x2601;" FontFamily="Segoe UI Symbol" FontSize="15" Margin="0,0,10,0"/>
+                                        <TextBlock Text="Data" FontWeight="SemiBold"/>
+                                    </DockPanel>
+                                </Button>
                                 <Button x:Name="SettingsBadgeAdminTabButton"
                                         Style="{StaticResource StatusMenuButton}"
                                         Background="Transparent"
@@ -4285,6 +4748,16 @@
                                                Foreground="{StaticResource MutedBrush}"
                                                FontSize="13"
                                                Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </DockPanel>
+
+                            <DockPanel x:Name="SettingsDataHeader" Visibility="Collapsed">
+                                <Button DockPanel.Dock="Right" Width="34" Height="34" Content="x"
+                                        Style="{StaticResource GhostButton}" Click="SettingsCloseButton_OnClick"/>
+                                <StackPanel>
+                                    <TextBlock Text="Data" FontSize="22" FontWeight="Bold"/>
+                                    <TextBlock Text="Choose where FluxChat keeps conversations and attachments."
+                                               Foreground="{StaticResource MutedBrush}" FontSize="13" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </DockPanel>
 
@@ -4502,7 +4975,7 @@
                                         <TextBlock x:Name="BadgeStatusText" Text="Connecting to Official Badge Authority..."
                                                    Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,6,0,12"
                                                    TextWrapping="Wrap"/>
-                                        <UniformGrid Columns="3">
+                                        <UniformGrid Columns="4">
                                             <Button x:Name="BadgeNoneButton" Tag="" Margin="0,0,8,0" Height="72"
                                                     Style="{StaticResource GhostButton}" Click="BadgeSelectButton_OnClick">
                                                 <StackPanel HorizontalAlignment="Center">
@@ -4526,6 +4999,13 @@
                                                 <StackPanel HorizontalAlignment="Center">
                                                     <Image Source="/Assets/Badges/owner.png" Width="25" Height="25"/>
                                                     <TextBlock Text="Owner" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                                                </StackPanel>
+                                            </Button>
+                                            <Button x:Name="BadgeSpecialButton" Tag="special" Height="72" Visibility="Collapsed"
+                                                    Style="{StaticResource GhostButton}" Click="BadgeSelectButton_OnClick">
+                                                <StackPanel HorizontalAlignment="Center">
+                                                    <Image Source="/Assets/Badges/special.png" Width="25" Height="25"/>
+                                                    <TextBlock Text="Special" FontWeight="SemiBold" Margin="0,5,0,0"/>
                                                 </StackPanel>
                                             </Button>
                                         </UniformGrid>
@@ -4633,6 +5113,139 @@
                             </StackPanel>
                             </ScrollViewer>
 
+                            <ScrollViewer x:Name="SettingsDataContent"
+                                          Grid.Row="2"
+                                          Grid.RowSpan="2"
+                                          Visibility="Collapsed"
+                                          VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="16">
+                                        <StackPanel>
+                                            <TextBlock Text="STORAGE" Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11" FontWeight="Bold"/>
+                                            <Grid Margin="0,12,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="210"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="Chat history" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="Local remains the primary cache in this version."
+                                                               Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="SettingsChatStorageCombo" Grid.Column="1"
+                                                          SelectionChanged="SettingsDataStorageCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Local computer" Tag="LocalComputer"/>
+                                                    <ComboBoxItem Content="Google Drive backup" Tag="GoogleDrive"/>
+                                                </ComboBox>
+                                            </Grid>
+                                            <Grid Margin="0,14,0,0">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="Images" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="Choose local storage or Drive backup."
+                                                               Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="SettingsImageStorageCombo" Grid.Column="1"
+                                                          SelectionChanged="SettingsDataStorageCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Local computer" Tag="LocalComputer"/>
+                                                    <ComboBoxItem Content="Google Drive" Tag="GoogleDrive"/>
+                                                </ComboBox>
+                                            </Grid>
+                                            <Grid Margin="0,14,0,0">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="Videos and files" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="Files up to 5 GB are uploaded directly to your Drive."
+                                                               Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="SettingsFileStorageCombo" Grid.Column="1"
+                                                          SelectionChanged="SettingsDataStorageCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Google Drive" Tag="GoogleDrive"/>
+                                                </ComboBox>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="GOOGLE DRIVE" Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11" FontWeight="Bold"/>
+                                            <TextBlock x:Name="GoogleDriveStatusText" Text="Not connected"
+                                                       Margin="0,8,0,0" FontWeight="SemiBold"/>
+                                            <TextBlock Text="FluxChat requests drive.file access and can only manage files created by FluxChat."
+                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                            <TextBox x:Name="GoogleDriveClientIdInput" MinHeight="36"
+                                                     ToolTip="Google OAuth Desktop client ID (public identifier)"/>
+                                            <TextBlock Text="OAuth client ID is needed for self-built public releases; no private client secret is stored in FluxChat."
+                                                       Foreground="{StaticResource SubtleBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,5,0,10"/>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button x:Name="GoogleDriveConnectButton" Content="Connect Google Drive"
+                                                        Style="{StaticResource PrimaryButton}" Click="GoogleDriveConnectButton_OnClick"/>
+                                                <Button x:Name="GoogleDriveDisconnectButton" Content="Disconnect"
+                                                        Margin="8,0,0,0" Style="{StaticResource GhostButton}"
+                                                        Visibility="Collapsed" Click="GoogleDriveDisconnectButton_OnClick"/>
+                                                <Button x:Name="GoogleDriveBackupButton" Content="Back up now"
+                                                        Margin="8,0,0,0" Style="{StaticResource GhostButton}"
+                                                        Click="GoogleDriveBackupButton_OnClick"/>
+                                            </StackPanel>
+                                            <TextBlock x:Name="GoogleDriveBackupStatusText"
+                                                       Foreground="{StaticResource MutedBrush}" FontSize="11"
+                                                       TextWrapping="Wrap" Margin="0,9,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="HOW TO CONNECT GOOGLE DRIVE" Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11" FontWeight="Bold"/>
+                                            <TextBlock Text="1. Open Google Cloud Console and select your FluxChat Drive project."
+                                                       TextWrapping="Wrap" Margin="0,12,0,0"/>
+                                            <TextBlock Text="2. Open APIs &amp; Services, then Library, find Google Drive API, and enable it."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="3. Open Google Auth Platform. If it is not configured, click Get started."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="4. In Branding, fill the app name, support email, and developer contact email, then save."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="5. In Audience, use External for a normal Google account. While testing, add your Google account as a test user."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="6. In Data Access, add the Google Drive API scope: drive.file."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="7. In Clients, create an OAuth client. Application type must be Desktop app."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="8. Copy the Client ID, paste it into the field above, then click Connect Google Drive."
+                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
+                                            <TextBlock Text="If Google Cloud says access is blocked, enable 2-step verification on your Google account and refresh the page after a few minutes."
+                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                                            <Border Background="#282a30" BorderBrush="#3f424b" BorderThickness="1"
+                                                    CornerRadius="6" Padding="12" Margin="0,12,0,0">
+                                                <TextBlock Text="Important: use only the Client ID. FluxChat does not need a client secret for the Desktop OAuth flow."
+                                                           Foreground="{StaticResource SubtleBrush}" FontSize="11" TextWrapping="Wrap"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Reduced motion" FontWeight="SemiBold"/>
+                                                <TextBlock Text="Disables hover and press animations throughout FluxChat."
+                                                           Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
+                                            </StackPanel>
+                                            <CheckBox x:Name="SettingsReducedMotionCheck" Grid.Column="1"
+                                                      Style="{StaticResource SmoothCheckBox}" VerticalAlignment="Center"
+                                                      Checked="SettingsReducedMotionCheck_OnChanged"
+                                                      Unchecked="SettingsReducedMotionCheck_OnChanged"/>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+
                             <ScrollViewer x:Name="SettingsBadgeAdminContent" Grid.Row="2" Grid.RowSpan="2"
                                           Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                                 <StackPanel>
@@ -4658,12 +5271,34 @@
                                                         <TextBlock Text="Owner" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                         <TextBlock DockPanel.Dock="Right" Text="Protected, read-only" Foreground="{StaticResource SubtleBrush}" VerticalAlignment="Center"/>
                                                     </DockPanel>
-                                                    <DockPanel Margin="0,14,0,0">
+                                                    <Grid Margin="0,14,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
                                                         <Image Source="/Assets/Badges/tester.png" Width="24" Height="24" Margin="0,0,10,0"/>
-                                                        <TextBlock Text="Tester" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                        <Button x:Name="BadgeAdminTesterButton" DockPanel.Dock="Right" Content="Grant Tester"
-                                                                Tag="grant" Style="{StaticResource PrimaryButton}" Click="BadgeAdminTesterButton_OnClick"/>
-                                                    </DockPanel>
+                                                        <TextBlock Grid.Column="1" Text="Tester" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                        <Button x:Name="BadgeAdminTesterButton" Grid.Column="2"
+                                                                Width="132" Height="34" Padding="12,5"
+                                                                Content="Grant Tester" Tag="grant"
+                                                                Style="{StaticResource PrimaryButton}"
+                                                                Click="BadgeAdminTesterButton_OnClick"/>
+                                                    </Grid>
+                                                    <Grid Margin="0,14,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Image Source="/Assets/Badges/special.png" Width="24" Height="24" Margin="0,0,10,0"/>
+                                                        <TextBlock Grid.Column="1" Text="Special" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                        <Button x:Name="BadgeAdminSpecialButton" Grid.Column="2"
+                                                                Width="132" Height="34" Padding="12,5"
+                                                                Content="Grant Special" Tag="grant"
+                                                                Style="{StaticResource PrimaryButton}"
+                                                                Click="BadgeAdminSpecialButton_OnClick"/>
+                                                    </Grid>
                                                 </StackPanel>
                                             </Border>
                                             <TextBlock x:Name="BadgeAdminStatusText" Foreground="{StaticResource MutedBrush}"
@@ -4809,6 +5444,155 @@
                             <Viewbox Width="18" Height="18">
                                 <Path Fill="{StaticResource TextBrush}"
                                       Data="M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"/>
+                            </Viewbox>
+                        </Button>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border x:Name="VideoViewerOverlay"
+                Grid.ColumnSpan="2"
+                Visibility="Collapsed"
+                Panel.ZIndex="31"
+                Opacity="1">
+            <Border.Resources>
+                <Style x:Key="VideoViewerToolbarButton" TargetType="{x:Type Button}" BasedOn="{StaticResource GhostButton}">
+                    <Setter Property="Width" Value="40"/>
+                    <Setter Property="Height" Value="40"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Focusable" Value="False"/>
+                </Style>
+            </Border.Resources>
+            <Grid ClipToBounds="True">
+                <Border Background="#F2111215"
+                        MouseLeftButtonUp="VideoViewerBackdrop_OnMouseLeftButtonUp"/>
+                <Grid Margin="28,76,28,28">
+                    <Border Background="#090a0c" CornerRadius="10" ClipToBounds="True">
+                        <Grid>
+                            <MediaElement x:Name="VideoViewerPlayer"
+                                          Source="{Binding VideoSource}"
+                                          Tag="{Binding}"
+                                          Stretch="Uniform"
+                                          LoadedBehavior="Manual"
+                                          UnloadedBehavior="Manual"
+                                          ScrubbingEnabled="True"
+                                          MediaOpened="VideoViewerPlayer_OnMediaOpened"
+                                          MediaEnded="VideoViewerPlayer_OnMediaEnded"
+                                          MediaFailed="VideoViewerPlayer_OnMediaFailed"
+                                          MouseLeftButtonUp="VideoMessagePlayer_OnMouseLeftButtonUp"/>
+
+                            <Border VerticalAlignment="Bottom"
+                                    Margin="14"
+                                    Padding="12,9"
+                                    CornerRadius="8"
+                                    Background="#E51B1D22">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="34"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="100"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Tag="{Binding}" Width="32" Height="32" Padding="0"
+                                            Style="{StaticResource GhostButton}"
+                                            Click="VideoPlayPauseButton_OnClick">
+                                        <Grid Width="18" Height="18">
+                                            <Path Fill="#ffffff" Data="M8,5V19L19,12Z">
+                                                <Path.Style>
+                                                    <Style TargetType="Path">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsVideoPlaying}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Path.Style>
+                                            </Path>
+                                            <Path Fill="#ffffff" Data="M6,5H10V19H6M14,5H18V19H14">
+                                                <Path.Style>
+                                                    <Style TargetType="Path">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsVideoPlaying}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Path.Style>
+                                            </Path>
+                                        </Grid>
+                                    </Button>
+                                    <TextBlock Grid.Column="1" Margin="8,0"
+                                               Text="{Binding VideoPositionText}"
+                                               Foreground="#ffffff" FontSize="12"
+                                               VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="2" Tag="{Binding}"
+                                            Minimum="0" Maximum="{Binding VideoDurationSeconds}"
+                                            Value="{Binding VideoPositionSeconds, Mode=OneWay}"
+                                            VerticalAlignment="Center"
+                                            PreviewMouseLeftButtonUp="VideoTimeline_OnPreviewMouseLeftButtonUp"/>
+                                    <TextBlock Grid.Column="3" Margin="8,0"
+                                               Text="{Binding VideoDurationText}"
+                                               Foreground="#ffffff" FontSize="12"
+                                               VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="4" Tag="{Binding}"
+                                            Minimum="0" Maximum="1"
+                                            Value="{Binding VideoVolume}"
+                                            VerticalAlignment="Center"
+                                            ValueChanged="VideoVolume_OnValueChanged"
+                                            ToolTip="Volume"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Border Panel.ZIndex="4"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Margin="0,16,22,0"
+                        Padding="6"
+                        CornerRadius="8"
+                        Background="#F22B2D31"
+                        BorderBrush="#50535c"
+                        BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource VideoViewerToolbarButton}"
+                                ToolTip="Delete downloaded video from this device"
+                                IsEnabled="{Binding CanDeleteLocalVideo}"
+                                Tag="{Binding}"
+                                Click="VideoDeleteLocalButton_OnClick">
+                            <Viewbox Width="18" Height="18">
+                                <Path Fill="{StaticResource TextBrush}" Data="M9,3V4H4V6H5V19A2,2 0 0,0 7,21H17A2,2 0 0,0 19,19V6H20V4H15V3H9M7,6H17V19H7V6Z"/>
+                            </Viewbox>
+                        </Button>
+                        <Button Margin="4,0,0,0"
+                                ToolTip="Delete video from Google Drive"
+                                Tag="{Binding}"
+                                Click="VideoDeleteDriveButton_OnClick">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource VideoViewerToolbarButton}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CanDeleteDriveVideo}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                            <Viewbox Width="18" Height="18">
+                                <Path Fill="#ff777f" Data="M7.71,3.5L1.15,15L4.58,21L11.15,9.5M9.73,3.5L16.3,15H9.44L6,21H19.7L23.15,15L16.58,3.5Z"/>
+                            </Viewbox>
+                        </Button>
+                        <Button Margin="4,0,0,0"
+                                Style="{StaticResource VideoViewerToolbarButton}"
+                                ToolTip="Close"
+                                Click="VideoViewerCloseButton_OnClick">
+                            <Viewbox Width="18" Height="18">
+                                <Path Fill="{StaticResource TextBrush}" Data="M18.3,5.71L16.89,4.29L12,9.17L7.11,4.29L5.7,5.71L10.59,10.59L5.7,15.48L7.11,16.89L12,12L16.89,16.89L18.3,15.48L13.41,10.59L18.3,5.71Z"/>
                             </Viewbox>
                         </Button>
                     </StackPanel>

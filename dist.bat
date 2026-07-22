@@ -34,7 +34,9 @@ dotnet publish "%PROJECT%" ^
     -o "%DIST%" ^
     -p:PublishSingleFile=true ^
     -p:IncludeNativeLibrariesForSelfExtract=true ^
-    -p:NuGetAudit=false
+    -p:NuGetAudit=false ^
+    -p:DebugType=none ^
+    -p:DebugSymbols=false
 
 if errorlevel 1 (
     echo.

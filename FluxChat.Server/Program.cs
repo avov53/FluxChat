@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -16,10 +17,25 @@ await server.RunAsync();
 internal sealed class RelayServer
 {
     private static readonly UTF8Encoding Utf8NoBom = new(false);
+    private const int MaxControlPacketBytes = 32 * 1024 * 1024;
+    private const int MaxAudioPacketBytes = 256 * 1024;
+    private const int MaxScreenPacketBytes = 12 * 1024 * 1024;
+    private static readonly TimeSpan PendingMessageLifetime = TimeSpan.FromDays(14);
+    private static readonly TimeSpan AudioEndpointLifetime = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan FederationClockSkew = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan TurnCredentialLifetime = TimeSpan.FromHours(24);
     private readonly RelayDatabase _database;
     private readonly ConcurrentDictionary<string, ClientSession> _online = new();
+    private readonly ConcurrentDictionary<string, AudioRouteStats> _audioRoutes = new(StringComparer.Ordinal);
+    private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
+    private long _controlPacketsReceived;
+    private long _controlPacketsRejected;
+    private long _audioUdpReceived;
+    private long _audioUdpForwarded;
+    private long _audioUdpDropped;
+    private long _audioTcpForwarded;
+    private long _screenFramesReceived;
+    private long _screenFramesQueued;
     private readonly string? _federationKey = Environment.GetEnvironmentVariable("FLUXCHAT_FEDERATION_KEY");
     private readonly string? _turnHost = Environment.GetEnvironmentVariable("FLUXCHAT_TURN_HOST");
     private readonly string? _turnSecret = Environment.GetEnvironmentVariable("FLUXCHAT_TURN_SECRET");
@@ -38,6 +54,8 @@ internal sealed class RelayServer
         listener.Start();
         _ = Task.Run(SweepStaleSessionsAsync);
         _ = Task.Run(() => RunAudioUdpRelayAsync(audioUdp));
+        _ = Task.Run(RunMaintenanceAsync);
+        _ = Task.Run(RunDiagnosticsAsync);
         Console.WriteLine($"FluxChat relay listening on TCP {FluxChatPorts.Relay}");
         Console.WriteLine($"FluxChat call audio relay listening on UDP {FluxChatPorts.Relay}");
         Console.WriteLine($"Database: {ServerPaths.DatabasePath}");
@@ -65,13 +83,14 @@ internal sealed class RelayServer
         {
             await using var stream = client.GetStream();
             client.NoDelay = true;
-            using var reader = new StreamReader(stream, Utf8NoBom, leaveOpen: true);
+            var reader = new BoundedUtf8LineReader(stream, MaxControlPacketBytes);
             using var writer = new StreamWriter(stream, Utf8NoBom, leaveOpen: true)
             {
                 AutoFlush = true
             };
 
             var firstLine = await reader.ReadLineAsync();
+            Interlocked.Increment(ref _controlPacketsReceived);
             var firstType = GetPacketType(firstLine);
             if (firstType == "fluxchat.relay-federation.v1")
             {
@@ -85,6 +104,7 @@ internal sealed class RelayServer
             {
                 var audioRegister = ReadPacket<RelayAudioRegisterPacket>(firstLine, "fluxchat.audio-register.v1")
                     ?? throw new InvalidOperationException("Invalid audio registration packet.");
+                reader.MaxLineBytes = MaxAudioPacketBytes;
                 await HandleAudioClientAsync(audioRegister, reader, writer, client, remote);
                 return;
             }
@@ -93,6 +113,7 @@ internal sealed class RelayServer
             {
                 var screenRegister = ReadPacket<RelayScreenRegisterPacket>(firstLine, "fluxchat.screen-register.v1")
                     ?? throw new InvalidOperationException("Invalid screen registration packet.");
+                reader.MaxLineBytes = MaxScreenPacketBytes;
                 await HandleScreenClientAsync(screenRegister, reader, writer, client, remote);
                 return;
             }
@@ -120,6 +141,10 @@ internal sealed class RelayServer
             {
                 PublicKey = register.PublicKey
             };
+            if (_online.TryGetValue(register.UserId, out var previousSession))
+            {
+                previousSession.Close();
+            }
             _online[register.UserId] = session;
             Console.WriteLine($"{register.DisplayName} ({register.UserId}) connected from {remote}");
             await SendPresenceSnapshotAsync(session);
@@ -133,6 +158,8 @@ internal sealed class RelayServer
                 {
                     break;
                 }
+
+                Interlocked.Increment(ref _controlPacketsReceived);
 
                 var type = GetPacketType(line);
                 if (type == "fluxchat.relay-presence.v1")
@@ -187,6 +214,11 @@ internal sealed class RelayServer
                 }
             }
         }
+        catch (InvalidDataException ex)
+        {
+            Interlocked.Increment(ref _controlPacketsRejected);
+            Console.WriteLine($"Client {remote} rejected: {ex.Message}");
+        }
         catch (Exception ex)
         {
             Console.WriteLine($"Client {remote} disconnected: {ex.Message}");
@@ -197,6 +229,7 @@ internal sealed class RelayServer
             {
                 if (_online.TryRemove(new KeyValuePair<string, ClientSession>(session.UserId, session)))
                 {
+                    session.Close();
                     Console.WriteLine($"{session.DisplayName} ({session.UserId}) offline");
                     await BroadcastPresenceAsync(session, "Offline");
                 }
@@ -208,7 +241,7 @@ internal sealed class RelayServer
 
     private async Task HandleAudioClientAsync(
         RelayAudioRegisterPacket register,
-        StreamReader reader,
+        BoundedUtf8LineReader reader,
         StreamWriter writer,
         TcpClient client,
         EndPoint? remote)
@@ -347,6 +380,8 @@ internal sealed class RelayServer
             try
             {
                 await recipient.SendAudioAsync(packet);
+                Interlocked.Increment(ref _audioTcpForwarded);
+                RecordAudioRoute(packet);
                 return;
             }
             catch (Exception ex)
@@ -358,7 +393,7 @@ internal sealed class RelayServer
 
     private async Task HandleScreenClientAsync(
         RelayScreenRegisterPacket register,
-        StreamReader reader,
+        BoundedUtf8LineReader reader,
         StreamWriter writer,
         TcpClient client,
         EndPoint? remote)
@@ -400,6 +435,7 @@ internal sealed class RelayServer
                 }
 
                 session.LastPresenceUtc = DateTimeOffset.UtcNow;
+                Interlocked.Increment(ref _screenFramesReceived);
                 await RouteScreenPacketAsync(packet);
             }
         }
@@ -419,6 +455,7 @@ internal sealed class RelayServer
         if (_online.TryGetValue(packet.ToUserId, out var recipient))
         {
             recipient.EnqueueScreenFrame(packet);
+            Interlocked.Increment(ref _screenFramesQueued);
         }
 
         return Task.CompletedTask;
@@ -426,16 +463,21 @@ internal sealed class RelayServer
 
     private async Task RunAudioUdpRelayAsync(UdpClient udp)
     {
-        var receivedPackets = 0L;
-        var forwardedPackets = 0L;
-        var missingSenderPackets = 0L;
-        var missingRecipientEndpointPackets = 0L;
-
         while (true)
         {
             try
             {
                 var result = await udp.ReceiveAsync();
+                if (result.Buffer.Length > MaxAudioPacketBytes)
+                {
+                    var dropped = Interlocked.Increment(ref _audioUdpDropped);
+                    if (dropped == 1 || dropped % 100 == 0)
+                    {
+                        Console.WriteLine($"UDP audio dropped: oversized packet, bytes={result.Buffer.Length}, count={dropped}");
+                    }
+                    continue;
+                }
+
                 var json = Encoding.UTF8.GetString(result.Buffer);
                 var packet = ReadPacket<RelayAudioPacket>(json, "fluxchat.call-audio.v1");
                 if (packet is null ||
@@ -443,37 +485,41 @@ internal sealed class RelayServer
                     string.IsNullOrWhiteSpace(packet.ToUserId) ||
                     !_online.TryGetValue(packet.FromUserId, out var sender))
                 {
-                    missingSenderPackets++;
-                    if (missingSenderPackets == 1 || missingSenderPackets % 100 == 0)
+                    var dropped = Interlocked.Increment(ref _audioUdpDropped);
+                    if (dropped == 1 || dropped % 100 == 0)
                     {
-                        Console.WriteLine($"UDP audio dropped: sender offline or packet invalid, count={missingSenderPackets}");
+                        Console.WriteLine($"UDP audio dropped: sender offline or packet invalid, count={dropped}");
                     }
 
                     continue;
                 }
 
                 sender.AudioEndPoint = result.RemoteEndPoint;
+                sender.AudioEndPointUpdatedUtc = DateTimeOffset.UtcNow;
                 sender.LastPresenceUtc = DateTimeOffset.UtcNow;
-                receivedPackets++;
+                var receivedPackets = Interlocked.Increment(ref _audioUdpReceived);
+                RecordAudioRoute(packet);
                 if (receivedPackets == 1 || receivedPackets % 500 == 0)
                 {
                     Console.WriteLine($"UDP audio received: count={receivedPackets}, from={packet.FromUserId}, to={packet.ToUserId}, bytes={result.Buffer.Length}, endpoint={result.RemoteEndPoint}");
                 }
 
                 if (!_online.TryGetValue(packet.ToUserId, out var recipient) ||
-                    recipient.AudioEndPoint is null)
+                    recipient.AudioEndPoint is null ||
+                    DateTimeOffset.UtcNow - recipient.AudioEndPointUpdatedUtc > AudioEndpointLifetime)
                 {
-                    missingRecipientEndpointPackets++;
-                    if (missingRecipientEndpointPackets == 1 || missingRecipientEndpointPackets % 100 == 0)
+                    recipient?.ClearAudioEndPointIfStale(AudioEndpointLifetime);
+                    var dropped = Interlocked.Increment(ref _audioUdpDropped);
+                    if (dropped == 1 || dropped % 100 == 0)
                     {
-                        Console.WriteLine($"UDP audio waiting for recipient endpoint: count={missingRecipientEndpointPackets}, from={packet.FromUserId}, to={packet.ToUserId}, recipientOnline={_online.ContainsKey(packet.ToUserId)}");
+                        Console.WriteLine($"UDP audio waiting for recipient endpoint: count={dropped}, from={packet.FromUserId}, to={packet.ToUserId}, recipientOnline={_online.ContainsKey(packet.ToUserId)}");
                     }
 
                     continue;
                 }
 
                 await udp.SendAsync(result.Buffer, result.Buffer.Length, recipient.AudioEndPoint);
-                forwardedPackets++;
+                var forwardedPackets = Interlocked.Increment(ref _audioUdpForwarded);
                 if (forwardedPackets == 1 || forwardedPackets % 500 == 0)
                 {
                     Console.WriteLine($"UDP audio forwarded: count={forwardedPackets}, from={packet.FromUserId}, to={packet.ToUserId}, endpoint={recipient.AudioEndPoint}");
@@ -616,6 +662,106 @@ internal sealed class RelayServer
 
         return type == expectedType ? JsonSerializer.Deserialize<T>(json) : default;
     }
+
+    private void RecordAudioRoute(RelayAudioPacket packet)
+    {
+        var routeKey = $"{packet.FromUserId}->{packet.ToUserId}";
+        var route = _audioRoutes.GetOrAdd(routeKey, _ => new AudioRouteStats(packet.FromUserId, packet.ToUserId));
+        route.Record(packet.Sequence, packet.SentAtUtc);
+    }
+
+    private async Task RunMaintenanceAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
+        while (await timer.WaitForNextTickAsync())
+        {
+            try
+            {
+                var removed = _database.DeletePendingOlderThan(DateTimeOffset.UtcNow - PendingMessageLifetime);
+                if (removed > 0)
+                {
+                    Console.WriteLine($"Maintenance removed {removed} pending messages older than {PendingMessageLifetime.TotalDays:0} days");
+                }
+
+                var staleAudioBefore = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5);
+                foreach (var pair in _audioRoutes)
+                {
+                    if (pair.Value.LastPacketUtc < staleAudioBefore)
+                    {
+                        _audioRoutes.TryRemove(pair);
+                    }
+                }
+
+                foreach (var session in _online.Values)
+                {
+                    session.ClearAudioEndPointIfStale(AudioEndpointLifetime);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Relay maintenance error: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task RunDiagnosticsAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        while (await timer.WaitForNextTickAsync())
+        {
+            try
+            {
+                using var process = Process.GetCurrentProcess();
+                var stats = _database.GetStats(_online.Count);
+                var managedBytes = GC.GetTotalMemory(forceFullCollection: false);
+                var droppedScreenFrames = _online.Values.Sum(session => session.DroppedScreenFrames);
+                Console.WriteLine(
+                    $"Relay status: uptime={FormatDuration(DateTimeOffset.UtcNow - _startedAtUtc)}, " +
+                    $"rss={FormatBytes(process.WorkingSet64)}, managed={FormatBytes(managedBytes)}, " +
+                    $"online={stats.OnlineUsers}, pending={stats.PendingMessages}, db={FormatBytes(stats.DatabaseSizeBytes)}, " +
+                    $"control={Interlocked.Read(ref _controlPacketsReceived)}/{Interlocked.Read(ref _controlPacketsRejected)} rejected, " +
+                    $"audioUdp={Interlocked.Read(ref _audioUdpForwarded)}/{Interlocked.Read(ref _audioUdpReceived)} forwarded, " +
+                    $"audioDropped={Interlocked.Read(ref _audioUdpDropped)}, audioTcp={Interlocked.Read(ref _audioTcpForwarded)}, " +
+                    $"screen={Interlocked.Read(ref _screenFramesQueued)}/{Interlocked.Read(ref _screenFramesReceived)} queued, screenDropped={droppedScreenFrames}");
+
+                foreach (var route in _audioRoutes.Values
+                             .Where(route => DateTimeOffset.UtcNow - route.LastPacketUtc < TimeSpan.FromMinutes(2))
+                             .OrderByDescending(route => route.LastPacketUtc)
+                             .Take(12))
+                {
+                    var snapshot = route.GetSnapshot();
+                    Console.WriteLine(
+                        $"Call route {snapshot.FromUserId}->{snapshot.ToUserId}: packets={snapshot.Packets}, " +
+                        $"sequenceGaps={snapshot.SequenceGaps}, estimatedLoss={snapshot.EstimatedLossPercent:0.0}%, " +
+                        $"relayAgeAvg={snapshot.AverageRelayAgeMs:0}ms, relayAgeMax={snapshot.MaxRelayAgeMs:0}ms");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Relay diagnostics error: {ex.Message}");
+            }
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        var value = Math.Max(0, bytes);
+        var index = 0;
+        var display = (double)value;
+        while (display >= 1024 && index < suffixes.Length - 1)
+        {
+            display /= 1024;
+            index++;
+        }
+
+        return $"{display:0.0}{suffixes[index]}";
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+        => duration.TotalDays >= 1
+            ? $"{(int)duration.TotalDays}d {duration.Hours:00}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}";
 
     private async Task SweepStaleSessionsAsync()
     {
@@ -771,6 +917,122 @@ internal sealed class RelayServer
     }
 }
 
+internal sealed class BoundedUtf8LineReader(Stream stream, int maxLineBytes)
+{
+    private readonly byte[] _buffer = new byte[8192];
+    private int _offset;
+    private int _count;
+
+    public int MaxLineBytes { get; set; } = maxLineBytes;
+
+    public async Task<string?> ReadLineAsync(CancellationToken cancellationToken = default)
+    {
+        using var line = new MemoryStream(Math.Min(MaxLineBytes, 8192));
+        while (true)
+        {
+            if (_offset >= _count)
+            {
+                _count = await stream.ReadAsync(_buffer.AsMemory(), cancellationToken);
+                _offset = 0;
+                if (_count == 0)
+                {
+                    return line.Length == 0 ? null : DecodeLine(line);
+                }
+            }
+
+            var newlineIndex = Array.IndexOf(_buffer, (byte)'\n', _offset, _count - _offset);
+            var segmentEnd = newlineIndex >= 0 ? newlineIndex : _count;
+            var segmentLength = segmentEnd - _offset;
+            if (line.Length + segmentLength > MaxLineBytes)
+            {
+                throw new InvalidDataException($"Packet exceeded the {MaxLineBytes / 1024 / 1024.0:0.##} MB relay limit.");
+            }
+
+            line.Write(_buffer, _offset, segmentLength);
+            _offset = newlineIndex >= 0 ? newlineIndex + 1 : _count;
+            if (newlineIndex >= 0)
+            {
+                return DecodeLine(line);
+            }
+        }
+    }
+
+    private static string DecodeLine(MemoryStream line)
+    {
+        var bytes = line.GetBuffer().AsSpan(0, checked((int)line.Length));
+        if (!bytes.IsEmpty && bytes[^1] == (byte)'\r')
+        {
+            bytes = bytes[..^1];
+        }
+
+        return Encoding.UTF8.GetString(bytes);
+    }
+}
+
+internal sealed class AudioRouteStats(string fromUserId, string toUserId)
+{
+    private readonly object _sync = new();
+    private long _packets;
+    private long _sequenceGaps;
+    private long _lastSequence;
+    private bool _hasSequence;
+    private double _relayAgeTotalMs;
+    private double _relayAgeMaxMs;
+
+    public DateTimeOffset LastPacketUtc { get; private set; } = DateTimeOffset.UtcNow;
+
+    public void Record(long sequence, DateTimeOffset sentAtUtc)
+    {
+        lock (_sync)
+        {
+            _packets++;
+            if (sequence > 0)
+            {
+                if (_hasSequence && sequence > _lastSequence + 1)
+                {
+                    _sequenceGaps += sequence - _lastSequence - 1;
+                }
+
+                if (!_hasSequence || sequence > _lastSequence)
+                {
+                    _lastSequence = sequence;
+                    _hasSequence = true;
+                }
+            }
+
+            var ageMs = Math.Clamp((DateTimeOffset.UtcNow - sentAtUtc).TotalMilliseconds, 0, 60_000);
+            _relayAgeTotalMs += ageMs;
+            _relayAgeMaxMs = Math.Max(_relayAgeMaxMs, ageMs);
+            LastPacketUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public AudioRouteSnapshot GetSnapshot()
+    {
+        lock (_sync)
+        {
+            var expected = _packets + _sequenceGaps;
+            return new AudioRouteSnapshot(
+                fromUserId,
+                toUserId,
+                _packets,
+                _sequenceGaps,
+                expected == 0 ? 0 : _sequenceGaps * 100d / expected,
+                _packets == 0 ? 0 : _relayAgeTotalMs / _packets,
+                _relayAgeMaxMs);
+        }
+    }
+}
+
+internal sealed record AudioRouteSnapshot(
+    string FromUserId,
+    string ToUserId,
+    long Packets,
+    long SequenceGaps,
+    double EstimatedLossPercent,
+    double AverageRelayAgeMs,
+    double MaxRelayAgeMs);
+
 internal sealed class ClientSession(string userId, string displayName, StreamWriter writer, TcpClient client)
 {
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -792,6 +1054,17 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
     public StreamWriter? AudioWriter { get; private set; }
     public StreamWriter? ScreenWriter { get; private set; }
     public IPEndPoint? AudioEndPoint { get; set; }
+    public DateTimeOffset AudioEndPointUpdatedUtc { get; set; } = DateTimeOffset.MinValue;
+    public long DroppedScreenFrames
+    {
+        get
+        {
+            lock (_screenGate)
+            {
+                return _droppedScreenFrames;
+            }
+        }
+    }
     public string Status { get; set; } = "Online";
     public string? PublicKey { get; set; }
     public RelayPresencePacket? LatestPresence { get; set; }
@@ -847,6 +1120,20 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
             if (ReferenceEquals(AudioWriter, writer))
             {
                 AudioWriter = null;
+                AudioEndPoint = null;
+                AudioEndPointUpdatedUtc = DateTimeOffset.MinValue;
+            }
+        }
+    }
+
+    public void ClearAudioEndPointIfStale(TimeSpan lifetime)
+    {
+        lock (_audioGate)
+        {
+            if (AudioEndPoint is not null && DateTimeOffset.UtcNow - AudioEndPointUpdatedUtc > lifetime)
+            {
+                AudioEndPoint = null;
+                AudioEndPointUpdatedUtc = DateTimeOffset.MinValue;
             }
         }
     }
@@ -983,6 +1270,19 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
 
     public void Close()
     {
+        lock (_audioGate)
+        {
+            AudioWriter = null;
+            AudioEndPoint = null;
+            AudioEndPointUpdatedUtc = DateTimeOffset.MinValue;
+        }
+
+        lock (_screenGate)
+        {
+            ScreenWriter = null;
+            _pendingScreenFrame = null;
+        }
+
         try
         {
             Client.Close();
