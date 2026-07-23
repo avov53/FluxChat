@@ -110,6 +110,7 @@ internal static class UpdateService
         }
 
         var scriptPath = Path.Combine(updateDirectory, "install-fluxchat-update.ps1");
+        var launcherPath = Path.Combine(updateDirectory, "launch-fluxchat-update.cmd");
         var processId = Environment.ProcessId;
         var targetDirectory = Path.GetDirectoryName(currentExePath)
             ?? throw new InvalidOperationException("Current executable directory is unavailable.");
@@ -117,14 +118,14 @@ internal static class UpdateService
             ? BuildDirectoryUpdateScript(processId, sourcePath, targetDirectory, updateDirectory)
             : BuildExecutableUpdateScript(processId, sourcePath, currentExePath, updateDirectory);
         await File.WriteAllTextAsync(scriptPath, script, cancellationToken);
+        await File.WriteAllTextAsync(launcherPath, BuildLauncherScript(scriptPath), cancellationToken);
 
-        Process.Start(new ProcessStartInfo
+        _ = Process.Start(new ProcessStartInfo
         {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
+            FileName = launcherPath,
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        }) ?? throw new InvalidOperationException("Could not start update installer.");
     }
 
     private static GitHubAsset? FindArchiveAsset(IReadOnlyList<GitHubAsset> assets, Version version)
@@ -134,6 +135,9 @@ internal static class UpdateService
             x.Name.StartsWith("FluxChat", StringComparison.OrdinalIgnoreCase)
             && x.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
             && x.Name.Contains(versionText, StringComparison.OrdinalIgnoreCase))
+            ?? assets.FirstOrDefault(x =>
+                x.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                && x.Name.Contains(versionText, StringComparison.OrdinalIgnoreCase))
             ?? assets.FirstOrDefault(x =>
                 x.Name.StartsWith("FluxChat", StringComparison.OrdinalIgnoreCase)
                 && x.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
@@ -166,12 +170,11 @@ $source = '{EscapePowerShell(sourceDirectory)}'
 $targetDirectory = '{EscapePowerShell(targetDirectory)}'
 $targetExe = '{EscapePowerShell(targetExe)}'
 $updateDirectory = '{EscapePowerShell(updateDirectory)}'
-Wait-Process -Id $processId -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 500
-Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $targetDirectory -Recurse -Force
-Start-Process -FilePath $targetExe
-Start-Sleep -Milliseconds 300
-Remove-Item -LiteralPath $updateDirectory -Recurse -Force -ErrorAction SilentlyContinue
+{CommonInstallerScript()}
+Wait-OldFluxChatProcess -ProcessId $processId
+Copy-ChangedDirectory -SourceDirectory $source -TargetDirectory $targetDirectory
+Start-UpdatedFluxChat -TargetExe $targetExe
+Cleanup-UpdateDirectory -UpdateDirectory $updateDirectory
 """;
         return script;
     }
@@ -184,14 +187,118 @@ $processId = {processId}
 $source = '{EscapePowerShell(sourceExe)}'
 $target = '{EscapePowerShell(targetExe)}'
 $updateDirectory = '{EscapePowerShell(updateDirectory)}'
-Wait-Process -Id $processId -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 500
-Copy-Item -LiteralPath $source -Destination $target -Force
-Start-Process -FilePath $target
-Start-Sleep -Milliseconds 300
-Remove-Item -LiteralPath $updateDirectory -Recurse -Force -ErrorAction SilentlyContinue
+{CommonInstallerScript()}
+Wait-OldFluxChatProcess -ProcessId $processId
+Copy-ChangedFile -SourceFile $source -TargetFile $target
+Start-UpdatedFluxChat -TargetExe $target
+Cleanup-UpdateDirectory -UpdateDirectory $updateDirectory
 """;
         return script;
+    }
+
+    private static string BuildLauncherScript(string scriptPath)
+    {
+        return $"""
+@echo off
+start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{scriptPath}"
+""";
+    }
+
+    private static string CommonInstallerScript()
+    {
+        return """
+$logPath = Join-Path $updateDirectory 'install.log'
+function Write-UpdateLog([string]$message) {
+    $line = '{0:O} {1}' -f [DateTimeOffset]::Now, $message
+    Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
+}
+function Wait-OldFluxChatProcess([int]$ProcessId) {
+    Write-UpdateLog "Waiting for FluxChat PID $ProcessId to exit."
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        if (-not $process) {
+            Write-UpdateLog 'Old FluxChat process exited normally.'
+            Start-Sleep -Milliseconds 500
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($process) {
+        Write-UpdateLog 'Old FluxChat process did not exit in time. Stopping it.'
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 700
+    }
+}
+function Test-SameFile([string]$Left, [string]$Right) {
+    if (-not (Test-Path -LiteralPath $Left -PathType Leaf) -or -not (Test-Path -LiteralPath $Right -PathType Leaf)) {
+        return $false
+    }
+    $leftItem = Get-Item -LiteralPath $Left
+    $rightItem = Get-Item -LiteralPath $Right
+    if ($leftItem.Length -ne $rightItem.Length) {
+        return $false
+    }
+    $leftHash = (Get-FileHash -LiteralPath $Left -Algorithm SHA256).Hash
+    $rightHash = (Get-FileHash -LiteralPath $Right -Algorithm SHA256).Hash
+    return $leftHash -eq $rightHash
+}
+function Copy-ChangedFile([string]$SourceFile, [string]$TargetFile) {
+    if (Test-SameFile -Left $SourceFile -Right $TargetFile) {
+        Write-UpdateLog "Unchanged: $TargetFile"
+        return
+    }
+    $targetParent = Split-Path -Parent $TargetFile
+    if ($targetParent -and -not (Test-Path -LiteralPath $targetParent)) {
+        New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+    }
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $SourceFile -Destination $TargetFile -Force
+            Write-UpdateLog "Copied: $TargetFile"
+            return
+        }
+        catch {
+            Write-UpdateLog "Copy failed attempt ${attempt}: $TargetFile :: $($_.Exception.Message)"
+            Start-Sleep -Milliseconds (250 * $attempt)
+        }
+    }
+    throw "Could not copy update file: $TargetFile"
+}
+function Copy-ChangedDirectory([string]$SourceDirectory, [string]$TargetDirectory) {
+    if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
+        throw "Update source directory is missing: $SourceDirectory"
+    }
+    if (-not (Test-Path -LiteralPath $TargetDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Path $TargetDirectory -Force | Out-Null
+    }
+    $sourceRoot = (Get-Item -LiteralPath $SourceDirectory).FullName.TrimEnd('\')
+    foreach ($file in Get-ChildItem -LiteralPath $SourceDirectory -File -Recurse -Force) {
+        $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
+        $targetFile = Join-Path $TargetDirectory $relative
+        Copy-ChangedFile -SourceFile $file.FullName -TargetFile $targetFile
+    }
+}
+function Start-UpdatedFluxChat([string]$TargetExe) {
+    if (-not (Test-Path -LiteralPath $TargetExe -PathType Leaf)) {
+        throw "Updated FluxChat.exe was not found: $TargetExe"
+    }
+    Write-UpdateLog "Starting updated FluxChat: $TargetExe"
+    Start-Process -FilePath $TargetExe -WorkingDirectory (Split-Path -Parent $TargetExe)
+}
+function Cleanup-UpdateDirectory([string]$UpdateDirectory) {
+    Write-UpdateLog 'Update installed successfully.'
+    Start-Sleep -Milliseconds 500
+    Remove-Item -LiteralPath $UpdateDirectory -Recurse -Force -ErrorAction SilentlyContinue
+}
+try {
+    New-Item -ItemType Directory -Path $updateDirectory -Force | Out-Null
+    Write-UpdateLog 'Update installer started.'
+}
+catch {
+}
+""";
     }
 
     private static HttpClient CreateClient()

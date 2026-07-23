@@ -14560,7 +14560,7 @@ public partial class MainWindow : Window
                     NetworkStatusText.Text = "Downloading update...";
                     await UpdateService.DownloadAndInstallAsync(update, _stop.Token);
                     NetworkStatusText.Text = "Update downloaded. Restarting...";
-                    Close();
+                    System.Windows.Application.Current.Shutdown();
                 }
                 catch (Exception ex) when (!_stop.IsCancellationRequested)
                 {
