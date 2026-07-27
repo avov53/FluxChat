@@ -5,9 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\Badges\owner.png" />
-    <Resource Include="Assets\Badges\tester.png" />
-    <Resource Include="Assets\Badges\special.png" />
+    <Resource Include="Assets\FluxChat.ico" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,9 +22,10 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.4</Version>
-    <AssemblyVersion>1.1.4.0</AssemblyVersion>
-    <FileVersion>1.1.4.0</FileVersion>
+    <ApplicationIcon>Assets\FluxChat.ico</ApplicationIcon>
+    <Version>1.1.6</Version>
+    <AssemblyVersion>1.1.6.0</AssemblyVersion>
+    <FileVersion>1.1.6.0</FileVersion>
   </PropertyGroup>
 
 </Project>

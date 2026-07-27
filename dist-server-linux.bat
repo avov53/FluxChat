@@ -60,9 +60,10 @@ for %%F in ("%DIST%\*.pdb") do (
 )
 
 copy /y "%ADMIN_DIST%\fluxus" "%DIST%\fluxus" >nul
+copy /y "%ROOT%tools\fluxchat-account-setup.sh" "%DIST%\fluxchat-account-setup.sh" >nul
 rmdir /s /q "%ADMIN_DIST%"
 
 echo.
 echo Done: %DIST%\FluxChat.Server
 echo Done: %DIST%\fluxus
-echo Badge Authority is intentionally separate. Run dist-badge-authority-linux.bat for the official service binary.
+echo Done: %DIST%\fluxchat-account-setup.sh

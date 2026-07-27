@@ -5,8 +5,6 @@ namespace FluxChat.Client;
 
 internal sealed class IdentitySigner(UserProfile profile)
 {
-    public BadgeCertificate? ActiveBadgeCertificate { get; set; }
-
     public RelayRegisterPacket Sign(RelayRegisterPacket packet)
     {
         var unsigned = packet with
@@ -16,7 +14,7 @@ internal sealed class IdentitySigner(UserProfile profile)
             IdentityTimestampUtc = DateTimeOffset.UtcNow,
             IdentitySignature = null
         };
-        return unsigned with { IdentitySignature = Sign(BadgeCrypto.BuildRegisterIdentityPayload(unsigned)) };
+        return unsigned with { IdentitySignature = Sign(IdentityCrypto.BuildRegisterIdentityPayload(unsigned)) };
     }
 
     public RelayPresencePacket Sign(RelayPresencePacket packet)
@@ -25,10 +23,9 @@ internal sealed class IdentitySigner(UserProfile profile)
         {
             PublicKey = profile.PublicKey,
             IdentityNonce = CreateNonce(),
-            IdentitySignature = null,
-            BadgeCertificate = ActiveBadgeCertificate
+            IdentitySignature = null
         };
-        return unsigned with { IdentitySignature = Sign(BadgeCrypto.BuildPresenceIdentityPayload(unsigned)) };
+        return unsigned with { IdentitySignature = Sign(IdentityCrypto.BuildPresenceIdentityPayload(unsigned)) };
     }
 
     public ChatPacket Sign(ChatPacket packet)
@@ -37,10 +34,9 @@ internal sealed class IdentitySigner(UserProfile profile)
         {
             FromPublicKey = profile.PublicKey,
             IdentityNonce = CreateNonce(),
-            IdentitySignature = null,
-            BadgeCertificate = ActiveBadgeCertificate
+            IdentitySignature = null
         };
-        return unsigned with { IdentitySignature = Sign(BadgeCrypto.BuildChatIdentityPayload(unsigned)) };
+        return unsigned with { IdentitySignature = Sign(IdentityCrypto.BuildChatIdentityPayload(unsigned)) };
     }
 
     public string SignChallenge(string challengeBase64)
@@ -54,7 +50,7 @@ internal sealed class IdentitySigner(UserProfile profile)
         {
             using var key = ECDsa.Create();
             key.ImportPkcs8PrivateKey(privateBytes, out _);
-            return BadgeCrypto.Sign(payload, key);
+            return IdentityCrypto.Sign(payload, key);
         }
         finally
         {

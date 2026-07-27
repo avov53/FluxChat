@@ -398,6 +398,41 @@
             </Setter>
         </Style>
 
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="{StaticResource InputBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="#45474f"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CaretBrush" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="PasswordBox">
+                        <Border x:Name="PasswordBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PasswordBorder" Property="BorderBrush" Value="#5b5e68"/>
+                                <Setter TargetName="PasswordBorder" Property="Background" Value="#3d4047"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="PasswordBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ComboBox">
             <Setter Property="Background" Value="{StaticResource InputBrush}"/>
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
@@ -424,8 +459,7 @@
                                               ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                               ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
                             <ToggleButton x:Name="DropDownToggle"
-                                          HorizontalAlignment="Right"
-                                          Width="36"
+                                          HorizontalAlignment="Stretch"
                                           Background="Transparent"
                                           BorderThickness="0"
                                           Focusable="False"
@@ -437,8 +471,9 @@
                                             <Path Fill="{StaticResource MutedBrush}"
                                                   Width="10"
                                                   Height="6"
-                                                  HorizontalAlignment="Center"
+                                                  HorizontalAlignment="Right"
                                                   VerticalAlignment="Center"
+                                                  Margin="0,0,13,0"
                                                   Stretch="Fill"
                                                   Data="M0,0 L5,6 L10,0 Z"/>
                                         </Border>
@@ -679,7 +714,7 @@
             <ColumnDefinition x:Name="MainColumn" Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <Grid Grid.Column="0" Background="{StaticResource SidebarBrush}">
+        <Grid x:Name="SidebarPanel" Grid.Column="0" Background="{StaticResource SidebarBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -1093,8 +1128,7 @@
                                                     </Style>
                                                 </Image.Style>
                                             </Image>
-                                            <MediaElement Source="{Binding AvatarPath}"
-                                                          LoadedBehavior="Manual"
+                                            <MediaElement LoadedBehavior="Manual"
                                                           UnloadedBehavior="Stop"
                                                           Loaded="AvatarVideo_OnLoaded"
                                                           MediaEnded="AvatarVideo_OnMediaEnded"
@@ -1180,6 +1214,7 @@
                                                 </TextBlock.Style>
                                             </TextBlock>
                                             <TextBlock Text="{Binding GroupMemberCountText}"
+                                                       Grid.Column="0"
                                                        Foreground="{StaticResource SubtleBrush}"
                                                        FontSize="12"
                                                        TextTrimming="CharacterEllipsis">
@@ -1194,19 +1229,72 @@
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <Image Grid.Column="1" Source="{Binding BadgeImageSource}" Width="18" Height="18"
-                                                   Margin="8,0,0,0" Stretch="Uniform" ToolTip="{Binding BadgeToolTip}">
-                                                <Image.Style>
-                                                    <Style TargetType="Image">
+                                            <ItemsControl Grid.Column="1"
+                                                          ItemsSource="{Binding ActiveVoiceParticipants}"
+                                                          Margin="8,0,0,0"
+                                                          HorizontalAlignment="Right"
+                                                          ToolTip="{Binding VoiceParticipantsText}">
+                                                <ItemsControl.Style>
+                                                    <Style TargetType="ItemsControl">
                                                         <Setter Property="Visibility" Value="Collapsed"/>
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding HasVerifiedBadge}" Value="True">
+                                                            <DataTrigger Binding="{Binding HasActiveVoiceParticipants}" Value="True">
                                                                 <Setter Property="Visibility" Value="Visible"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
-                                                </Image.Style>
-                                            </Image>
+                                                </ItemsControl.Style>
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <StackPanel Orientation="Horizontal"/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Width="18" Height="18" Margin="-3,0,0,0">
+                                                            <Border CornerRadius="9"
+                                                                    Background="#4e5058"
+                                                                    BorderBrush="#2b2d33"
+                                                                    BorderThickness="1"/>
+                                                            <Grid>
+                                                                <Grid.Clip>
+                                                                    <EllipseGeometry Center="9,9" RadiusX="9" RadiusY="9"/>
+                                                                </Grid.Clip>
+                                                                <Image Source="{Binding AvatarImageSource}"
+                                                                       Stretch="UniformToFill">
+                                                                    <Image.Style>
+                                                                        <Style TargetType="Image">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsAvatarImage}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Image.Style>
+                                                                </Image>
+                                                            </Grid>
+                                                            <TextBlock Text="{Binding Initials}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"
+                                                                       FontSize="8"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="{StaticResource TextBrush}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsAvatarImage}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
                                         </Grid>
                                     </StackPanel>
                                 </Grid>
@@ -1263,6 +1351,15 @@
                             </DockPanel>
                         </Button>
                         <Button Style="{StaticResource StatusMenuButton}"
+                                Tag="DoNotDisturb"
+                                Margin="0,3,0,0"
+                                Click="ProfileStatusButton_OnClick">
+                            <DockPanel>
+                                <Ellipse Width="10" Height="10" Fill="#ed4245" Margin="0,0,8,0"/>
+                                <TextBlock Text="Do not disturb" FontWeight="SemiBold"/>
+                            </DockPanel>
+                        </Button>
+                        <Button Style="{StaticResource StatusMenuButton}"
                                 Tag="Offline"
                                 Margin="0,3,0,0"
                                 Click="ProfileStatusButton_OnClick">
@@ -1271,6 +1368,28 @@
                                 <TextBlock Text="Offline" FontWeight="SemiBold"/>
                             </DockPanel>
                         </Button>
+
+                        <TextBlock Text="Custom status"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="11"
+                                   Margin="0,10,0,4"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="ProfileCustomStatusInput"
+                                     MaxLength="64"
+                                     MinHeight="34"
+                                     VerticalContentAlignment="Center"
+                                     KeyDown="ProfileCustomStatusInput_OnKeyDown"/>
+                            <Button Grid.Column="2"
+                                    Content="Set"
+                                    MinWidth="48"
+                                    Style="{StaticResource GhostButton}"
+                                    Click="ProfileCustomStatusApplyButton_OnClick"/>
+                        </Grid>
 
                         <Button Content="Copy User ID"
                                 Margin="0,10,0,0"
@@ -1377,7 +1496,7 @@
             </Grid>
         </Grid>
 
-        <Grid Grid.Column="1" Background="{StaticResource PanelBrush}">
+        <Grid x:Name="ConversationPanel" Grid.Column="1" Background="{StaticResource PanelBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="ChatHeaderRow" Height="58"/>
                 <RowDefinition x:Name="ChatHeaderLineRow" Height="1"/>
@@ -1409,14 +1528,27 @@
                                    Text="Click a contact to open conversation"
                                    Foreground="{StaticResource MutedBrush}"
                                    FontSize="12"/>
-                        <Image x:Name="ChatBadgeImage" Width="18" Height="18" Margin="8,-2,0,0"
-                               Stretch="Uniform" Visibility="Collapsed"/>
                     </StackPanel>
                 </StackPanel>
 
                 <StackPanel Grid.Column="3"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
+                <TextBox x:Name="ChatSearchInput"
+                         Width="190"
+                         Height="34"
+                         Margin="0,0,10,0"
+                         Padding="10,6"
+                         VerticalContentAlignment="Center"
+                         Background="#30333a"
+                         BorderBrush="#464956"
+                         BorderThickness="1"
+                         Foreground="{StaticResource TextBrush}"
+                         CaretBrush="{StaticResource TextBrush}"
+                         ToolTip="Search this chat"
+                         Visibility="Collapsed"
+                         TextChanged="ChatSearchInput_OnTextChanged"
+                         KeyDown="ChatSearchInput_OnKeyDown"/>
                 <Button x:Name="CreateGroupButton"
                         Width="36"
                         Height="36"
@@ -1583,12 +1715,25 @@
                                                VerticalAlignment="Center"
                                                FontWeight="Bold"
                                                FontSize="14"/>
-                                    <StackPanel x:Name="CallSelfAudioBadges"
+                                    <Ellipse x:Name="CallSelfVoiceActivityRing"
+                                             Stroke="#57f287"
+                                             StrokeThickness="3"
+                                             Fill="Transparent"
+                                             Opacity="0"
+                                             IsHitTestVisible="False"/>
+                                    <Ellipse x:Name="CallSelfNoiseActivityRing"
+                                             Margin="4"
+                                             Stroke="#f1c40f"
+                                             StrokeThickness="2"
+                                             Fill="Transparent"
+                                             Opacity="0"
+                                             IsHitTestVisible="False"/>
+                                    <StackPanel x:Name="CallSelfAudioIndicators"
                                                 Orientation="Horizontal"
                                                 HorizontalAlignment="Right"
                                                 VerticalAlignment="Bottom"
                                                 Margin="0,0,2,2">
-                                        <Border x:Name="CallSelfMicBadge"
+                                        <Border x:Name="CallSelfMicIndicator"
                                                 Width="18"
                                                 Height="18"
                                                 Margin="0,0,2,0"
@@ -1608,7 +1753,7 @@
                                                       Data="M4,14 L14,4"/>
                                             </Grid>
                                         </Border>
-                                        <Border x:Name="CallSelfHeadphonesBadge"
+                                        <Border x:Name="CallSelfHeadphonesIndicator"
                                                 Width="18"
                                                 Height="18"
                                                 CornerRadius="9"
@@ -1657,12 +1802,25 @@
                                                VerticalAlignment="Center"
                                                FontWeight="Bold"
                                                FontSize="14"/>
-                                    <StackPanel x:Name="CallPeerAudioBadges"
+                                    <Ellipse x:Name="CallPeerVoiceActivityRing"
+                                             Stroke="#57f287"
+                                             StrokeThickness="3"
+                                             Fill="Transparent"
+                                             Opacity="0"
+                                             IsHitTestVisible="False"/>
+                                    <Ellipse x:Name="CallPeerNoiseActivityRing"
+                                             Margin="4"
+                                             Stroke="#f1c40f"
+                                             StrokeThickness="2"
+                                             Fill="Transparent"
+                                             Opacity="0"
+                                             IsHitTestVisible="False"/>
+                                    <StackPanel x:Name="CallPeerAudioIndicators"
                                                 Orientation="Horizontal"
                                                 HorizontalAlignment="Right"
                                                 VerticalAlignment="Bottom"
                                                 Margin="0,0,2,2">
-                                        <Border x:Name="CallPeerMicBadge"
+                                        <Border x:Name="CallPeerMicIndicator"
                                                 Width="18"
                                                 Height="18"
                                                 Margin="0,0,2,0"
@@ -1682,7 +1840,7 @@
                                                       Data="M4,14 L14,4"/>
                                             </Grid>
                                         </Border>
-                                        <Border x:Name="CallPeerHeadphonesBadge"
+                                        <Border x:Name="CallPeerHeadphonesIndicator"
                                                 Width="18"
                                                 Height="18"
                                                 CornerRadius="9"
@@ -1783,7 +1941,7 @@
                                                         Cursor="Hand"
                                                         Visibility="Collapsed"
                                                         MouseLeftButtonUp="CallScreenShareJoinOverlay_OnMouseLeftButtonUp">
-                                                    <TextBlock Text="Click to watch screen share"
+                                                    <TextBlock Text="Нажмите, чтобы смотреть демонстрацию экрана"
                                                                TextAlignment="Center"
                                                                FontSize="13"
                                                                FontWeight="SemiBold"
@@ -1833,99 +1991,6 @@
                                 </Grid>
                             </Border>
                         </StackPanel>
-
-                        <Border x:Name="CallNetworkStatsCard"
-                                Grid.Column="1"
-                                Width="188"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Top"
-                                Margin="0,0,0,10"
-                                Padding="9,8"
-                                Background="#1c1e23"
-                                BorderBrush="#3f424b"
-                                BorderThickness="1"
-                                CornerRadius="8"
-                                Visibility="Collapsed"
-                                Opacity="0">
-                            <StackPanel>
-                                <DockPanel Margin="0,0,0,6">
-                                    <Border x:Name="CallNetworkQualityDot"
-                                            Width="7"
-                                            Height="7"
-                                            Margin="0,0,6,0"
-                                            CornerRadius="3.5"
-                                            Background="#6c7080"
-                                            VerticalAlignment="Center"/>
-                                    <TextBlock Text="Network"
-                                               FontSize="10"
-                                               FontWeight="SemiBold"
-                                               Foreground="#f2f3f5"
-                                               DockPanel.Dock="Left"/>
-                                    <TextBlock x:Name="CallNetworkQualityText"
-                                               Text="Waiting"
-                                               FontSize="10"
-                                               Foreground="{StaticResource MutedBrush}"
-                                               HorizontalAlignment="Right"/>
-                                </DockPanel>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0"
-                                            Margin="0,0,4,0"
-                                            Padding="6,5"
-                                            Background="#24262d"
-                                            CornerRadius="5">
-                                        <StackPanel>
-                                            <TextBlock Text="Ping"
-                                                       FontSize="9"
-                                                       Foreground="{StaticResource MutedBrush}"/>
-                                            <TextBlock x:Name="CallCurrentPingText"
-                                                       Text="--"
-                                                       Margin="0,1,0,0"
-                                                       FontSize="12"
-                                                       FontWeight="Bold"
-                                                       Foreground="#f2f3f5"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="1"
-                                            Margin="0,0,4,0"
-                                            Padding="6,5"
-                                            Background="#24262d"
-                                            CornerRadius="5">
-                                        <StackPanel>
-                                            <TextBlock Text="Avg"
-                                                       FontSize="9"
-                                                       Foreground="{StaticResource MutedBrush}"/>
-                                            <TextBlock x:Name="CallAveragePingText"
-                                                       Text="--"
-                                                       Margin="0,1,0,0"
-                                                       FontSize="12"
-                                                       FontWeight="Bold"
-                                                       Foreground="#f2f3f5"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="2"
-                                            Padding="6,5"
-                                            Background="#24262d"
-                                            CornerRadius="5">
-                                        <StackPanel>
-                                            <TextBlock Text="Loss"
-                                                       FontSize="9"
-                                                       Foreground="{StaticResource MutedBrush}"/>
-                                            <TextBlock x:Name="CallPacketLossText"
-                                                       Text="--"
-                                                       Margin="0,1,0,0"
-                                                       FontSize="12"
-                                                       FontWeight="Bold"
-                                                       Foreground="#f2f3f5"/>
-                                        </StackPanel>
-                                    </Border>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
 
                         <StackPanel x:Name="CallControlsPanel"
                                     Grid.Column="1"
@@ -1998,6 +2063,140 @@
                                           Data="M2,16 L16,2"/>
                                 </Grid>
                             </Button>
+                            <Button x:Name="CallNetworkButton"
+                                    Width="44"
+                                    Height="36"
+                                    Margin="0,0,8,0"
+                                    Style="{StaticResource GhostButton}"
+                                    ToolTip="Network status"
+                                    Visibility="Collapsed"
+                                    Click="CallNetworkButton_OnClick">
+                                <Grid Width="20" Height="20">
+                                    <Viewbox Width="18" Height="18"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center">
+                                        <Path x:Name="CallNetworkIcon"
+                                              Fill="#f2f3f5"
+                                              Stretch="Uniform"
+                                              Data="M3,18H6V11H3V18M8,18H11V7H8V18M13,18H16V3H13V18M18,18H21V9H18V18Z"/>
+                                    </Viewbox>
+                                    <Border x:Name="CallNetworkQualityDot"
+                                            Width="7"
+                                            Height="7"
+                                            CornerRadius="3.5"
+                                            Background="#6c7080"
+                                            BorderBrush="#202225"
+                                            BorderThickness="1"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Top"/>
+                                </Grid>
+                            </Button>
+                            <Popup x:Name="CallNetworkPopup"
+                                   PlacementTarget="{Binding ElementName=CallNetworkButton}"
+                                   Placement="Top"
+                                   VerticalOffset="-10"
+                                   AllowsTransparency="True"
+                                   PopupAnimation="Fade"
+                                   StaysOpen="False"
+                                   Opened="CallNetworkPopup_OnOpened">
+                                <Border x:Name="CallNetworkPopupCard"
+                                        Width="286"
+                                        Padding="12"
+                                        Background="#202225"
+                                        BorderBrush="#4e5058"
+                                        BorderThickness="1"
+                                        CornerRadius="10"
+                                        Opacity="0"
+                                        RenderTransformOrigin="0.5,1">
+                                    <Border.RenderTransform>
+                                        <TranslateTransform x:Name="CallNetworkPopupTranslate" Y="8"/>
+                                    </Border.RenderTransform>
+                                    <StackPanel>
+                                        <DockPanel Margin="0,0,0,10">
+                                            <Border x:Name="CallNetworkPopupQualityDot"
+                                                    Width="8"
+                                                    Height="8"
+                                                    Margin="0,0,7,0"
+                                                    CornerRadius="4"
+                                                    Background="#6c7080"
+                                                    VerticalAlignment="Center"/>
+                                            <TextBlock Text="Network"
+                                                       FontSize="13"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#f2f3f5"
+                                                       DockPanel.Dock="Left"/>
+                                            <TextBlock x:Name="CallNetworkQualityText"
+                                                       Text="Waiting"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       HorizontalAlignment="Right"/>
+                                        </DockPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0"
+                                                    Margin="0,0,6,0"
+                                                    Padding="8,7"
+                                                    Background="#292b32"
+                                                    CornerRadius="7">
+                                                <StackPanel>
+                                                    <TextBlock Text="Ping"
+                                                               FontSize="10"
+                                                               Foreground="{StaticResource MutedBrush}"/>
+                                                    <TextBlock x:Name="CallCurrentPingText"
+                                                               Text="--"
+                                                               Margin="0,2,0,0"
+                                                               FontSize="14"
+                                                               FontWeight="Bold"
+                                                               Foreground="#f2f3f5"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="1"
+                                                    Margin="0,0,6,0"
+                                                    Padding="8,7"
+                                                    Background="#292b32"
+                                                    CornerRadius="7">
+                                                <StackPanel>
+                                                    <TextBlock Text="Avg"
+                                                               FontSize="10"
+                                                               Foreground="{StaticResource MutedBrush}"/>
+                                                    <TextBlock x:Name="CallAveragePingText"
+                                                               Text="--"
+                                                               Margin="0,2,0,0"
+                                                               FontSize="14"
+                                                               FontWeight="Bold"
+                                                               Foreground="#f2f3f5"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="2"
+                                                    Padding="8,7"
+                                                    Background="#292b32"
+                                                    CornerRadius="7">
+                                                <StackPanel>
+                                                    <TextBlock Text="Loss"
+                                                               FontSize="10"
+                                                               Foreground="{StaticResource MutedBrush}"/>
+                                                    <TextBlock x:Name="CallPacketLossText"
+                                                               Text="--"
+                                                               Margin="0,2,0,0"
+                                                               FontSize="14"
+                                                               FontWeight="Bold"
+                                                               Foreground="#f2f3f5"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock x:Name="CallNetworkIssueText"
+                                                   Text="Waiting for call data."
+                                                   Margin="0,10,0,0"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                             <Button x:Name="SoundboardButton"
                                     Width="44"
                                     Height="36"
@@ -2231,6 +2430,57 @@
                                     Content="☎"
                                     Style="{StaticResource GhostButton}"
                                     Click="EndCallButton_OnClick"/>
+                            <Button x:Name="LeaveScreenViewButton"
+                                    Width="44"
+                                    Height="36"
+                                    Margin="8,0,0,0"
+                                    Style="{StaticResource GhostButton}"
+                                    ToolTip="Leave screen view"
+                                    Visibility="Collapsed"
+                                    Click="LeaveScreenViewButton_OnClick">
+                                <Viewbox Width="18" Height="18">
+                                    <Path Fill="#f2f3f5"
+                                          Stretch="Uniform"
+                                          Data="M4,5H20V15H13V17H16V19H8V17H11V15H4V5M6,7V13H18V7H6M8.4,8.2L10.6,10.4L8.4,12.6L9.8,14L12,11.8L14.2,14L15.6,12.6L13.4,10.4L15.6,8.2L14.2,6.8L12,9L9.8,6.8L8.4,8.2Z"/>
+                                </Viewbox>
+                            </Button>
+                            <Button x:Name="EndCallMenuButton"
+                                    Width="26"
+                                    Height="36"
+                                    Margin="2,0,0,0"
+                                    Content="⌄"
+                                    Style="{StaticResource GhostButton}"
+                                    ToolTip="Call actions"
+                                    Visibility="Collapsed"
+                                    Click="EndCallMenuButton_OnClick"/>
+                            <Popup x:Name="EndCallActionPopup"
+                                   PlacementTarget="{Binding ElementName=EndCallMenuButton}"
+                                   Placement="Top"
+                                   AllowsTransparency="True"
+                                   StaysOpen="False">
+                                <Border Background="#1f2126"
+                                        BorderBrush="#4b4e58"
+                                        BorderThickness="1"
+                                        CornerRadius="10"
+                                        Padding="8">
+                                    <StackPanel>
+                                        <Button x:Name="EndCallMenuLeaveScreenButton"
+                                                Content="Leave screen"
+                                                MinWidth="120"
+                                                Height="32"
+                                                HorizontalContentAlignment="Left"
+                                                Style="{StaticResource StatusMenuButton}"
+                                                Click="EndCallMenuLeaveScreenButton_OnClick"/>
+                                        <Button Content="End call"
+                                                MinWidth="120"
+                                                Height="32"
+                                                Margin="0,4,0,0"
+                                                HorizontalContentAlignment="Left"
+                                                Style="{StaticResource StatusMenuButton}"
+                                                Click="EndCallMenuEndCallButton_OnClick"/>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                             <Button x:Name="JoinCallButton"
                                     Width="64"
                                     Height="36"
@@ -2408,7 +2658,7 @@
                                                            FontSize="12"
                                                            FontWeight="SemiBold"
                                                            TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding BadgeText}"
+                                                        <TextBlock Text="{Binding SourceMetaText}"
                                                            Foreground="{StaticResource MutedBrush}"
                                                                    FontSize="11"
                                                                    Margin="0,2,0,0"
@@ -2680,8 +2930,7 @@
                                                                 </Style>
                                                             </Image.Style>
                                                         </Image>
-                                                        <MediaElement Source="{Binding AvatarPath}"
-                                                                      LoadedBehavior="Manual"
+                                                        <MediaElement LoadedBehavior="Manual"
                                                                       UnloadedBehavior="Stop"
                                                                       Loaded="AvatarVideo_OnLoaded"
                                                                       MediaEnded="AvatarVideo_OnMediaEnded"
@@ -2844,8 +3093,7 @@
                                                         </Style>
                                                     </Image.Style>
                                                 </Image>
-                                                <MediaElement Source="{Binding AvatarPath}"
-                                                              LoadedBehavior="Manual"
+                                                <MediaElement LoadedBehavior="Manual"
                                                               UnloadedBehavior="Stop"
                                                               Loaded="AvatarVideo_OnLoaded"
                                                               MediaEnded="AvatarVideo_OnMediaEnded"
@@ -2979,7 +3227,9 @@
                                       Width="40"
                                       Height="40"
                                       VerticalAlignment="Top"
-                                      Margin="0,2,0,0">
+                                      Margin="0,2,0,0"
+                                      Cursor="Hand"
+                                      MouseLeftButtonUp="MessageAvatar_OnMouseLeftButtonUp">
                                     <Border CornerRadius="20" Background="#4e5058"/>
                                     <Grid>
                                         <Grid.Clip>
@@ -2998,8 +3248,7 @@
                                                 </Style>
                                             </Image.Style>
                                         </Image>
-                                        <MediaElement Source="{Binding SenderAvatarPath}"
-                                                      LoadedBehavior="Manual"
+                                        <MediaElement LoadedBehavior="Manual"
                                                       UnloadedBehavior="Stop"
                                                       Loaded="AvatarVideo_OnLoaded"
                                                       MediaEnded="AvatarVideo_OnMediaEnded"
@@ -4013,8 +4262,7 @@
                                                                 </Style>
                                                             </Image.Style>
                                                         </Image>
-                                                        <MediaElement Source="{Binding AvatarPath}"
-                                                                      LoadedBehavior="Manual"
+                                                        <MediaElement LoadedBehavior="Manual"
                                                                       UnloadedBehavior="Stop"
                                                                       Loaded="AvatarVideo_OnLoaded"
                                                                       MediaEnded="AvatarVideo_OnMediaEnded"
@@ -4617,7 +4865,8 @@
                 Visibility="Collapsed"
                 Background="#B0000000">
             <Grid>
-                <Border Width="760"
+                <Border x:Name="SettingsOverlayFrame"
+                        Width="760"
                         Height="680"
                         Background="#2b2d31"
                         BorderBrush="#45474f"
@@ -4639,10 +4888,23 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Text="Settings"
-                                       Margin="18,18,18,14"
-                                       FontSize="18"
-                                       FontWeight="Bold"/>
+                            <StackPanel Grid.Row="0" Margin="18,18,18,14">
+                                <TextBlock Text="Settings"
+                                           FontSize="18"
+                                           FontWeight="Bold"/>
+                                <TextBox x:Name="SettingsSearchInput"
+                                         MinHeight="34"
+                                         Margin="0,12,0,0"
+                                         Padding="10,6"
+                                         VerticalContentAlignment="Center"
+                                         Background="#30333a"
+                                         BorderBrush="#464956"
+                                         BorderThickness="1"
+                                         Foreground="{StaticResource TextBrush}"
+                                         CaretBrush="{StaticResource TextBrush}"
+                                         ToolTip="Search settings"
+                                         TextChanged="SettingsSearchInput_OnTextChanged"/>
+                            </StackPanel>
 
                             <StackPanel Grid.Row="1" Margin="10,0">
                                 <Button x:Name="SettingsAccountTabButton"
@@ -4672,7 +4934,7 @@
                                         <TextBlock Text="Voice" FontWeight="SemiBold"/>
                                     </DockPanel>
                                 </Button>
-                                <Button x:Name="SettingsDataTabButton"
+                                <Button x:Name="SettingsDataTabButton" Visibility="Collapsed"
                                         Style="{StaticResource StatusMenuButton}"
                                         Background="Transparent"
                                         HorizontalContentAlignment="Left"
@@ -4683,16 +4945,26 @@
                                         <TextBlock Text="Data" FontWeight="SemiBold"/>
                                     </DockPanel>
                                 </Button>
-                                <Button x:Name="SettingsBadgeAdminTabButton"
+                                <Button x:Name="SettingsSignOutTabButton"
                                         Style="{StaticResource StatusMenuButton}"
                                         Background="Transparent"
                                         HorizontalContentAlignment="Left"
                                         Margin="0,6,0,0"
-                                        Visibility="Collapsed"
-                                        Click="SettingsBadgeAdminTabButton_OnClick">
+                                        Click="SettingsSignOutTabButton_OnClick">
                                     <DockPanel>
-                                        <TextBlock Text="&#x1F6E1;" FontFamily="Segoe UI Emoji" FontSize="14" Margin="0,0,10,0"/>
-                                        <TextBlock Text="Badge Admin" FontWeight="SemiBold"/>
+                                        <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="13" Margin="0,0,10,0" Foreground="{StaticResource DangerBrush}"/>
+                                        <TextBlock Text="Sign out" FontWeight="SemiBold"/>
+                                    </DockPanel>
+                                </Button>
+                                <Button x:Name="SettingsCustomizationTabButton"
+                                        Style="{StaticResource StatusMenuButton}"
+                                        Background="Transparent"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,6,0,0"
+                                        Click="SettingsCustomizationTabButton_OnClick">
+                                    <DockPanel>
+                                        <TextBlock Text="&#xE771;" FontFamily="Segoe MDL2 Assets" FontSize="13" Margin="0,0,10,0" Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Text="Customization" FontWeight="SemiBold"/>
                                     </DockPanel>
                                 </Button>
                             </StackPanel>
@@ -4761,12 +5033,22 @@
                                 </StackPanel>
                             </DockPanel>
 
-                            <DockPanel x:Name="SettingsBadgeAdminHeader" Visibility="Collapsed">
+                            <DockPanel x:Name="SettingsSignOutHeader" Visibility="Collapsed">
                                 <Button DockPanel.Dock="Right" Width="34" Height="34" Content="x"
                                         Style="{StaticResource GhostButton}" Click="SettingsCloseButton_OnClick"/>
                                 <StackPanel>
-                                    <TextBlock Text="Official Badge Admin" FontSize="22" FontWeight="Bold"/>
-                                    <TextBlock Text="Manage signed Tester certificates. Owner is protected and read-only."
+                                    <TextBlock Text="Sign out" FontSize="22" FontWeight="Bold"/>
+                                    <TextBlock Text="Leave this account on this device."
+                                               Foreground="{StaticResource MutedBrush}" FontSize="13" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </DockPanel>
+
+                            <DockPanel x:Name="SettingsCustomizationHeader" Visibility="Collapsed">
+                                <Button DockPanel.Dock="Right" Width="34" Height="34" Content="x"
+                                        Style="{StaticResource GhostButton}" Click="SettingsCloseButton_OnClick"/>
+                                <StackPanel>
+                                    <TextBlock Text="Customization" FontSize="22" FontWeight="Bold"/>
+                                    <TextBlock Text="Local wallpapers, message sounds and call ringtones."
                                                Foreground="{StaticResource MutedBrush}" FontSize="13" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </DockPanel>
@@ -4917,6 +5199,68 @@
                                         Padding="16"
                                         Margin="0,14,0,0">
                                     <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="SCREEN SHARE MINI PLAYER"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="Keep the screen share mini-player visible outside FluxChat."
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="12"
+                                                       Margin="0,5,18,0"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SettingsKeepScreenShareMiniPlayerCheck"
+                                                  Grid.Column="1"
+                                                  Style="{StaticResource SmoothCheckBox}"
+                                                  VerticalAlignment="Center"
+                                                  Checked="SettingsKeepScreenShareMiniPlayerCheck_OnChanged"
+                                                  Unchecked="SettingsKeepScreenShareMiniPlayerCheck_OnChanged"/>
+                                    </Grid>
+                                </Border>
+
+                                <Border Background="#313338"
+                                        BorderBrush="#45474f"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="16"
+                                        Margin="0,14,0,0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="DIAGNOSTIC LOGGING"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="Save detailed app logs while debugging. Crash logs are always saved."
+                                                       Margin="0,6,18,0"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SettingsDetailedLoggingCheck"
+                                                  Grid.Column="1"
+                                                  Style="{StaticResource SmoothCheckBox}"
+                                                  VerticalAlignment="Center"
+                                                  Checked="SettingsDetailedLoggingCheck_OnChanged"
+                                                  Unchecked="SettingsDetailedLoggingCheck_OnChanged"/>
+                                    </Grid>
+                                </Border>
+
+                                <Border Background="#313338"
+                                        BorderBrush="#45474f"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="16"
+                                        Margin="0,14,0,0">
+                                    <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="12"/>
@@ -4926,7 +5270,6 @@
                                             <RowDefinition Height="12"/>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="10"/>
-                                            <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Text="VPS SERVER"
@@ -4959,56 +5302,208 @@
                                                 Style="{StaticResource GhostButton}"
                                                 HorizontalAlignment="Stretch"
                                                 Click="VpsHelpButton_OnClick"/>
-
-                                        <TextBox x:Name="SettingsTenorApiKeyInput"
-                                                 Grid.Row="8"
-                                                 MinHeight="38"
-                                                 ToolTip="Optional Tenor API key override. GIF search works without setup."/>
                                     </Grid>
                                 </Border>
 
-                                <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
-                                        CornerRadius="8" Padding="16" Margin="0,14,0,0">
+                                <Border Background="#313338"
+                                        BorderBrush="#45474f"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="16"
+                                        Margin="0,14,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="PROFILE BADGE" Foreground="{StaticResource SubtleBrush}"
-                                                   FontSize="11" FontWeight="Bold"/>
-                                        <TextBlock x:Name="BadgeStatusText" Text="Connecting to Official Badge Authority..."
-                                                   Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,6,0,12"
-                                                   TextWrapping="Wrap"/>
-                                        <UniformGrid Columns="4">
-                                            <Button x:Name="BadgeNoneButton" Tag="" Margin="0,0,8,0" Height="72"
-                                                    Style="{StaticResource GhostButton}" Click="BadgeSelectButton_OnClick">
-                                                <StackPanel HorizontalAlignment="Center">
-                                                    <TextBlock Text="&#x2014;" FontSize="24" HorizontalAlignment="Center"/>
-                                                    <TextBlock Text="None" FontWeight="SemiBold" Margin="0,5,0,0"/>
-                                                </StackPanel>
-                                            </Button>
-                                            <Button x:Name="BadgeTesterButton" Tag="tester" Margin="0,0,8,0" Height="72"
-                                                    Style="{StaticResource GhostButton}" Click="BadgeSelectButton_OnClick">
-                                                <Grid>
-                                                    <StackPanel HorizontalAlignment="Center">
-                                                        <Image Source="/Assets/Badges/tester.png" Width="25" Height="25"/>
-                                                        <TextBlock Text="Tester" FontWeight="SemiBold" Margin="0,5,0,0"/>
-                                                    </StackPanel>
-                                                    <TextBlock x:Name="BadgeTesterLock" Text="&#x1F512;" FontFamily="Segoe UI Emoji"
-                                                               HorizontalAlignment="Right" VerticalAlignment="Top" FontSize="12"/>
-                                                </Grid>
-                                            </Button>
-                                            <Button x:Name="BadgeOwnerButton" Tag="owner" Height="72" Visibility="Collapsed"
-                                                    Style="{StaticResource GhostButton}" Click="BadgeSelectButton_OnClick">
-                                                <StackPanel HorizontalAlignment="Center">
-                                                    <Image Source="/Assets/Badges/owner.png" Width="25" Height="25"/>
-                                                    <TextBlock Text="Owner" FontWeight="SemiBold" Margin="0,5,0,0"/>
-                                                </StackPanel>
-                                            </Button>
-                                            <Button x:Name="BadgeSpecialButton" Tag="special" Height="72" Visibility="Collapsed"
-                                                    Style="{StaticResource GhostButton}" Click="BadgeSelectButton_OnClick">
-                                                <StackPanel HorizontalAlignment="Center">
-                                                    <Image Source="/Assets/Badges/special.png" Width="25" Height="25"/>
-                                                    <TextBlock Text="Special" FontWeight="SemiBold" Margin="0,5,0,0"/>
-                                                </StackPanel>
-                                            </Button>
-                                        </UniformGrid>
+                                        <DockPanel LastChildFill="False">
+                                            <StackPanel DockPanel.Dock="Left">
+                                                <TextBlock Text="SECURITY"
+                                                           Foreground="{StaticResource SubtleBrush}"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"/>
+                                                <TextBlock Text="Active devices and account password."
+                                                           Foreground="{StaticResource MutedBrush}"
+                                                           FontSize="12"
+                                                           Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <Button x:Name="SettingsSecurityRefreshButton"
+                                                    DockPanel.Dock="Right"
+                                                    Content="Refresh"
+                                                    MinWidth="84"
+                                                    Height="32"
+                                                    Style="{StaticResource GhostButton}"
+                                                    Click="SettingsSecurityRefreshButton_OnClick"/>
+                                        </DockPanel>
+
+                                        <TextBlock x:Name="SettingsSecurityStatusText"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   FontSize="12"
+                                                   Margin="0,12,0,8"/>
+
+                                        <ItemsControl x:Name="SettingsDeviceSessionsList"
+                                                      ItemsSource="{Binding}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="#25272f"
+                                                            BorderBrush="#3f424b"
+                                                            BorderThickness="1"
+                                                            CornerRadius="8"
+                                                            Padding="10"
+                                                            Margin="0,0,0,8">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="34"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+
+                                                            <Border Width="28"
+                                                                    Height="28"
+                                                                    CornerRadius="8"
+                                                                    Background="#3a3d46"
+                                                                    VerticalAlignment="Center">
+                                                                <Grid Width="17"
+                                                                      Height="17"
+                                                                      HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center">
+                                                                    <Border Width="13"
+                                                                            Height="9"
+                                                                            CornerRadius="1.8"
+                                                                            BorderBrush="#eef2ff"
+                                                                            BorderThickness="1.4"
+                                                                            HorizontalAlignment="Left"
+                                                                            VerticalAlignment="Top"
+                                                                            Margin="0,1,0,0"/>
+                                                                    <Rectangle Width="5"
+                                                                               Height="1.4"
+                                                                               RadiusX="0.7"
+                                                                               RadiusY="0.7"
+                                                                               Fill="#eef2ff"
+                                                                               HorizontalAlignment="Left"
+                                                                               VerticalAlignment="Top"
+                                                                               Margin="4,11,0,0"/>
+                                                                    <Rectangle Width="9"
+                                                                               Height="1.4"
+                                                                               RadiusX="0.7"
+                                                                               RadiusY="0.7"
+                                                                               Fill="#eef2ff"
+                                                                               HorizontalAlignment="Left"
+                                                                               VerticalAlignment="Top"
+                                                                               Margin="2,13,0,0"/>
+                                                                    <Border Width="7"
+                                                                            Height="10"
+                                                                            CornerRadius="2"
+                                                                            BorderBrush="#9fb0ff"
+                                                                            BorderThickness="1.3"
+                                                                            Background="#34394a"
+                                                                            HorizontalAlignment="Right"
+                                                                            VerticalAlignment="Bottom">
+                                                                        <Ellipse Width="1.8"
+                                                                                 Height="1.8"
+                                                                                 Fill="#9fb0ff"
+                                                                                 HorizontalAlignment="Center"
+                                                                                 VerticalAlignment="Bottom"
+                                                                                 Margin="0,0,0,1.2"/>
+                                                                    </Border>
+                                                                </Grid>
+                                                            </Border>
+
+                                                            <StackPanel Grid.Column="1"
+                                                                        Margin="8,0,8,0">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="{Binding DeviceName}"
+                                                                               FontWeight="Bold"
+                                                                               FontSize="12"/>
+                                                                    <TextBlock Text="{Binding CurrentLabel}"
+                                                                               Foreground="{Binding CurrentLabelBrush}"
+                                                                               FontSize="11"
+                                                                               Margin="8,1,0,0"/>
+                                                                </StackPanel>
+                                                                <TextBlock Text="{Binding Location}"
+                                                                           Foreground="{StaticResource MutedBrush}"
+                                                                           FontSize="11"
+                                                                           Margin="0,2,0,0"/>
+                                                                <TextBlock Text="{Binding LastSeenText}"
+                                                                           Foreground="{StaticResource SubtleBrush}"
+                                                                           FontSize="11"
+                                                                           Margin="0,2,0,0"/>
+                                                            </StackPanel>
+
+                                                            <Button Grid.Column="2"
+                                                                    Width="30"
+                                                                    Height="30"
+                                                                    Content="x"
+                                                                    Tag="{Binding}"
+                                                                    ToolTip="Sign out this device"
+                                                                    Click="SettingsDeviceKickButton_OnClick">
+                                                                <Button.Style>
+                                                                    <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding CanRevoke}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Button.Style>
+                                                            </Button>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <Separator Margin="0,8,0,14"
+                                                   Background="#45474f"/>
+
+                                        <TextBlock Text="Change password"
+                                                   FontWeight="Bold"
+                                                   FontSize="14"/>
+                                        <Grid Margin="0,10,0,0">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="8"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="8"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="12"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <PasswordBox x:Name="SettingsCurrentPasswordInput"
+                                                         MinHeight="38"
+                                                         ToolTip="Current password"/>
+                                            <PasswordBox x:Name="SettingsNewPasswordInput"
+                                                         Grid.Row="2"
+                                                         MinHeight="38"
+                                                         ToolTip="New password"/>
+                                            <PasswordBox x:Name="SettingsRepeatNewPasswordInput"
+                                                         Grid.Row="4"
+                                                         MinHeight="38"
+                                                         ToolTip="Repeat new password"/>
+                                            <Grid Grid.Row="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="SettingsPasswordStatusText"
+                                                           Foreground="{StaticResource MutedBrush}"
+                                                           FontSize="12"
+                                                           TextWrapping="Wrap"
+                                                           VerticalAlignment="Center"/>
+                                                <Button x:Name="SettingsChangePasswordButton"
+                                                        Grid.Column="2"
+                                                        Content="Change password"
+                                                        MinWidth="130"
+                                                        Height="36"
+                                                        Style="{StaticResource PrimaryButton}"
+                                                        Click="SettingsChangePasswordButton_OnClick"/>
+                                            </Grid>
+                                        </Grid>
+
+                                        <Button x:Name="SettingsSignOutAllDevicesButton"
+                                                Content="Sign out on all devices"
+                                                Height="38"
+                                                Margin="0,14,0,0"
+                                                Style="{StaticResource GhostButton}"
+                                                Click="SettingsSignOutAllDevicesButton_OnClick"/>
                                     </StackPanel>
                                 </Border>
 
@@ -5108,6 +5603,63 @@
                                                           Unchecked="SettingsNoiseSuppressionCheck_OnChanged"/>
                                             </Grid>
                                         </Border>
+                                    </Grid>
+                                </Border>
+
+                                <Border Background="#313338"
+                                        BorderBrush="#45474f"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="16"
+                                        Margin="0,14,0,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="8"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel>
+                                            <TextBlock Text="PUSH TO TALK"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="Microphone is sent only while the selected key is held."
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="12"
+                                                       Margin="0,5,18,0"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SettingsPushToTalkCheck"
+                                                  Grid.Column="1"
+                                                  Style="{StaticResource SmoothCheckBox}"
+                                                  VerticalAlignment="Center"
+                                                  Checked="SettingsPushToTalkCheck_OnChanged"
+                                                  Unchecked="SettingsPushToTalkCheck_OnChanged"/>
+
+                                        <Button x:Name="SettingsPushToTalkKeyButton"
+                                                Grid.Row="2"
+                                                Grid.ColumnSpan="2"
+                                                Height="36"
+                                                HorizontalAlignment="Left"
+                                                MinWidth="160"
+                                                Content="LeftCtrl"
+                                                Style="{StaticResource GhostButton}"
+                                                Click="SettingsPushToTalkKeyButton_OnClick"
+                                                PreviewKeyDown="SettingsPushToTalkKeyButton_OnPreviewKeyDown"/>
+                                        <TextBlock x:Name="SettingsPushToTalkHintText"
+                                                   Grid.Row="4"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="Disabled by default."
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   TextWrapping="Wrap"/>
                                     </Grid>
                                 </Border>
                             </StackPanel>
@@ -5246,68 +5798,388 @@
                                 </StackPanel>
                             </ScrollViewer>
 
-                            <ScrollViewer x:Name="SettingsBadgeAdminContent" Grid.Row="2" Grid.RowSpan="2"
-                                          Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                            <ScrollViewer x:Name="SettingsCustomizationContent"
+                                          Grid.Row="2"
+                                          Grid.RowSpan="2"
+                                          Visibility="Collapsed"
+                                          VerticalScrollBarVisibility="Auto">
                                 <StackPanel>
                                     <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
                                             CornerRadius="8" Padding="16">
                                         <StackPanel>
-                                            <TextBlock Text="FIND AUTHORITY USER" Foreground="{StaticResource SubtleBrush}"
-                                                       FontSize="11" FontWeight="Bold"/>
-                                            <Grid Margin="0,10,0,0">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                                <TextBox x:Name="BadgeAdminUserIdInput" MinHeight="38" ToolTip="FluxChat UserId"/>
-                                                <Button Grid.Column="2" Content="Search" Style="{StaticResource PrimaryButton}"
-                                                        Click="BadgeAdminSearchButton_OnClick"/>
-                                            </Grid>
-                                            <Border x:Name="BadgeAdminResultPanel" Visibility="Collapsed" Background="#25272c"
-                                                    BorderBrush="#45474f" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,14,0,0">
+                                            <TextBlock Text="WALLPAPERS"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="These backgrounds are local to this device."
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       FontSize="12"
+                                                       Margin="0,6,0,12"/>
+
+                                            <Grid x:Name="CustomizationAddFriendRow" Tag="AddFriend" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                                 <StackPanel>
-                                                    <TextBlock x:Name="BadgeAdminResultName" FontSize="16" FontWeight="Bold"/>
-                                                    <TextBlock x:Name="BadgeAdminResultId" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,3,0,12"/>
-                                                    <Border Height="1" Background="#45474f" Margin="0,0,0,12"/>
-                                                    <DockPanel>
-                                                        <Image Source="/Assets/Badges/owner.png" Width="24" Height="24" Margin="0,0,10,0"/>
-                                                        <TextBlock Text="Owner" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                        <TextBlock DockPanel.Dock="Right" Text="Protected, read-only" Foreground="{StaticResource SubtleBrush}" VerticalAlignment="Center"/>
-                                                    </DockPanel>
-                                                    <Grid Margin="0,14,0,0">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <Image Source="/Assets/Badges/tester.png" Width="24" Height="24" Margin="0,0,10,0"/>
-                                                        <TextBlock Grid.Column="1" Text="Tester" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                        <Button x:Name="BadgeAdminTesterButton" Grid.Column="2"
-                                                                Width="132" Height="34" Padding="12,5"
-                                                                Content="Grant Tester" Tag="grant"
-                                                                Style="{StaticResource PrimaryButton}"
-                                                                Click="BadgeAdminTesterButton_OnClick"/>
-                                                    </Grid>
-                                                    <Grid Margin="0,14,0,0">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <Image Source="/Assets/Badges/special.png" Width="24" Height="24" Margin="0,0,10,0"/>
-                                                        <TextBlock Grid.Column="1" Text="Special" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                        <Button x:Name="BadgeAdminSpecialButton" Grid.Column="2"
-                                                                Width="132" Height="34" Padding="12,5"
-                                                                Content="Grant Special" Tag="grant"
-                                                                Style="{StaticResource PrimaryButton}"
-                                                                Click="BadgeAdminSpecialButton_OnClick"/>
-                                                    </Grid>
+                                                    <TextBlock Text="Add friend" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationAddFriendPathText" Text="Default background" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
                                                 </StackPanel>
-                                            </Border>
-                                            <TextBlock x:Name="BadgeAdminStatusText" Foreground="{StaticResource MutedBrush}"
-                                                       TextWrapping="Wrap" Margin="0,12,0,0"/>
+                                                <ComboBox x:Name="CustomizationAddFriendModeCombo" Grid.Column="1" Height="34" SelectionChanged="CustomizationModeCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Fill" Tag="Fill"/>
+                                                    <ComboBoxItem Content="Fit" Tag="Fit"/>
+                                                    <ComboBoxItem Content="Blur fill" Tag="BlurFill"/>
+                                                </ComboBox>
+                                                <Button Grid.Column="3" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseWallpaperButton_OnClick"/>
+                                                <Button Grid.Column="5" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetWallpaperButton_OnClick"/>
+                                            </Grid>
+
+                                            <Grid x:Name="CustomizationDirectChatsRow" Tag="DirectChats" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Direct chats" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationDirectChatsPathText" Text="Default background" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="CustomizationDirectChatsModeCombo" Grid.Column="1" Height="34" SelectionChanged="CustomizationModeCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Fill" Tag="Fill"/>
+                                                    <ComboBoxItem Content="Fit" Tag="Fit"/>
+                                                    <ComboBoxItem Content="Blur fill" Tag="BlurFill"/>
+                                                </ComboBox>
+                                                <Button Grid.Column="3" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseWallpaperButton_OnClick"/>
+                                                <Button Grid.Column="5" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetWallpaperButton_OnClick"/>
+                                            </Grid>
+
+                                            <Grid x:Name="CustomizationGroupChatsRow" Tag="GroupChats" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Group chats" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationGroupChatsPathText" Text="Default background" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="CustomizationGroupChatsModeCombo" Grid.Column="1" Height="34" SelectionChanged="CustomizationModeCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Fill" Tag="Fill"/>
+                                                    <ComboBoxItem Content="Fit" Tag="Fit"/>
+                                                    <ComboBoxItem Content="Blur fill" Tag="BlurFill"/>
+                                                </ComboBox>
+                                                <Button Grid.Column="3" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseWallpaperButton_OnClick"/>
+                                                <Button Grid.Column="5" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetWallpaperButton_OnClick"/>
+                                            </Grid>
+
+                                            <Grid x:Name="CustomizationContactsSidebarRow" Tag="ContactsSidebar" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Contacts sidebar" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationContactsSidebarPathText" Text="Default background" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="CustomizationContactsSidebarModeCombo" Grid.Column="1" Height="34" SelectionChanged="CustomizationModeCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Fill" Tag="Fill"/>
+                                                    <ComboBoxItem Content="Fit" Tag="Fit"/>
+                                                    <ComboBoxItem Content="Blur fill" Tag="BlurFill"/>
+                                                </ComboBox>
+                                                <Button Grid.Column="3" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseWallpaperButton_OnClick"/>
+                                                <Button Grid.Column="5" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetWallpaperButton_OnClick"/>
+                                            </Grid>
+
+                                            <Grid x:Name="CustomizationSettingsRow" Tag="Settings">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Settings" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationSettingsPathText" Text="Default background" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <ComboBox x:Name="CustomizationSettingsModeCombo" Grid.Column="1" Height="34" SelectionChanged="CustomizationModeCombo_OnSelectionChanged">
+                                                    <ComboBoxItem Content="Fill" Tag="Fill"/>
+                                                    <ComboBoxItem Content="Fit" Tag="Fit"/>
+                                                    <ComboBoxItem Content="Blur fill" Tag="BlurFill"/>
+                                                </ComboBox>
+                                                <Button Grid.Column="3" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseWallpaperButton_OnClick"/>
+                                                <Button Grid.Column="5" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetWallpaperButton_OnClick"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="NOTIFICATION SOUNDS"
+                                                               Foreground="{StaticResource SubtleBrush}"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"/>
+                                                    <TextBlock Text="Custom local sounds for incoming calls and messages."
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               FontSize="12"
+                                                               Margin="0,6,12,12"/>
+                                                </StackPanel>
+                                                <CheckBox x:Name="CustomizationSoundsEnabledCheck"
+                                                          Grid.Column="1"
+                                                          Style="{StaticResource SmoothCheckBox}"
+                                                          VerticalAlignment="Top"
+                                                          Checked="CustomizationSoundsEnabledCheck_OnChanged"
+                                                          Unchecked="CustomizationSoundsEnabledCheck_OnChanged"/>
+                                            </Grid>
+
+                                            <Grid Margin="0,0,0,12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Incoming call ringtone" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationCallSoundPathText" Text="System sound" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="If the file is longer, FluxChat will let you choose a 20-second part." Foreground="{StaticResource MutedBrush}" FontSize="11"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="2" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseCallSoundButton_OnClick"/>
+                                                <Button Grid.Column="4" Content="Play" Style="{StaticResource GhostButton}" Click="CustomizationPlayCallSoundButton_OnClick"/>
+                                                <Button Grid.Column="6" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetCallSoundButton_OnClick"/>
+                                            </Grid>
+
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Incoming message sound" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationMessageSoundPathText" Text="System sound" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="2" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseMessageSoundButton_OnClick"/>
+                                                <Button Grid.Column="4" Content="Play" Style="{StaticResource GhostButton}" Click="CustomizationPlayMessageSoundButton_OnClick"/>
+                                                <Button Grid.Column="6" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetMessageSoundButton_OnClick"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <ScrollViewer x:Name="SettingsSignOutContent" Grid.Row="2" Grid.RowSpan="2"
+                                          Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="18">
+                                        <StackPanel>
+                                            <TextBlock Text="SIGN OUT OF FLUXCHAT"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="This removes the saved account session from this device. Your local profile and avatar stay on this computer."
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,10,0,16"/>
+                                            <Button x:Name="SettingsSignOutButton"
+                                                    Content="Sign out"
+                                                    Width="140"
+                                                    HorizontalAlignment="Left"
+                                                    Background="{StaticResource DangerBrush}"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Click="SettingsSignOutButton_OnClick"/>
+                                            <TextBlock x:Name="SettingsSignOutStatusText"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,12,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#2f2428"
+                                            BorderBrush="#6b3038"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="18"
+                                            Margin="0,14,0,0">
+                                        <StackPanel>
+                                            <TextBlock Text="DELETE ACCOUNT"
+                                                       Foreground="#ff8f98"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"/>
+                                            <TextBlock Text="This permanently removes your account from the VPS, including server chat history, contacts, sessions, avatar and media owned by this account."
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,10,0,14"/>
+                                            <TextBlock Text="Current password"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="12"/>
+                                            <PasswordBox x:Name="SettingsDeleteAccountPasswordInput"
+                                                         MinHeight="38"
+                                                         Margin="0,6,0,10"
+                                                         PasswordChanged="SettingsDeleteAccountInput_OnChanged"/>
+                                            <TextBlock Text="Type DELETE to confirm"
+                                                       Foreground="{StaticResource SubtleBrush}"
+                                                       FontSize="12"/>
+                                            <TextBox x:Name="SettingsDeleteAccountConfirmationInput"
+                                                     MinHeight="38"
+                                                     Margin="0,6,0,14"
+                                                     TextChanged="SettingsDeleteAccountInput_OnChanged"/>
+                                            <Button x:Name="SettingsDeleteAccountButton"
+                                                    Content="Delete account"
+                                                    Width="160"
+                                                    HorizontalAlignment="Left"
+                                                    Background="{StaticResource DangerBrush}"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    IsEnabled="False"
+                                                    Click="SettingsDeleteAccountButton_OnClick"/>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border x:Name="ScreenShareMiniDismissZone"
+                Grid.ColumnSpan="2"
+                Visibility="Collapsed"
+                Panel.ZIndex="43"
+                Width="128"
+                Height="128"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="#CC15171b"
+                BorderBrush="#f87171"
+                BorderThickness="1"
+                CornerRadius="64"
+                Opacity="0"
+                IsHitTestVisible="False">
+            <Grid>
+                <Path Stroke="#ffb4b4"
+                      StrokeThickness="4"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round"
+                      Data="M44,44 L84,84 M84,44 L44,84"/>
+            </Grid>
+        </Border>
+
+        <Border x:Name="ScreenShareMiniPlayer"
+                Grid.ColumnSpan="2"
+                Visibility="Collapsed"
+                Panel.ZIndex="44"
+                Width="320"
+                Height="180"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Background="#111214"
+                BorderBrush="#545763"
+                BorderThickness="1"
+                CornerRadius="10"
+                ClipToBounds="True"
+                Cursor="SizeAll"
+                MouseLeftButtonDown="ScreenShareMiniPlayer_OnMouseLeftButtonDown"
+                MouseMove="ScreenShareMiniPlayer_OnMouseMove"
+                MouseLeftButtonUp="ScreenShareMiniPlayer_OnMouseLeftButtonUp">
+            <Border.Effect>
+                <DropShadowEffect Color="#000000" BlurRadius="24" ShadowDepth="8" Opacity="0.45"/>
+            </Border.Effect>
+            <Grid>
+                <Image x:Name="ScreenShareMiniPlayerImage"
+                       Stretch="UniformToFill"/>
+                <Border x:Name="ScreenShareMiniPlayerPlaceholder"
+                        Background="#202329">
+                    <TextBlock Text="Screen share preview"
+                               Foreground="{StaticResource MutedBrush}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                </Border>
+                <Border Background="#A0000000"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Top"
+                        Margin="10"
+                        Padding="8,4"
+                        CornerRadius="5">
+                    <TextBlock x:Name="ScreenShareMiniPlayerTitleText"
+                               Text="Screen share"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               Foreground="#f2f3f5"
+                               TextTrimming="CharacterEllipsis"/>
+                </Border>
+                <Button x:Name="ScreenShareMiniPlayerCloseButton"
+                        Width="30"
+                        Height="30"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Margin="0,8,8,0"
+                        Content="x"
+                        Style="{StaticResource GhostButton}"
+                        Visibility="Collapsed"
+                        IsHitTestVisible="False"
+                        ToolTip="Hide mini-player"
+                        Click="ScreenShareMiniPlayerCloseButton_OnClick"/>
+            </Grid>
+        </Border>
+
+        <Border x:Name="AppConfirmDialogOverlay"
+                Grid.ColumnSpan="2"
+                Visibility="Collapsed"
+                Panel.ZIndex="45"
+                Background="#AA111215">
+            <Grid>
+                <Border Width="460"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Padding="22"
+                        CornerRadius="14"
+                        Background="#2b2d31"
+                        BorderBrush="#4b4e58"
+                        BorderThickness="1">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#000000" BlurRadius="28" ShadowDepth="8" Opacity="0.45"/>
+                    </Border.Effect>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="14"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="22"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="44"/>
+                                <ColumnDefinition Width="14"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border x:Name="AppConfirmDialogIconBack"
+                                    Width="44"
+                                    Height="44"
+                                    CornerRadius="12"
+                                    Background="#3a3c43">
+                                <Viewbox Width="22" Height="22">
+                                    <Path x:Name="AppConfirmDialogIcon"
+                                          Fill="{StaticResource AccentBrush}"
+                                          Data="M11,17H13V15H11M12,2A10,10 0 1,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 1,1 20,12A8,8 0 0,1 12,20M12,6A3,3 0 0,0 9,9H11A1,1 0 1,1 12,10A2,2 0 0,0 10,12V14H12V12.5A2.5,2.5 0 0,0 12,6Z"/>
+                                </Viewbox>
+                            </Border>
+
+                            <StackPanel Grid.Column="2"
+                                        VerticalAlignment="Center">
+                                <TextBlock x:Name="AppConfirmDialogTitleText"
+                                           Text="FluxChat"
+                                           FontSize="20"
+                                           FontWeight="Bold"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock x:Name="AppConfirmDialogMessageText"
+                                           Margin="0,6,0,0"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           FontSize="13"
+                                           LineHeight="18"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Grid.Row="4"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Right">
+                            <Button x:Name="AppConfirmDialogCancelButton"
+                                    Content="Cancel"
+                                    Width="112"
+                                    Style="{StaticResource GhostButton}"
+                                    Click="AppConfirmDialogCancelButton_OnClick"/>
+                            <Button x:Name="AppConfirmDialogPrimaryButton"
+                                    Content="OK"
+                                    Width="132"
+                                    Margin="10,0,0,0"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Click="AppConfirmDialogPrimaryButton_OnClick"/>
+                        </StackPanel>
                     </Grid>
                 </Border>
             </Grid>

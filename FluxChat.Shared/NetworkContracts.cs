@@ -45,7 +45,7 @@ public sealed record ChatPacket(
     [property: JsonPropertyName("fromPublicKey")] string? FromPublicKey = null,
     [property: JsonPropertyName("identityNonce")] string? IdentityNonce = null,
     [property: JsonPropertyName("identitySignature")] string? IdentitySignature = null,
-    [property: JsonPropertyName("badgeCertificate")] BadgeCertificate? BadgeCertificate = null)
+    [property: JsonPropertyName("fromCustomStatus")] string? FromCustomStatus = null)
 {
     public static ChatPacket Create(
         string fromUserId,
@@ -64,7 +64,8 @@ public sealed record ChatPacket(
         double fromAvatarOffsetX = 0,
         double fromAvatarOffsetY = 0,
         double fromAvatarVideoStartSeconds = 0,
-        double fromAvatarVideoDurationSeconds = 10)
+        double fromAvatarVideoDurationSeconds = 10,
+        string? fromCustomStatus = null)
         => new(
             "fluxchat.message.v1",
             Guid.NewGuid(),
@@ -85,7 +86,11 @@ public sealed record ChatPacket(
             fromAvatarOffsetX,
             fromAvatarOffsetY,
             fromAvatarVideoStartSeconds,
-            fromAvatarVideoDurationSeconds);
+            fromAvatarVideoDurationSeconds,
+            null,
+            null,
+            null,
+            fromCustomStatus);
 }
 
 public sealed record PeerInfoRequest(
@@ -181,14 +186,120 @@ public sealed record RelayAckPacket(
     [property: JsonPropertyName("accepted")] bool Accepted,
     [property: JsonPropertyName("message")] string Message,
     [property: JsonPropertyName("clientToken")] string? ClientToken = null,
-    [property: JsonPropertyName("iceConfig")] RelayIceConfig? IceConfig = null)
+    [property: JsonPropertyName("iceConfig")] RelayIceConfig? IceConfig = null,
+    [property: JsonPropertyName("accountApiUrl")] string? AccountApiUrl = null)
 {
-    public static RelayAckPacket AcceptedResult(string message, string? clientToken = null, RelayIceConfig? iceConfig = null)
-        => new("fluxchat.relay-ack.v1", true, message, clientToken, iceConfig);
+    public static RelayAckPacket AcceptedResult(
+        string message,
+        string? clientToken = null,
+        RelayIceConfig? iceConfig = null,
+        string? accountApiUrl = null)
+        => new("fluxchat.relay-ack.v1", true, message, clientToken, iceConfig, accountApiUrl);
 
-    public static RelayAckPacket Denied(string message)
-        => new("fluxchat.relay-ack.v1", false, message);
+    public static RelayAckPacket Denied(string message, string? accountApiUrl = null)
+        => new("fluxchat.relay-ack.v1", false, message, null, null, accountApiUrl);
 }
+
+public sealed record AccountRegisterRequest(
+    string UserId,
+    string DisplayName,
+    string Login,
+    string Email,
+    string Password,
+    string PublicKey);
+
+public sealed record AccountLoginRequest(string LoginOrEmail, string Password, string DeviceName);
+
+public sealed record AccountCodeRequest(string LoginOrEmail, string Purpose);
+
+public sealed record AccountCodeLoginRequest(string LoginOrEmail, string Code, string DeviceName);
+
+public sealed record AccountResetPasswordRequest(string LoginOrEmail, string Code, string NewPassword);
+
+public sealed record AccountVerifyEmailRequest(string LoginOrEmail, string Code);
+
+public sealed record AccountSessionResponse(
+    bool Accepted,
+    string Message,
+    string? UserId = null,
+    string? DisplayName = null,
+    string? Login = null,
+    string? RelayToken = null,
+    DateTimeOffset? ExpiresAtUtc = null,
+    string? SessionId = null,
+    string? DeviceName = null);
+
+public sealed record AccountResult(bool Accepted, string Message);
+
+public sealed record AccountDeviceSession(
+    string SessionId,
+    string DeviceName,
+    string Location,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset LastSeenAtUtc,
+    DateTimeOffset ExpiresAtUtc,
+    bool IsCurrent,
+    bool IsActive = true);
+
+public sealed record AccountDeviceSessionsResponse(
+    bool Accepted,
+    string Message,
+    IReadOnlyList<AccountDeviceSession>? Sessions = null);
+
+public sealed record AccountSyncedContact(
+    string UserId,
+    string DisplayName,
+    string RelayServer,
+    string AvatarKind,
+    string AvatarPath,
+    double AvatarScale,
+    double AvatarOffsetX,
+    double AvatarOffsetY,
+    double AvatarVideoStartSeconds,
+    double AvatarVideoDurationSeconds,
+    bool IsGroup,
+    string GroupMemberIds,
+    string GroupOwnerUserId,
+    long GroupVersion,
+    bool GroupIsDeleted,
+    string GroupMembersJson,
+    string IdentityPublicKey,
+    DateTimeOffset UpdatedAtUtc,
+    string CustomStatus = "");
+
+public sealed record AccountContactsResponse(
+    bool Accepted,
+    string Message,
+    IReadOnlyList<AccountSyncedContact>? Contacts = null);
+
+public sealed record AccountContactUpsertRequest(AccountSyncedContact Contact);
+
+public sealed record AccountContactDeleteRequest(string UserId);
+
+public sealed record AccountSessionRevokeRequest(string SessionId);
+
+public sealed record AccountSessionRevokeAllRequest(bool IncludeCurrent = true);
+
+public sealed record AccountChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+public sealed record AccountDeleteRequest(string CurrentPassword, string Confirmation);
+
+public sealed record AccountMediaUploadResponse(
+    bool Accepted,
+    string Message,
+    string? MediaId = null,
+    string? ThumbnailMediaId = null,
+    string? MimeType = null,
+    long ByteLength = 0,
+    int Width = 0,
+    int Height = 0,
+    int DurationMs = 0);
+
+public sealed record FederationUsernameClaim(
+    string LoginNormalized,
+    string UserId,
+    string ServerId,
+    DateTimeOffset ClaimedAtUtc);
 
 public sealed record RelayPresencePacket(
     [property: JsonPropertyName("type")] string Type,
@@ -207,7 +318,7 @@ public sealed record RelayPresencePacket(
     [property: JsonPropertyName("publicKey")] string? PublicKey = null,
     [property: JsonPropertyName("identityNonce")] string? IdentityNonce = null,
     [property: JsonPropertyName("identitySignature")] string? IdentitySignature = null,
-    [property: JsonPropertyName("badgeCertificate")] BadgeCertificate? BadgeCertificate = null)
+    [property: JsonPropertyName("customStatus")] string? CustomStatus = null)
 {
     public static RelayPresencePacket Create(
         string userId,
@@ -220,7 +331,8 @@ public sealed record RelayPresencePacket(
         double avatarOffsetX = 0,
         double avatarOffsetY = 0,
         double avatarVideoStartSeconds = 0,
-        double avatarVideoDurationSeconds = 10)
+        double avatarVideoDurationSeconds = 10,
+        string? customStatus = null)
         => new(
             "fluxchat.relay-presence.v1",
             userId,
@@ -234,7 +346,11 @@ public sealed record RelayPresencePacket(
             avatarOffsetX,
             avatarOffsetY,
             avatarVideoStartSeconds,
-            avatarVideoDurationSeconds);
+            avatarVideoDurationSeconds,
+            null,
+            null,
+            null,
+            customStatus);
 }
 
 public sealed record RelayAudioPacket(
@@ -264,9 +380,12 @@ public sealed record RelayScreenFramePacket(
 
 public sealed record RelayFederationPacket(
     [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("message")] ChatPacket Message,
+    [property: JsonPropertyName("message")] ChatPacket? Message,
     [property: JsonPropertyName("sentAtUtc")] DateTimeOffset SentAtUtc,
-    [property: JsonPropertyName("signature")] string Signature)
+    [property: JsonPropertyName("signature")] string Signature,
+    [property: JsonPropertyName("nonce")] string? Nonce = null,
+    [property: JsonPropertyName("ciphertext")] string? Ciphertext = null,
+    [property: JsonPropertyName("tag")] string? Tag = null)
 {
     public static RelayFederationPacket Create(ChatPacket message, DateTimeOffset sentAtUtc, string signature)
         => new("fluxchat.relay-federation.v1", message, sentAtUtc, signature);

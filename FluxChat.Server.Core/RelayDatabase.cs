@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using FluxChat.Shared;
 using Microsoft.Data.Sqlite;
 
@@ -67,8 +66,7 @@ public sealed class RelayDatabase
                     FromAvatarVideoDurationSeconds REAL NOT NULL DEFAULT 10,
                     FromPublicKey TEXT NULL,
                     IdentityNonce TEXT NULL,
-                    IdentitySignature TEXT NULL,
-                    BadgeCertificateJson TEXT NULL
+                    IdentitySignature TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS IX_PendingMessages_ToUserId_StoredAtUtc
@@ -116,7 +114,6 @@ public sealed class RelayDatabase
             AddPendingColumn(command, "FromPublicKey TEXT NULL");
             AddPendingColumn(command, "IdentityNonce TEXT NULL");
             AddPendingColumn(command, "IdentitySignature TEXT NULL");
-            AddPendingColumn(command, "BadgeCertificateJson TEXT NULL");
         }
     }
 
@@ -137,7 +134,49 @@ public sealed class RelayDatabase
 
                 if (!FixedEquals(existing.TokenHash, HashSecret(credential)))
                 {
-                    return AuthResult.Denied("Invalid invite or token.");
+                    var rotationInvite = GetInvite(connection, transaction, credential);
+                    if (rotationInvite is null || rotationInvite.UsedAtUtc is not null)
+                    {
+                        return AuthResult.Denied("Invalid invite or token.");
+                    }
+
+                    var rotatedToken = CreateSecret("tok");
+                    var rotatedAt = DateTimeOffset.UtcNow.ToString("O");
+
+                    using (var updateUser = connection.CreateCommand())
+                    {
+                        updateUser.Transaction = transaction;
+                        updateUser.CommandText = """
+                            UPDATE Users
+                            SET DisplayName = $displayName,
+                                TokenHash = $tokenHash,
+                                LastSeenUtc = $lastSeenUtc
+                            WHERE UserId = $userId;
+                            """;
+                        updateUser.Parameters.AddWithValue("$displayName", displayName);
+                        updateUser.Parameters.AddWithValue("$tokenHash", HashSecret(rotatedToken));
+                        updateUser.Parameters.AddWithValue("$lastSeenUtc", rotatedAt);
+                        updateUser.Parameters.AddWithValue("$userId", userId);
+                        updateUser.ExecuteNonQuery();
+                    }
+
+                    using (var updateInvite = connection.CreateCommand())
+                    {
+                        updateInvite.Transaction = transaction;
+                        updateInvite.CommandText = """
+                            UPDATE Invites
+                            SET UsedAtUtc = $usedAtUtc,
+                                UsedByUserId = $usedByUserId
+                            WHERE Code = $code;
+                            """;
+                        updateInvite.Parameters.AddWithValue("$usedAtUtc", rotatedAt);
+                        updateInvite.Parameters.AddWithValue("$usedByUserId", userId);
+                        updateInvite.Parameters.AddWithValue("$code", credential);
+                        updateInvite.ExecuteNonQuery();
+                    }
+
+                    transaction.Commit();
+                    return AuthResult.Accepted(rotatedToken);
                 }
 
                 UpdateLastSeen(connection, transaction, userId, displayName);
@@ -185,6 +224,21 @@ public sealed class RelayDatabase
 
             transaction.Commit();
             return AuthResult.Accepted(token);
+        }
+    }
+
+    public bool IsCredentialValid(string userId, string credential)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(credential))
+        {
+            return false;
+        }
+
+        lock (_sync)
+        {
+            using var connection = OpenConnection();
+            var user = GetUser(connection, null, userId);
+            return user is not null && !user.IsBanned && FixedEquals(user.TokenHash, HashSecret(credential));
         }
     }
 
@@ -337,12 +391,12 @@ public sealed class RelayDatabase
                     (MessageId, FromUserId, FromDisplayName, ToUserId, Body, SentAtUtc, StoredAtUtc, NetworkId, FromRelayServer, ToRelayServer,
                      Intent, FromStatus, FromAvatarKind, FromAvatarMediaBase64, FromAvatarExtension, FromAvatarScale,
                      FromAvatarOffsetX, FromAvatarOffsetY, FromAvatarVideoStartSeconds, FromAvatarVideoDurationSeconds,
-                     FromPublicKey, IdentityNonce, IdentitySignature, BadgeCertificateJson)
+                    FromPublicKey, IdentityNonce, IdentitySignature)
                 VALUES
                     ($messageId, $fromUserId, $fromDisplayName, $toUserId, $body, $sentAtUtc, $storedAtUtc, $networkId, $fromRelayServer, $toRelayServer,
                      $intent, $fromStatus, $fromAvatarKind, $fromAvatarMediaBase64, $fromAvatarExtension, $fromAvatarScale,
                      $fromAvatarOffsetX, $fromAvatarOffsetY, $fromAvatarVideoStartSeconds, $fromAvatarVideoDurationSeconds,
-                     $fromPublicKey, $identityNonce, $identitySignature, $badgeCertificateJson);
+                     $fromPublicKey, $identityNonce, $identitySignature);
                 """;
             command.Parameters.AddWithValue("$messageId", packet.MessageId.ToString());
             command.Parameters.AddWithValue("$fromUserId", packet.FromUserId);
@@ -367,7 +421,6 @@ public sealed class RelayDatabase
             command.Parameters.AddWithValue("$fromPublicKey", (object?)packet.FromPublicKey ?? DBNull.Value);
             command.Parameters.AddWithValue("$identityNonce", (object?)packet.IdentityNonce ?? DBNull.Value);
             command.Parameters.AddWithValue("$identitySignature", (object?)packet.IdentitySignature ?? DBNull.Value);
-            command.Parameters.AddWithValue("$badgeCertificateJson", packet.BadgeCertificate is null ? DBNull.Value : JsonSerializer.Serialize(packet.BadgeCertificate));
             command.ExecuteNonQuery();
         }
     }
@@ -382,7 +435,7 @@ public sealed class RelayDatabase
                 SELECT MessageId, FromUserId, FromDisplayName, ToUserId, Body, SentAtUtc, NetworkId, FromRelayServer, ToRelayServer,
                        Intent, FromStatus, FromAvatarKind, FromAvatarMediaBase64, FromAvatarExtension, FromAvatarScale,
                        FromAvatarOffsetX, FromAvatarOffsetY, FromAvatarVideoStartSeconds, FromAvatarVideoDurationSeconds,
-                       FromPublicKey, IdentityNonce, IdentitySignature, BadgeCertificateJson
+                       FromPublicKey, IdentityNonce, IdentitySignature
                 FROM PendingMessages
                 WHERE ToUserId = $toUserId
                 ORDER BY StoredAtUtc ASC;
@@ -415,8 +468,7 @@ public sealed class RelayDatabase
                     reader.GetDouble(18),
                     reader.IsDBNull(19) ? null : reader.GetString(19),
                     reader.IsDBNull(20) ? null : reader.GetString(20),
-                    reader.IsDBNull(21) ? null : reader.GetString(21),
-                    reader.IsDBNull(22) ? null : JsonSerializer.Deserialize<BadgeCertificate>(reader.GetString(22))));
+                    reader.IsDBNull(21) ? null : reader.GetString(21)));
             }
 
             return rows;

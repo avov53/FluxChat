@@ -12,9 +12,19 @@ internal sealed class AppSettings
     public string RelayServer { get; set; } = $"127.0.0.1:{FluxChat.Shared.FluxChatPorts.Relay}";
     public string RelayAccessKey { get; set; } = "";
     public string RelayClientToken { get; set; } = "";
+    public string AccountApiUrl { get; set; } = "";
+    public string AccountLogin { get; set; } = "";
+    public string AccountSessionTokenProtected { get; set; } = "";
+    [JsonIgnore]
+    public string AccountSessionToken { get; set; } = "";
     public int AudioInputDeviceId { get; set; } = -1;
     public int AudioOutputDeviceId { get; set; } = -1;
     public bool NoiseSuppressionEnabled { get; set; } = true;
+    public bool PushToTalkEnabled { get; set; }
+    public string PushToTalkKey { get; set; } = "LeftCtrl";
+    public bool KeepScreenShareMiniPlayerVisible { get; set; } = true;
+    public string ScreenShareMiniPlayerCorner { get; set; } = "TopRight";
+    public bool DetailedLoggingEnabled { get; set; }
     public bool ReducedMotionEnabled { get; set; }
     public DataStorageLocation ChatHistoryStorage { get; set; } = DataStorageLocation.LocalComputer;
     public DataStorageLocation ImageStorage { get; set; } = DataStorageLocation.LocalComputer;
@@ -30,7 +40,17 @@ internal sealed class AppSettings
     public string GoogleDriveAccountName { get; set; } = "";
     public string GoogleDriveBackupFileId { get; set; } = "";
     public string TenorApiKey { get; set; } = "";
-    public string BadgeAuthorityUrl { get; set; } = "https://badges.91-186-217-186.sslip.io:8443";
+    public Dictionary<string, SectionWallpaperSettings> SectionWallpapers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string IncomingCallSoundPath { get; set; } = "";
+    public string IncomingMessageSoundPath { get; set; } = "";
+    public bool NotificationSoundsEnabled { get; set; } = true;
+}
+
+internal sealed class SectionWallpaperSettings
+{
+    public string Path { get; set; } = "";
+    public string Mode { get; set; } = "Fill";
+    public bool IsVideo { get; set; }
 }
 
 internal enum NetworkMode
@@ -60,8 +80,10 @@ internal static class AppSettingsStore
             {
                 var json = await File.ReadAllTextAsync(SettingsPath);
                 var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
-                settings.GoogleDriveRefreshToken = Unprotect(settings.GoogleDriveRefreshTokenProtected);
-                settings.GoogleDriveAccessToken = Unprotect(settings.GoogleDriveAccessTokenProtected);
+                ClearRetiredGoogleDriveCredentials(settings);
+                NormalizeCustomizationSettings(settings);
+                settings.AccountSessionToken = Unprotect(settings.AccountSessionTokenProtected);
+                AppLog.DetailedLoggingEnabled = settings.DetailedLoggingEnabled;
                 return settings;
             }
         }
@@ -70,14 +92,18 @@ internal static class AppSettingsStore
             AppLog.Write(ex, "Settings could not be loaded");
         }
 
-        return new AppSettings();
+        var fallback = new AppSettings();
+        AppLog.DetailedLoggingEnabled = fallback.DetailedLoggingEnabled;
+        return fallback;
     }
 
     public static async Task SaveAsync(AppSettings settings)
     {
+        AppLog.DetailedLoggingEnabled = settings.DetailedLoggingEnabled;
         AppPaths.EnsureCreated();
-        settings.GoogleDriveRefreshTokenProtected = Protect(settings.GoogleDriveRefreshToken);
-        settings.GoogleDriveAccessTokenProtected = Protect(settings.GoogleDriveAccessToken);
+        ClearRetiredGoogleDriveCredentials(settings);
+        NormalizeCustomizationSettings(settings);
+        settings.AccountSessionTokenProtected = Protect(settings.AccountSessionToken);
         var options = new JsonSerializerOptions { WriteIndented = true };
         await File.WriteAllTextAsync(SettingsPath, JsonSerializer.Serialize(settings, options));
     }
@@ -99,8 +125,38 @@ internal static class AppSettingsStore
         }
         catch (Exception ex) when (ex is CryptographicException or FormatException)
         {
-            AppLog.Write(ex, "Google Drive token could not be decrypted");
+            AppLog.Write(ex, "Protected application setting could not be decrypted");
             return "";
+        }
+    }
+
+    private static void ClearRetiredGoogleDriveCredentials(AppSettings settings)
+    {
+        settings.GoogleDriveClientId = "";
+        settings.GoogleDriveRefreshToken = "";
+        settings.GoogleDriveAccessToken = "";
+        settings.GoogleDriveRefreshTokenProtected = "";
+        settings.GoogleDriveAccessTokenProtected = "";
+        settings.GoogleDriveAccessTokenExpiresAtUtc = DateTimeOffset.MinValue;
+        settings.GoogleDriveAccountName = "";
+        settings.GoogleDriveBackupFileId = "";
+        settings.ChatHistoryStorage = DataStorageLocation.LocalComputer;
+        settings.ImageStorage = DataStorageLocation.LocalComputer;
+        settings.FileStorage = DataStorageLocation.LocalComputer;
+    }
+
+    private static void NormalizeCustomizationSettings(AppSettings settings)
+    {
+        settings.SectionWallpapers ??= new Dictionary<string, SectionWallpaperSettings>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in settings.SectionWallpapers.ToArray())
+        {
+            if (pair.Value is null || string.IsNullOrWhiteSpace(pair.Value.Path))
+            {
+                settings.SectionWallpapers.Remove(pair.Key);
+                continue;
+            }
+
+            pair.Value.Mode = string.IsNullOrWhiteSpace(pair.Value.Mode) ? "Fill" : pair.Value.Mode;
         }
     }
 }

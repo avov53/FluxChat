@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using System.Net.Http;
 using MessageBox = System.Windows.MessageBox;
 
 namespace FluxChat.Client;
@@ -13,10 +14,78 @@ public partial class App : System.Windows.Application
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
     }
 
-    private void App_OnStartup(object sender, StartupEventArgs e)
+    private async void App_OnStartup(object sender, StartupEventArgs e)
     {
-        var window = new MainWindow();
-        window.Show();
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        try
+        {
+            var settings = await AppSettingsStore.LoadAsync();
+            var profile = await UserProfileStore.LoadOrCreateAsync();
+            AppPaths.UseAccountData(profile.UserId);
+            var accountVault = LocalAccountVault.Load();
+            if (!string.IsNullOrWhiteSpace(settings.AccountLogin))
+            {
+                var savedAccount = accountVault.Find(settings.AccountLogin, settings.RelayServer);
+                if (savedAccount is not null && !string.IsNullOrWhiteSpace(savedAccount.UserId))
+                {
+                    var savedProfile = await UserProfileStore.TryLoadProfileAsync(savedAccount.UserId);
+                    if (savedProfile is not null)
+                    {
+                        profile = savedProfile;
+                        await UserProfileStore.ActivateAsync(profile);
+                        AppPaths.UseAccountData(profile.UserId);
+                    }
+                }
+            }
+
+            var authenticated = false;
+
+            if (!string.IsNullOrWhiteSpace(settings.AccountApiUrl) &&
+                !string.IsNullOrWhiteSpace(settings.AccountSessionToken))
+            {
+                try
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                    var session = await new AccountClient(settings.AccountApiUrl)
+                        .ValidateSessionAsync(settings.AccountSessionToken, timeout.Token);
+                    authenticated = session.Accepted &&
+                                    string.Equals(session.UserId, profile.UserId, StringComparison.Ordinal);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+                {
+                    AppLog.Write(ex, "Saved account session could not be validated");
+                }
+            }
+
+            if (!authenticated)
+            {
+                var accountWindow = new AccountWindow(profile, settings);
+                MainWindow = accountWindow;
+                if (accountWindow.ShowDialog() != true)
+                {
+                    Shutdown();
+                    return;
+                }
+
+                profile = accountWindow.SelectedProfile;
+                AppPaths.UseAccountData(profile.UserId);
+            }
+
+            var window = new MainWindow(profile, settings);
+            MainWindow = window;
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write(ex, "Account startup failed");
+            MessageBox.Show(
+                $"FluxChat could not open the account screen.\n\n{ex.Message}\n\nLog: {CrashLog.LogPath}",
+                "FluxChat",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown();
+        }
     }
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

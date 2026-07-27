@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\FluxChat.Server.Core\FluxChat.Server.Core.csproj" />
+    <ProjectReference Include="..\FluxChat.Server.Core\FluxChat.Server.Core.csproj" GlobalPropertiesToRemove="SelfContained;RuntimeIdentifier;PublishSingleFile;PublishSelfContained" />
   </ItemGroup>
 
   <PropertyGroup>

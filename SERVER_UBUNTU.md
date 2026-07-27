@@ -1,111 +1,72 @@
-# FluxChat Relay на Ubuntu VPS
+# FluxChat на Ubuntu VPS
 
-`root@IP_ТВОЕГО_VPS` означает: `root` - имя пользователя, `@` оставляешь, `IP_ТВОЕГО_VPS` заменяешь на настоящий IP сервера.
+## Установка или обновление
 
-## 1. Сборка на Windows ПК
-
-```powershell
-.\dist-server-linux.bat
-```
-
-Появятся два Linux-файла:
-
-```text
-dist-server-linux\FluxChat.Server
-dist-server-linux\fluxus
-```
-
-## 2. Загрузка на VPS через PowerShell/SSH
-
-Эти команды выполняются на Windows ПК:
-
-```powershell
-scp .\dist-server-linux\FluxChat.Server root@IP_ТВОЕГО_VPS:/root/FluxChat.Server
-scp .\dist-server-linux\fluxus root@IP_ТВОЕГО_VPS:/root/fluxus
-ssh root@IP_ТВОЕГО_VPS
-```
-
-## 3. Через Termius или VNC
-
-В Termius создай Host:
-
-```text
-Address: IP_ТВОЕГО_VPS
-Username: root
-Port: 22
-```
-
-Через SFTP загрузи:
-
-```text
-FluxChat.Server -> /root/FluxChat.Server
-fluxus -> /root/fluxus
-```
-
-VNC-консоль обычно не умеет загрузить файл с твоего ПК, поэтому сначала загрузи файлы через `scp`, Termius SFTP или файловый менеджер хостинга.
-
-## 4. Быстрый ручной запуск
+Подключись к VPS под `root` и выполни одну команду:
 
 ```bash
-chmod +x /root/FluxChat.Server /root/fluxus
-sudo ufw allow 42800/tcp
-/root/FluxChat.Server
+bash <(curl -Ls https://raw.githubusercontent.com/avov53/fluxusui/main/install.sh)
 ```
 
-Во второй SSH-сессии:
+Установщик сохраняет `/var/lib/fluxchat`, инвайты, пользователей и историю
+relay. После установки он проверит Account Server. Если он ещё не настроен,
+будет предложен мастер настройки.
+
+## Мастер аккаунтов
+
+Мастер настраивает PostgreSQL, защищённый Account API, nginx и сертификат
+Let's Encrypt. SMTP больше не нужен.
 
 ```bash
-/root/fluxus
+fluxus setup accounts
 ```
 
-В меню выбери `1. Создать инвайт-код`, отправь код другу. Друг вводит его в клиенте в поле `Invite / token`.
+Во время настройки выбери:
 
-## 5. Установка как постоянный сервис
+1. Автоматический адрес `VPS_IP.sslip.io` либо собственный домен.
+2. Email для Let's Encrypt.
+
+FluxChat выбирает свободный HTTPS-порт из `8443-8499`; порт `443` остаётся
+нетронутым для 3x-ui/VLESS. Для выпуска сертификата порт `80/tcp` должен быть
+доступен снаружи.
+
+Проверка и исправление:
 
 ```bash
-sudo mkdir -p /opt/fluxchat /var/lib/fluxchat
-sudo mv /root/FluxChat.Server /opt/fluxchat/FluxChat.Server
-sudo mv /root/fluxus /usr/local/bin/fluxus
-sudo chmod +x /opt/fluxchat/FluxChat.Server /usr/local/bin/fluxus
-sudo tee /etc/systemd/system/fluxchat.service >/dev/null <<'EOF'
-[Unit]
-Description=FluxChat Relay Server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=/opt/fluxchat/FluxChat.Server
-Restart=always
-RestartSec=3
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo systemctl daemon-reload
-sudo systemctl enable --now fluxchat
-sudo systemctl status fluxchat
+fluxus setup accounts status
+fluxus setup accounts repair
 ```
 
-После установки админ-панель запускается так:
+Отключение Account API, без удаления PostgreSQL-данных:
+
+```bash
+fluxus setup accounts disable
+```
+
+## Инвайты и подключение клиента
+
+Открой серверную панель:
 
 ```bash
 fluxus
 ```
 
-## 6. Полное удаление с VPS
+Создай одноразовый инвайт и передай его пользователю. В FluxChat пользователь
+указывает только:
 
-```bash
-sudo systemctl disable --now fluxchat
-sudo rm -f /etc/systemd/system/fluxchat.service
-sudo rm -rf /opt/fluxchat
-sudo rm -f /usr/local/bin/fluxus
-sudo rm -rf /var/lib/fluxchat
-sudo rm -f /root/FluxChat.Server /root/fluxus
-sudo systemctl daemon-reload
-sudo ufw delete allow 42800/tcp
+```text
+VPS server: YOUR_VPS_IP:42800
+Invite code: code from fluxus
 ```
 
-## Важно
+HTTPS-адрес Account API передаётся клиенту автоматически после подключения к
+relay, поэтому пользователю не нужно вводить URL, домен или SSL-порт.
 
-Пользователей больше не нужно пускать по общему ключу. Создавай одноразовые инвайты через `fluxus`. После первого успешного входа клиент сам сохранит постоянный token.
+## Полезные команды
+
+```bash
+systemctl status fluxchat
+systemctl restart fluxchat
+journalctl -u fluxchat -f
+fluxus status
+```

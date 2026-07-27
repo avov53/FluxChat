@@ -24,14 +24,21 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     private string _groupOwnerUserId = "";
     private string _groupMembersJson = "";
     private string _currentUserId = "";
+    private string _customStatus = "";
     private long _groupVersion;
     private bool _groupIsDeleted;
     private bool _isGroup;
     private int _messagePort;
-    private string _verifiedBadgeId = "";
-    private string _badgeCertificateJson = "";
     private string _identityPublicKey = "";
-    private DateTimeOffset? _badgeVerifiedAtUtc;
+
+    public ContactViewModel()
+    {
+        ActiveVoiceParticipants.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasActiveVoiceParticipants));
+            OnPropertyChanged(nameof(VoiceParticipantsText));
+        };
+    }
 
     public required string UserId { get; init; }
 
@@ -138,10 +145,19 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanRemoveFromFriends));
             OnPropertyChanged(nameof(CanEditGroup));
             OnPropertyChanged(nameof(CanLeaveGroup));
+            OnPropertyChanged(nameof(HasActiveVoiceParticipants));
         }
     }
 
     public bool IsDirectContact => !IsGroup;
+
+    public ObservableCollection<GroupVoiceParticipantViewModel> ActiveVoiceParticipants { get; } = [];
+
+    public bool HasActiveVoiceParticipants => IsGroup && ActiveVoiceParticipants.Count > 0;
+
+    public string VoiceParticipantsText => ActiveVoiceParticipants.Count == 0
+        ? ""
+        : string.Join(", ", ActiveVoiceParticipants.Select(x => x.DisplayName));
 
     public string GroupMemberIds
     {
@@ -348,29 +364,24 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     public bool IsAvatarVideo => AvatarKind == "video" && HasAvatar;
     public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
 
-    public string VerifiedBadgeId
+    public string IdentityPublicKey { get => _identityPublicKey; set { if (_identityPublicKey == value) return; _identityPublicKey = value; OnPropertyChanged(); } }
+
+    public string CustomStatus
     {
-        get => _verifiedBadgeId;
+        get => _customStatus;
         set
         {
-            if (_verifiedBadgeId == value) return;
-            _verifiedBadgeId = value;
+            var normalized = value?.Trim() ?? "";
+            if (_customStatus == normalized)
+            {
+                return;
+            }
+
+            _customStatus = normalized;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(HasVerifiedBadge));
-            OnPropertyChanged(nameof(BadgeImageSource));
-            OnPropertyChanged(nameof(BadgeToolTip));
+            OnPropertyChanged(nameof(StatusText));
         }
     }
-
-    public string BadgeCertificateJson { get => _badgeCertificateJson; set { if (_badgeCertificateJson == value) return; _badgeCertificateJson = value; OnPropertyChanged(); } }
-    public string IdentityPublicKey { get => _identityPublicKey; set { if (_identityPublicKey == value) return; _identityPublicKey = value; OnPropertyChanged(); } }
-    public DateTimeOffset? BadgeVerifiedAtUtc { get => _badgeVerifiedAtUtc; set { if (_badgeVerifiedAtUtc == value) return; _badgeVerifiedAtUtc = value; OnPropertyChanged(); } }
-    public bool HasVerifiedBadge => BadgeIds.IsKnown(VerifiedBadgeId);
-    public ImageSource? BadgeImageSource => BadgeVisuals.GetImage(VerifiedBadgeId);
-    public string BadgeToolTip => VerifiedBadgeId == BadgeIds.Owner ? "Owner" :
-                                  VerifiedBadgeId == BadgeIds.Tester ? "Tester" :
-                                  VerifiedBadgeId == BadgeIds.Special ? "Special" :
-                                  "";
 
     public DateTimeOffset LastSeenUtc
     {
@@ -421,17 +432,21 @@ public sealed class ContactViewModel : INotifyPropertyChanged
         }
     }
 
-    public string StatusText => Status switch
-    {
-        UserPresenceStatus.Online => "online",
-        UserPresenceStatus.Idle => "idle",
-        _ => "offline"
-    };
+    public string StatusText => !string.IsNullOrWhiteSpace(CustomStatus)
+        ? CustomStatus
+        : Status switch
+        {
+            UserPresenceStatus.Online => "online",
+            UserPresenceStatus.Idle => "idle",
+            UserPresenceStatus.DoNotDisturb => "do not disturb",
+            _ => "offline"
+        };
 
     public string StatusColor => Status switch
     {
         UserPresenceStatus.Online => "#35d07f",
         UserPresenceStatus.Idle => "#f2b84b",
+        UserPresenceStatus.DoNotDisturb => "#ed4245",
         _ => "#687080"
     };
 
@@ -443,10 +458,38 @@ public sealed class ContactViewModel : INotifyPropertyChanged
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
+public sealed class GroupVoiceParticipantViewModel
+{
+    public required string UserId { get; init; }
+    public required string DisplayName { get; init; }
+    public string AvatarKind { get; init; } = "color";
+    public string AvatarPath { get; init; } = "";
+
+    public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarPath);
+    public bool IsAvatarImage => AvatarKind == "image" && HasAvatar;
+    public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
+
+    public string Initials
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(DisplayName))
+            {
+                return "?";
+            }
+
+            var initials = string.Concat(DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => x[0])).ToUpperInvariant();
+            return initials.Length <= 2 ? initials : initials[..2];
+        }
+    }
+}
+
 public enum UserPresenceStatus
 {
     Online,
     Idle,
+    DoNotDisturb,
+    Invisible,
     Offline
 }
 
@@ -479,6 +522,11 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public required bool IsOutgoing { get; init; }
     public required DateTimeOffset SentAtUtc { get; init; }
     public string Kind { get; init; } = MessageKinds.Text;
+    public string MediaId { get; init; } = "";
+    public string ThumbnailMediaId { get; init; } = "";
+    public int MediaWidth { get; init; }
+    public int MediaHeight { get; init; }
+    public int MediaDurationMs { get; init; }
     public string AttachmentPath { get; init; } = "";
     public string AttachmentUrl { get; init; } = "";
     public string FileName { get; init; } = "";
@@ -708,7 +756,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool HasText => !string.IsNullOrWhiteSpace(Text) && !IsGifMessage;
     public bool IsEmojiOnlyText => IsTextMessage && HasText && IsEmojiOnly(Text);
     public bool ShowsPlainText => HasText && !IsEmojiOnlyText;
-    public bool HasAttachment => !string.IsNullOrWhiteSpace(AttachmentPath) || !string.IsNullOrWhiteSpace(AttachmentUrl);
+    public bool HasAttachment => !string.IsNullOrWhiteSpace(AttachmentPath) || !string.IsNullOrWhiteSpace(AttachmentUrl) || !string.IsNullOrWhiteSpace(MediaId);
     public bool HasReply => !string.IsNullOrWhiteSpace(ReplyPreview);
     public bool IsForwarded => !string.IsNullOrWhiteSpace(ForwardedFrom);
     public bool IsEdited => EditedAtUtc is not null;
@@ -898,7 +946,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
         ? new Uri($"data:text/html;charset=utf-8,{Uri.EscapeDataString(BuildEmojiHtml(Text))}")
         : new Uri("about:blank");
     public IReadOnlyList<MessageTextSegment> TextSegments => MessageTextSegment.Build(Text, IsEmojiOnlyText ? 28 : 14);
-    public ImageSource? AttachmentImageSource => HasAttachment ? AvatarImageLoader.Load(AttachmentPath) : null;
+    public ImageSource? AttachmentImageSource => !string.IsNullOrWhiteSpace(AttachmentPath) ? AvatarImageLoader.Load(AttachmentPath) : null;
     public ObservableCollection<ReactionViewModel> ReactionItems { get; } = [];
 
     public string ReactionsText
@@ -1290,6 +1338,7 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
     private string _relayServer = "";
     private string _avatarKind = "color";
     private string _avatarPath = "";
+    private string _customStatus = "";
     private UserPresenceStatus _status = UserPresenceStatus.Offline;
     private bool _isOwner;
     private bool _isFriend;
@@ -1372,6 +1421,23 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
     public double AvatarOffsetY { get; set; }
     public double AvatarVideoStartSeconds { get; set; }
     public double AvatarVideoDurationSeconds { get; set; } = 10;
+
+    public string CustomStatus
+    {
+        get => _customStatus;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (_customStatus == normalized)
+            {
+                return;
+            }
+
+            _customStatus = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StatusText));
+        }
+    }
 
     public UserPresenceStatus Status
     {
@@ -1463,17 +1529,21 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
     public bool IsAvatarVideo => HasAvatar && AvatarKind == "video";
     public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
     public string ShortId => UserId.Length <= 8 ? UserId : UserId[..8];
-    public string StatusText => Status switch
-    {
-        UserPresenceStatus.Online => "online",
-        UserPresenceStatus.Idle => "idle",
-        _ => "offline"
-    };
+    public string StatusText => !string.IsNullOrWhiteSpace(CustomStatus)
+        ? CustomStatus
+        : Status switch
+        {
+            UserPresenceStatus.Online => "online",
+            UserPresenceStatus.Idle => "idle",
+            UserPresenceStatus.DoNotDisturb => "do not disturb",
+            _ => "offline"
+        };
 
     public string StatusColor => Status switch
     {
         UserPresenceStatus.Online => "#35d07f",
         UserPresenceStatus.Idle => "#f2b84b",
+        UserPresenceStatus.DoNotDisturb => "#ed4245",
         _ => "#687080"
     };
 
@@ -1614,6 +1684,58 @@ public sealed class FriendRequestViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class AccountDeviceSessionViewModel(AccountDeviceSession session)
+{
+    public string SessionId { get; } = session.SessionId;
+
+    public string DeviceName { get; } = string.IsNullOrWhiteSpace(session.DeviceName)
+        ? "FluxChat device"
+        : session.DeviceName;
+
+    public string Location { get; } = string.IsNullOrWhiteSpace(session.Location)
+        ? "Unknown location"
+        : session.Location;
+
+    public string LastSeenText { get; } = FormatLastSeen(session.LastSeenAtUtc);
+
+    public string ExpiresText { get; } = $"Expires {session.ExpiresAtUtc.LocalDateTime:g}";
+
+    public bool IsCurrent { get; } = session.IsCurrent;
+
+    public bool IsActive { get; } = session.IsActive;
+
+    public bool CanRevoke { get; } = session.IsActive;
+
+    public string CurrentLabel { get; } = session.IsCurrent
+        ? "Current device"
+        : session.IsActive
+            ? "Active"
+            : "Signed out";
+
+    public System.Windows.Media.Brush CurrentLabelBrush { get; } = session.IsCurrent
+        ? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#57f287"))
+        : session.IsActive
+            ? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#b5bac1"))
+            : new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#858a96"));
+
+    private static string FormatLastSeen(DateTimeOffset lastSeenUtc)
+    {
+        var local = lastSeenUtc.LocalDateTime;
+        var age = DateTimeOffset.UtcNow - lastSeenUtc;
+        if (age < TimeSpan.FromMinutes(2))
+        {
+            return "Active now";
+        }
+
+        if (local.Date == DateTime.Today)
+        {
+            return $"Last active {local:HH:mm}";
+        }
+
+        return $"Last active {local:dd.MM.yyyy HH:mm}";
+    }
 }
 
 internal static class AvatarImageLoader

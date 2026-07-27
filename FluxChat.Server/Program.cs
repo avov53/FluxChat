@@ -11,22 +11,72 @@ using FluxChat.Shared;
 var database = new RelayDatabase();
 database.Initialize();
 
-var server = new RelayServer(database);
+var postgresConnection = Environment.GetEnvironmentVariable("FLUXCHAT_POSTGRES_CONNECTION");
+AccountStore? accountStore = null;
+var federationServerId = Environment.GetEnvironmentVariable("FLUXCHAT_FEDERATION_SERVER_ID") ?? Environment.MachineName;
+if (!string.IsNullOrWhiteSpace(postgresConnection))
+{
+    accountStore = new AccountStore(postgresConnection, ServerDataProtector.FromEnvironment(), federationServerId);
+    await accountStore.InitializeAsync();
+    var accountPrefix = Environment.GetEnvironmentVariable("FLUXCHAT_ACCOUNT_API_PREFIX") ?? "http://127.0.0.1:42801/";
+    EnsurePrivateAccountApiPrefix(accountPrefix);
+    var federationPeers = (Environment.GetEnvironmentVariable("FLUXCHAT_FEDERATION_PEERS") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    var federationKey = Environment.GetEnvironmentVariable("FLUXCHAT_FEDERATION_KEY") ?? "";
+    if (federationPeers.Length > 0 && Encoding.UTF8.GetByteCount(federationKey) < 32)
+    {
+        throw new InvalidOperationException("FLUXCHAT_FEDERATION_KEY must contain at least 32 bytes when federation peers are configured.");
+    }
+    var federationPublisher = new FederationUsernamePublisher(federationServerId, federationKey, federationPeers);
+    var retentionDays = int.TryParse(Environment.GetEnvironmentVariable("FLUXCHAT_RETENTION_DAYS"), out var configuredRetentionDays) ? configuredRetentionDays : 730;
+    var accountApi = new AccountApiHost(accountStore, database, accountPrefix, federationPublisher, retentionDays);
+    accountApi.Start();
+    Console.WriteLine($"FluxChat account API listening on {accountPrefix}");
+}
+else
+{
+    Console.WriteLine("Account API disabled. Set FLUXCHAT_POSTGRES_CONNECTION to enable account registration.");
+}
+
+var publicAccountApiUrl = Environment.GetEnvironmentVariable("FLUXCHAT_PUBLIC_ACCOUNT_URL")?.Trim();
+if (!string.IsNullOrWhiteSpace(publicAccountApiUrl) &&
+    (!Uri.TryCreate(publicAccountApiUrl, UriKind.Absolute, out var publicAccountUri) || publicAccountUri.Scheme != Uri.UriSchemeHttps))
+{
+    throw new InvalidOperationException("FLUXCHAT_PUBLIC_ACCOUNT_URL must be an HTTPS URL.");
+}
+
+var server = new RelayServer(database, accountStore, publicAccountApiUrl);
 await server.RunAsync();
+
+static void EnsurePrivateAccountApiPrefix(string prefix)
+{
+    if (!Uri.TryCreate(prefix, UriKind.Absolute, out var uri) ||
+        uri.Scheme != Uri.UriSchemeHttp ||
+        !(uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+          IPAddress.TryParse(uri.Host, out var address) && IPAddress.IsLoopback(address)))
+    {
+        throw new InvalidOperationException(
+            "FLUXCHAT_ACCOUNT_API_PREFIX must bind to loopback HTTP. Publish it through an HTTPS reverse proxy.");
+    }
+}
 
 internal sealed class RelayServer
 {
     private static readonly UTF8Encoding Utf8NoBom = new(false);
-    private const int MaxControlPacketBytes = 32 * 1024 * 1024;
+    private const int MaxControlPacketBytes = 8 * 1024 * 1024;
     private const int MaxAudioPacketBytes = 256 * 1024;
     private const int MaxScreenPacketBytes = 12 * 1024 * 1024;
     private static readonly TimeSpan PendingMessageLifetime = TimeSpan.FromDays(14);
     private static readonly TimeSpan AudioEndpointLifetime = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan SessionIdleTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan FederationClockSkew = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan TurnCredentialLifetime = TimeSpan.FromHours(24);
     private readonly RelayDatabase _database;
+    private readonly AccountStore? _accounts;
+    private readonly string? _publicAccountApiUrl;
     private readonly ConcurrentDictionary<string, ClientSession> _online = new();
     private readonly ConcurrentDictionary<string, AudioRouteStats> _audioRoutes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _seenFederationPackets = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _connectionSlots = new(512, 512);
     private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
     private long _controlPacketsReceived;
     private long _controlPacketsRejected;
@@ -42,9 +92,11 @@ internal sealed class RelayServer
     private readonly string _turnRealm = Environment.GetEnvironmentVariable("FLUXCHAT_TURN_REALM") ?? "fluxchat";
     private readonly int _turnPort = ParseEnvInt("FLUXCHAT_TURN_PORT", 3478);
 
-    public RelayServer(RelayDatabase database)
+    public RelayServer(RelayDatabase database, AccountStore? accounts = null, string? publicAccountApiUrl = null)
     {
         _database = database;
+        _accounts = accounts;
+        _publicAccountApiUrl = publicAccountApiUrl;
     }
 
     public async Task RunAsync()
@@ -70,7 +122,23 @@ internal sealed class RelayServer
         while (true)
         {
             var client = await listener.AcceptTcpClientAsync();
-            _ = Task.Run(() => HandleClientAsync(client));
+            if (!await _connectionSlots.WaitAsync(TimeSpan.Zero))
+            {
+                client.Dispose();
+                Interlocked.Increment(ref _controlPacketsRejected);
+                continue;
+            }
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await HandleClientAsync(client);
+                }
+                finally
+                {
+                    _connectionSlots.Release();
+                }
+            });
         }
     }
 
@@ -92,7 +160,7 @@ internal sealed class RelayServer
             var firstLine = await reader.ReadLineAsync();
             Interlocked.Increment(ref _controlPacketsReceived);
             var firstType = GetPacketType(firstLine);
-            if (firstType == "fluxchat.relay-federation.v1")
+            if (firstType is "fluxchat.relay-federation.v1" or "fluxchat.relay-federation.v2")
             {
                 var federation = ReadPacket<RelayFederationPacket>(firstLine, "fluxchat.relay-federation.v1")
                     ?? throw new InvalidOperationException("Invalid federation packet.");
@@ -123,19 +191,23 @@ internal sealed class RelayServer
 
             if (!VerifyRegistrationIdentity(register))
             {
-                await SendAsync(writer, RelayAckPacket.Denied("Identity signature is invalid."));
+                await SendAsync(writer, RelayAckPacket.Denied("Identity signature is invalid.", _publicAccountApiUrl));
                 return;
             }
 
-            var auth = _database.Authenticate(register.UserId, register.DisplayName, register.Credential);
+            var auth = await AuthenticateAsync(register.UserId, register.DisplayName, register.Credential);
             if (!auth.IsAccepted)
             {
                 Console.WriteLine($"Rejected {remote}: {auth.Message}");
-                await SendAsync(writer, RelayAckPacket.Denied(auth.Message));
+                await SendAsync(writer, RelayAckPacket.Denied(auth.Message, _publicAccountApiUrl));
                 return;
             }
 
-            await SendAsync(writer, RelayAckPacket.AcceptedResult(auth.Message, auth.ClientToken, CreateIceConfig(register.UserId)));
+            await SendAsync(writer, RelayAckPacket.AcceptedResult(
+                auth.Message,
+                auth.ClientToken,
+                CreateIceConfig(register.UserId),
+                _publicAccountApiUrl));
 
             session = new ClientSession(register.UserId, register.DisplayName, writer, client)
             {
@@ -209,6 +281,7 @@ internal sealed class RelayServer
                             Console.WriteLine($"Rejected invalid signed message {packet.MessageId} from {session.UserId}");
                             continue;
                         }
+                        session.LastPresenceUtc = DateTimeOffset.UtcNow;
                         await RouteMessageAsync(packet);
                     }
                 }
@@ -239,6 +312,24 @@ internal sealed class RelayServer
         }
     }
 
+    private async Task<AuthResult> AuthenticateAsync(string userId, string displayName, string credential)
+    {
+        if (_accounts is null)
+        {
+            return _database.Authenticate(userId, displayName, credential);
+        }
+
+        var session = await _accounts.ValidateSessionAsync(credential);
+        if (session is not null && string.Equals(session.UserId, userId, StringComparison.Ordinal))
+        {
+            return AuthResult.Accepted(null);
+        }
+
+        // An invite can bootstrap the first account session. Normal relay access
+        // switches to the short-lived account session once registration is done.
+        return _database.Authenticate(userId, displayName, credential);
+    }
+
     private async Task HandleAudioClientAsync(
         RelayAudioRegisterPacket register,
         BoundedUtf8LineReader reader,
@@ -249,7 +340,7 @@ internal sealed class RelayServer
         ClientSession? session = null;
         try
         {
-            var auth = _database.Authenticate(register.UserId, register.DisplayName, register.Credential);
+            var auth = await AuthenticateAsync(register.UserId, register.DisplayName, register.Credential);
             if (!auth.IsAccepted)
             {
                 Console.WriteLine($"Rejected audio {remote}: {auth.Message}");
@@ -299,6 +390,29 @@ internal sealed class RelayServer
 
     private async Task RouteMessageAsync(ChatPacket packet)
     {
+        if (ShouldKeepDurablePendingCopy(packet))
+        {
+            Console.WriteLine($"Friend request received: {packet.FromUserId} -> {packet.ToUserId}, messageId={packet.MessageId}");
+        }
+
+        if (_accounts is not null && packet.Intent is "chat-rich" or "chat-e2e-message")
+        {
+            try
+            {
+                await _accounts.ArchiveMessageAsync(packet.FromUserId, packet);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"History archive failed for {packet.MessageId}: {ex.Message}");
+            }
+        }
+
+        var hasDurablePendingCopy = false;
+        if (ShouldKeepDurablePendingCopy(packet))
+        {
+            hasDurablePendingCopy = await TryStorePendingAsync(packet, "durable-control-copy");
+        }
+
         if (!string.IsNullOrWhiteSpace(packet.ToRelayServer))
         {
             await ForwardToRelayAsync(packet);
@@ -331,9 +445,37 @@ internal sealed class RelayServer
             return;
         }
 
-        _database.StorePending(packet);
-        Console.WriteLine($"Queued {packet.MessageId} for {packet.ToUserId}");
+        if (!hasDurablePendingCopy)
+        {
+            await TryStorePendingAsync(packet, "offline");
+        }
     }
+
+    private async Task<bool> TryStorePendingAsync(ChatPacket packet, string reason)
+    {
+        try
+        {
+            if (_accounts is not null)
+            {
+                await _accounts.StorePendingPacketAsync(packet);
+            }
+            else
+            {
+                _database.StorePending(packet);
+            }
+
+            Console.WriteLine($"Queued {packet.MessageId} for {packet.ToUserId}: {reason}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Pending queue failed for {packet.MessageId} ({reason}): {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool ShouldKeepDurablePendingCopy(ChatPacket packet)
+        => packet.Intent == "friend-request";
 
     private RelayIceConfig CreateIceConfig(string userId)
     {
@@ -401,7 +543,7 @@ internal sealed class RelayServer
         ClientSession? session = null;
         try
         {
-            var auth = _database.Authenticate(register.UserId, register.DisplayName, register.Credential);
+            var auth = await AuthenticateAsync(register.UserId, register.DisplayName, register.Credential);
             if (!auth.IsAccepted)
             {
                 Console.WriteLine($"Rejected screen {remote}: {auth.Message}");
@@ -574,13 +716,32 @@ internal sealed class RelayServer
 
     private async Task RouteFederatedMessageAsync(RelayFederationPacket federation, EndPoint? remote)
     {
-        if (!IsFederationAccepted(federation))
+        if (!TryOpenFederation(federation, out var localPacket))
         {
             Console.WriteLine($"Rejected federation packet from {remote}");
             return;
         }
 
-        var localPacket = federation.Message with { ToRelayServer = null };
+        localPacket = localPacket! with { ToRelayServer = null };
+        if (localPacket.Intent == "federation-username-claim" && _accounts is not null)
+        {
+            try
+            {
+                var claim = JsonSerializer.Deserialize<FederationUsernameClaim>(localPacket.Body);
+                if (claim is not null)
+                {
+                    var changed = await _accounts.ApplyFederationClaimAsync(claim);
+                    Console.WriteLine(changed
+                        ? $"Federation username claim applied: {claim.LoginNormalized} -> {claim.UserId}"
+                        : $"Federation username claim ignored: {claim.LoginNormalized}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Federation username claim failed: {ex.Message}");
+            }
+            return;
+        }
         Console.WriteLine($"Federated message {localPacket.MessageId} accepted from {remote}: {localPacket.FromUserId} -> {localPacket.ToUserId}");
         await RouteMessageAsync(localPacket);
     }
@@ -615,8 +776,7 @@ internal sealed class RelayServer
             };
 
             var sentAtUtc = DateTimeOffset.UtcNow;
-            var signature = CreateFederationSignature(forwarded, sentAtUtc, _federationKey);
-            await SendAsync(writer, RelayFederationPacket.Create(forwarded, sentAtUtc, signature));
+            await SendAsync(writer, FederationEnvelopeCrypto.Seal(forwarded, sentAtUtc, _federationKey));
             Console.WriteLine($"Federated {packet.MessageId} from {packet.FromUserId} to {packet.ToUserId} via {targetServer}");
         }
         catch (Exception ex)
@@ -627,18 +787,22 @@ internal sealed class RelayServer
 
     private async Task FlushPendingAsync(string userId, ClientSession session)
     {
-        var messages = _database.LoadPending(userId);
+        var messages = _accounts is null
+            ? _database.LoadPending(userId)
+            : await _accounts.LoadPendingPacketsAsync(userId);
         var count = 0;
         foreach (var packet in messages)
         {
             if (IsTransientMessage(packet))
             {
-                _database.DeletePending(packet.MessageId);
+                if (_accounts is null) _database.DeletePending(packet.MessageId);
+                else await _accounts.DeletePendingPacketAsync(packet.MessageId);
                 continue;
             }
 
             await session.SendAsync(packet);
-            _database.DeletePending(packet.MessageId);
+            if (_accounts is null) _database.DeletePending(packet.MessageId);
+            else await _accounts.DeletePendingPacketAsync(packet.MessageId);
             count++;
         }
 
@@ -677,7 +841,9 @@ internal sealed class RelayServer
         {
             try
             {
-                var removed = _database.DeletePendingOlderThan(DateTimeOffset.UtcNow - PendingMessageLifetime);
+                var removed = _accounts is null
+                    ? _database.DeletePendingOlderThan(DateTimeOffset.UtcNow - PendingMessageLifetime)
+                    : await _accounts.DeleteExpiredPendingPacketsAsync(DateTimeOffset.UtcNow - PendingMessageLifetime);
                 if (removed > 0)
                 {
                     Console.WriteLine($"Maintenance removed {removed} pending messages older than {PendingMessageLifetime.TotalDays:0} days");
@@ -768,7 +934,7 @@ internal sealed class RelayServer
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
         while (await timer.WaitForNextTickAsync())
         {
-            var staleBefore = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(40);
+            var staleBefore = DateTimeOffset.UtcNow - SessionIdleTimeout;
             foreach (var session in _online.Values)
             {
                 if (session.LastPresenceUtc >= staleBefore)
@@ -802,8 +968,9 @@ internal sealed class RelayServer
             or "call-screen-frame"
             or "call-screen-stop";
 
-    private bool IsFederationAccepted(RelayFederationPacket federation)
+    private bool TryOpenFederation(RelayFederationPacket federation, out ChatPacket? message)
     {
+        message = null;
         if (string.IsNullOrWhiteSpace(_federationKey))
         {
             return false;
@@ -815,22 +982,26 @@ internal sealed class RelayServer
             return false;
         }
 
-        var expected = CreateFederationSignature(federation.Message, federation.SentAtUtc, _federationKey);
-        return FixedEquals(expected, federation.Signature);
-    }
+        if (!FederationEnvelopeCrypto.TryOpen(federation, _federationKey, out message) || message is null)
+        {
+            return false;
+        }
 
-    private static string CreateFederationSignature(ChatPacket message, DateTimeOffset sentAtUtc, string federationKey)
-    {
-        var payload = $"{sentAtUtc.UtcDateTime:O}\n{JsonSerializer.Serialize(message)}";
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(federationKey));
-        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
-    }
+        if (!_seenFederationPackets.TryAdd(federation.Signature, DateTimeOffset.UtcNow))
+        {
+            message = null;
+            return false;
+        }
 
-    private static bool FixedEquals(string leftHex, string rightHex)
-    {
-        var left = Encoding.UTF8.GetBytes(leftHex);
-        var right = Encoding.UTF8.GetBytes(rightHex);
-        return left.Length == right.Length && CryptographicOperations.FixedTimeEquals(left, right);
+        if (_seenFederationPackets.Count > 20_000)
+        {
+            var cutoff = DateTimeOffset.UtcNow - FederationClockSkew - TimeSpan.FromMinutes(1);
+            foreach (var old in _seenFederationPackets.Where(x => x.Value < cutoff).Select(x => x.Key).ToArray())
+            {
+                _seenFederationPackets.TryRemove(old, out _);
+            }
+        }
+        return true;
     }
 
     private static string? GetPacketType(string? json)
@@ -879,40 +1050,40 @@ internal sealed class RelayServer
             session.AvatarVideoStartSeconds,
             session.AvatarVideoDurationSeconds);
 
-    private static bool VerifyRegistrationIdentity(RelayRegisterPacket packet)
+    private bool VerifyRegistrationIdentity(RelayRegisterPacket packet)
     {
         var hasAny = packet.PublicKey is not null || packet.IdentityNonce is not null ||
                      packet.IdentityTimestampUtc is not null || packet.IdentitySignature is not null;
-        if (!hasAny) return true;
+        if (!hasAny) return _accounts is null;
         if (string.IsNullOrWhiteSpace(packet.PublicKey) || string.IsNullOrWhiteSpace(packet.IdentityNonce) ||
             packet.IdentityTimestampUtc is null || string.IsNullOrWhiteSpace(packet.IdentitySignature) ||
             Math.Abs((DateTimeOffset.UtcNow - packet.IdentityTimestampUtc.Value).TotalMinutes) > 5 ||
-            BadgeCrypto.CreateUserId(packet.PublicKey) != packet.UserId)
+            IdentityCrypto.CreateUserId(packet.PublicKey) != packet.UserId)
         {
             return false;
         }
-        return BadgeCrypto.Verify(BadgeCrypto.BuildRegisterIdentityPayload(packet), packet.IdentitySignature, packet.PublicKey);
+        return IdentityCrypto.Verify(IdentityCrypto.BuildRegisterIdentityPayload(packet), packet.IdentitySignature, packet.PublicKey);
     }
 
-    private static bool VerifyPresenceIdentity(RelayPresencePacket packet, ClientSession session)
+    private bool VerifyPresenceIdentity(RelayPresencePacket packet, ClientSession session)
     {
-        var hasAny = packet.PublicKey is not null || packet.IdentityNonce is not null || packet.IdentitySignature is not null || packet.BadgeCertificate is not null;
-        if (!hasAny) return packet.UserId == session.UserId;
+        var hasAny = packet.PublicKey is not null || packet.IdentityNonce is not null || packet.IdentitySignature is not null;
+        if (!hasAny) return _accounts is null && packet.UserId == session.UserId;
         return packet.UserId == session.UserId && packet.PublicKey == session.PublicKey &&
                !string.IsNullOrWhiteSpace(packet.IdentityNonce) && !string.IsNullOrWhiteSpace(packet.IdentitySignature) &&
                Math.Abs((DateTimeOffset.UtcNow - packet.SentAtUtc).TotalMinutes) <= 5 &&
-               BadgeCrypto.Verify(BadgeCrypto.BuildPresenceIdentityPayload(packet), packet.IdentitySignature, packet.PublicKey!) &&
+               IdentityCrypto.Verify(IdentityCrypto.BuildPresenceIdentityPayload(packet), packet.IdentitySignature, packet.PublicKey!) &&
                session.TryUseIdentityNonce(packet.IdentityNonce);
     }
 
-    private static bool VerifyChatIdentity(ChatPacket packet, ClientSession session)
+    private bool VerifyChatIdentity(ChatPacket packet, ClientSession session)
     {
-        var hasAny = packet.FromPublicKey is not null || packet.IdentityNonce is not null || packet.IdentitySignature is not null || packet.BadgeCertificate is not null;
-        if (!hasAny) return packet.FromUserId == session.UserId;
+        var hasAny = packet.FromPublicKey is not null || packet.IdentityNonce is not null || packet.IdentitySignature is not null;
+        if (!hasAny) return _accounts is null && packet.FromUserId == session.UserId;
         return packet.FromUserId == session.UserId && packet.FromPublicKey == session.PublicKey &&
                !string.IsNullOrWhiteSpace(packet.IdentityNonce) && !string.IsNullOrWhiteSpace(packet.IdentitySignature) &&
                Math.Abs((DateTimeOffset.UtcNow - packet.SentAtUtc).TotalMinutes) <= 5 &&
-               BadgeCrypto.Verify(BadgeCrypto.BuildChatIdentityPayload(packet), packet.IdentitySignature, packet.FromPublicKey!) &&
+               IdentityCrypto.Verify(IdentityCrypto.BuildChatIdentityPayload(packet), packet.IdentitySignature, packet.FromPublicKey!) &&
                session.TryUseIdentityNonce(packet.IdentityNonce);
     }
 }

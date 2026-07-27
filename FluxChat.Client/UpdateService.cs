@@ -3,6 +3,8 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -14,6 +16,12 @@ internal static class UpdateService
     private const string RepositoryName = "FluxChat";
     private const string ClientAssetName = "FluxChat.exe";
     private const string CompanionFileName = "ffmpeg.exe";
+    private const string ReleaseSigningPublicKey = """
+        -----BEGIN PUBLIC KEY-----
+        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEl6dggcnnNbMTPL/5nRIyrjQuLw3A
+        nwLRf5f7lA3FQP1cSOwmTqtrNF/HUbSwFSBz++6X9pmRoPctX70disNBig==
+        -----END PUBLIC KEY-----
+        """;
     private static readonly Uri LatestReleaseUri = new($"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest");
 
     public static async Task<UpdateInfo?> CheckLatestAsync(CancellationToken cancellationToken)
@@ -50,7 +58,10 @@ internal static class UpdateService
                 && !string.IsNullOrWhiteSpace(archiveAsset.BrowserDownloadUrl)
                 && IsCompanionFileMissing())
             {
-                return new UpdateInfo(latestVersion, release.HtmlUrl, new Uri(archiveAsset.BrowserDownloadUrl), archiveAsset.Name, true, true);
+                var repairSignature = FindSignatureAsset(release.Assets, archiveAsset.Name);
+                return repairSignature is null
+                    ? null
+                    : new UpdateInfo(latestVersion, release.HtmlUrl, new Uri(archiveAsset.BrowserDownloadUrl), new Uri(repairSignature.BrowserDownloadUrl), archiveAsset.Name, true, true);
             }
 
             return null;
@@ -60,16 +71,29 @@ internal static class UpdateService
         if (preferredAsset is null || string.IsNullOrWhiteSpace(preferredAsset.BrowserDownloadUrl))
         {
             AppLog.Write($"Update check found {release.TagName}, but a FluxChat release asset is missing.");
-            return new UpdateInfo(latestVersion, release.HtmlUrl, null, string.Empty, false, false);
+            return new UpdateInfo(latestVersion, release.HtmlUrl, null, null, string.Empty, false, false);
         }
 
         var isArchive = preferredAsset == archiveAsset;
-        return new UpdateInfo(latestVersion, release.HtmlUrl, new Uri(preferredAsset.BrowserDownloadUrl), preferredAsset.Name, isArchive, false);
+        var signatureAsset = FindSignatureAsset(release.Assets, preferredAsset.Name);
+        if (signatureAsset is null || string.IsNullOrWhiteSpace(signatureAsset.BrowserDownloadUrl))
+        {
+            AppLog.Write($"Update {release.TagName} was rejected because {preferredAsset.Name}.sig is missing.");
+            return null;
+        }
+        return new UpdateInfo(
+            latestVersion,
+            release.HtmlUrl,
+            new Uri(preferredAsset.BrowserDownloadUrl),
+            new Uri(signatureAsset.BrowserDownloadUrl),
+            preferredAsset.Name,
+            isArchive,
+            false);
     }
 
     public static async Task DownloadAndInstallAsync(UpdateInfo update, CancellationToken cancellationToken)
     {
-        if (update.DownloadUrl is null)
+        if (update.DownloadUrl is null || update.SignatureUrl is null)
         {
             OpenReleasePage(update.ReleasePage);
             return;
@@ -98,6 +122,13 @@ internal static class UpdateService
         {
             await source.CopyToAsync(destination, cancellationToken);
         }
+
+        string signatureText;
+        using (var client = CreateClient())
+        {
+            signatureText = await client.GetStringAsync(update.SignatureUrl, cancellationToken);
+        }
+        VerifyReleaseSignature(downloadedFile, signatureText);
 
         var sourcePath = downloadedFile;
         var copyWholeDirectory = false;
@@ -141,6 +172,32 @@ internal static class UpdateService
             ?? assets.FirstOrDefault(x =>
                 x.Name.StartsWith("FluxChat", StringComparison.OrdinalIgnoreCase)
                 && x.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static GitHubAsset? FindSignatureAsset(IReadOnlyList<GitHubAsset> assets, string assetName)
+        => assets.FirstOrDefault(x =>
+            string.Equals(x.Name, assetName + ".sig", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(x.BrowserDownloadUrl));
+
+    private static void VerifyReleaseSignature(string filePath, string signatureText)
+    {
+        byte[] signature;
+        try
+        {
+            signature = Convert.FromBase64String(signatureText.Trim());
+        }
+        catch (FormatException ex)
+        {
+            throw new CryptographicException("The update signature file is invalid.", ex);
+        }
+
+        using var key = ECDsa.Create();
+        key.ImportFromPem(ReleaseSigningPublicKey);
+        using var stream = File.OpenRead(filePath);
+        if (!key.VerifyData(stream, signature, HashAlgorithmName.SHA256))
+        {
+            throw new CryptographicException("FluxChat blocked an update whose digital signature is not trusted.");
+        }
     }
 
     private static bool IsCompanionFileMissing()
@@ -353,4 +410,11 @@ catch {
         [property: JsonPropertyName("browser_download_url")] string BrowserDownloadUrl);
 }
 
-internal sealed record UpdateInfo(Version Version, Uri ReleasePage, Uri? DownloadUrl, string AssetName, bool IsArchive, bool IsRepair);
+internal sealed record UpdateInfo(
+    Version Version,
+    Uri ReleasePage,
+    Uri? DownloadUrl,
+    Uri? SignatureUrl,
+    string AssetName,
+    bool IsArchive,
+    bool IsRepair);

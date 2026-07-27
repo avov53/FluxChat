@@ -53,6 +53,14 @@ dist-server-linux\fluxus
 
 Copy those files to the VPS, run `fluxus` to create invites/manage users, and run `FluxChat.Server` on TCP port `42800`.
 
+For the supported VPS installation and account registration service, use:
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/avov53/fluxusui/main/install.sh)
+```
+
+The installer keeps relay data on update and offers an interactive account setup wizard. It configures PostgreSQL and HTTPS; rerun it with `fluxus setup accounts` or check it with `fluxus setup accounts status`.
+
 ## Auto-Update
 
 The Windows client checks the latest GitHub release on startup:

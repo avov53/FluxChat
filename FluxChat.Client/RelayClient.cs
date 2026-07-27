@@ -31,6 +31,7 @@ internal sealed class RelayClient : IAsyncDisposable
     private string? _screenHost;
     private int _screenPort;
     private string _screenCredential = "";
+    private int _connectionVersion;
 
     public RelayClient(UserProfile profile)
     {
@@ -38,16 +39,11 @@ internal sealed class RelayClient : IAsyncDisposable
         _identitySigner = new IdentitySigner(profile);
     }
 
-    public BadgeCertificate? ActiveBadgeCertificate
-    {
-        get => _identitySigner.ActiveBadgeCertificate;
-        set => _identitySigner.ActiveBadgeCertificate = value;
-    }
-
     public bool IsConnected => _client?.Connected == true && _writer is not null;
     public bool IsScreenChannelConnected => _screenClient?.Connected == true && _screenWriter is not null;
     public string? ConnectedServer { get; private set; }
     public RelayIceConfig? IceConfig { get; private set; }
+    public string? AccountApiUrl { get; private set; }
 
     public event Action<ChatPacket>? MessageReceived;
     public event Action<RelayAudioPacket>? AudioReceived;
@@ -58,6 +54,7 @@ internal sealed class RelayClient : IAsyncDisposable
     public async Task<string?> ConnectAsync(string serverAddress, string credential, CancellationToken cancellationToken)
     {
         await DisposeConnectionAsync();
+        var connectionVersion = Interlocked.Increment(ref _connectionVersion);
 
         var endpoint = ParseEndpoint(serverAddress);
         AppLog.Write($"Relay connect attempt: {endpoint.host}:{endpoint.port}");
@@ -78,6 +75,7 @@ internal sealed class RelayClient : IAsyncDisposable
         var ackLine = await reader.ReadLineAsync(cancellationToken);
         var ack = ReadPacket<RelayAckPacket>(ackLine, "fluxchat.relay-ack.v1")
             ?? throw new InvalidOperationException("VPS server did not confirm registration.");
+        AccountApiUrl = ack.AccountApiUrl;
         if (!ack.Accepted)
         {
             throw new UnauthorizedAccessException(ack.Message);
@@ -94,17 +92,24 @@ internal sealed class RelayClient : IAsyncDisposable
 
         StatusChanged?.Invoke($"VPS connected: {endpoint.host}:{endpoint.port}");
         AppLog.Write($"Relay connected: {endpoint.host}:{endpoint.port}");
+        // A one-time invite is rotated by the relay during the primary handshake.
+        // Secondary audio/screen channels must immediately use that rotated token,
+        // otherwise they race the consumed invite and are rejected as invalid.
+        var channelCredential = string.IsNullOrWhiteSpace(ack.ClientToken)
+            ? credential
+            : ack.ClientToken;
+
         ConnectedServer = $"{endpoint.host}:{endpoint.port}";
         _audioHost = endpoint.host;
         _audioPort = endpoint.port;
-        _audioCredential = credential;
+        _audioCredential = channelCredential;
         _screenHost = endpoint.host;
         _screenPort = endpoint.port;
-        _screenCredential = credential;
+        _screenCredential = channelCredential;
 
         try
         {
-            await ConnectAudioTcpAsync(endpoint.host, endpoint.port, credential, cancellationToken);
+            await ConnectAudioTcpAsync(endpoint.host, endpoint.port, channelCredential, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -127,7 +132,7 @@ internal sealed class RelayClient : IAsyncDisposable
 
         try
         {
-            await ConnectScreenTcpAsync(endpoint.host, endpoint.port, credential, cancellationToken);
+            await ConnectScreenTcpAsync(endpoint.host, endpoint.port, channelCredential, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -152,7 +157,7 @@ internal sealed class RelayClient : IAsyncDisposable
         _audioUdp.Connect(endpoint.host, endpoint.port);
         _ = Task.Run(() => ReadAudioLoopAsync(_audioUdp, _stop.Token));
 
-        _ = Task.Run(() => ReadLoopAsync(reader, _stop.Token));
+        _ = Task.Run(() => ReadLoopAsync(reader, connectionVersion, _stop.Token));
         return ack.ClientToken;
     }
 
@@ -286,7 +291,8 @@ internal sealed class RelayClient : IAsyncDisposable
         double avatarOffsetX = 0,
         double avatarOffsetY = 0,
         double avatarVideoStartSeconds = 0,
-        double avatarVideoDurationSeconds = 10)
+        double avatarVideoDurationSeconds = 10,
+        string? customStatus = null)
     {
         if (_writer is null)
         {
@@ -304,7 +310,8 @@ internal sealed class RelayClient : IAsyncDisposable
                 avatarOffsetX,
                 avatarOffsetY,
                 avatarVideoStartSeconds,
-                avatarVideoDurationSeconds);
+                avatarVideoDurationSeconds,
+                customStatus);
         await SendRawAsync(_identitySigner.Sign(presence), cancellationToken);
     }
 
@@ -436,7 +443,7 @@ internal sealed class RelayClient : IAsyncDisposable
         }
     }
 
-    private async Task ReadLoopAsync(StreamReader reader, CancellationToken cancellationToken)
+    private async Task ReadLoopAsync(StreamReader reader, int connectionVersion, CancellationToken cancellationToken)
     {
         try
         {
@@ -494,7 +501,10 @@ internal sealed class RelayClient : IAsyncDisposable
         }
         finally
         {
-            await DisposeConnectionAsync();
+            if (connectionVersion == Volatile.Read(ref _connectionVersion))
+            {
+                await DisposeConnectionAsync();
+            }
         }
     }
 
@@ -777,6 +787,7 @@ internal sealed class RelayClient : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Interlocked.Increment(ref _connectionVersion);
         await _stop.CancelAsync();
         await DisposeConnectionAsync();
         _sendLock.Dispose();

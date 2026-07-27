@@ -4,15 +4,26 @@ namespace FluxChat.Client;
 
 internal sealed class HistoryStore
 {
-    private readonly string _connectionString = new SqliteConnectionStringBuilder
+    // Server history is the primary source, but local cache keeps contacts and recent chats available after restart.
+    private static readonly bool PersistMessageCache = true;
+    private readonly Dictionary<string, ContactViewModel> _memoryContacts = new(StringComparer.Ordinal);
+    private bool _useLocalDatabase = true;
+    private static string ConnectionString => new SqliteConnectionStringBuilder
     {
         DataSource = AppPaths.HistoryPath
     }.ToString();
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(bool useLocalDatabase = true)
     {
-        AppPaths.EnsureCreated();
-        await using var connection = new SqliteConnection(_connectionString);
+        _useLocalDatabase = useLocalDatabase;
+        if (!_useLocalDatabase)
+        {
+            _memoryContacts.Clear();
+            return;
+        }
+
+        AppPaths.EnsureAccountDataDirectoryCreated();
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -48,10 +59,8 @@ internal sealed class HistoryStore
                 GroupVersion INTEGER NOT NULL DEFAULT 0,
                 GroupIsDeleted INTEGER NOT NULL DEFAULT 0,
                 GroupMembersJson TEXT NOT NULL DEFAULT '',
-                VerifiedBadgeId TEXT NOT NULL DEFAULT '',
-                BadgeCertificateJson TEXT NOT NULL DEFAULT '',
                 IdentityPublicKey TEXT NOT NULL DEFAULT '',
-                BadgeVerifiedAtUtc TEXT NULL
+                CustomStatus TEXT NOT NULL DEFAULT ''
             );
             """;
 
@@ -69,10 +78,8 @@ internal sealed class HistoryStore
         await AddContactColumnAsync(connection, "GroupVersion INTEGER NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "GroupIsDeleted INTEGER NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "GroupMembersJson TEXT NOT NULL DEFAULT ''");
-        await AddContactColumnAsync(connection, "VerifiedBadgeId TEXT NOT NULL DEFAULT ''");
-        await AddContactColumnAsync(connection, "BadgeCertificateJson TEXT NOT NULL DEFAULT ''");
         await AddContactColumnAsync(connection, "IdentityPublicKey TEXT NOT NULL DEFAULT ''");
-        await AddContactColumnAsync(connection, "BadgeVerifiedAtUtc TEXT NULL");
+        await AddContactColumnAsync(connection, "CustomStatus TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "Kind TEXT NOT NULL DEFAULT 'Text'");
         await AddMessageColumnAsync(connection, "Text TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "AttachmentPath TEXT NOT NULL DEFAULT ''");
@@ -140,7 +147,8 @@ internal sealed class HistoryStore
 
     public async Task SaveAsync(MessageViewModel message)
     {
-        await using var connection = new SqliteConnection(_connectionString);
+        if (!PersistMessageCache) return;
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -189,7 +197,8 @@ internal sealed class HistoryStore
 
     public async Task DeleteMessageAsync(Guid messageId)
     {
-        await using var connection = new SqliteConnection(_connectionString);
+        if (!PersistMessageCache) return;
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -204,7 +213,8 @@ internal sealed class HistoryStore
 
     public async Task<string> LoadMessageAttachmentPathAsync(Guid messageId, string peerUserId, bool isOutgoing)
     {
-        await using var connection = new SqliteConnection(_connectionString);
+        if (!PersistMessageCache) return "";
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -226,7 +236,8 @@ internal sealed class HistoryStore
 
     public async Task DeleteIncomingMessageAsync(Guid messageId, string peerUserId)
     {
-        await using var connection = new SqliteConnection(_connectionString);
+        if (!PersistMessageCache) return;
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -244,9 +255,10 @@ internal sealed class HistoryStore
 
     public async Task<IReadOnlyList<MessageViewModel>> LoadConversationAsync(string peerUserId)
     {
+        if (!PersistMessageCache) return [];
         var messages = new List<MessageViewModel>();
 
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -303,7 +315,13 @@ internal sealed class HistoryStore
 
     public async Task SaveContactAsync(ContactViewModel contact)
     {
-        await using var connection = new SqliteConnection(_connectionString);
+        if (!_useLocalDatabase)
+        {
+            _memoryContacts[contact.UserId] = contact;
+            return;
+        }
+
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -311,11 +329,11 @@ internal sealed class HistoryStore
             INSERT INTO Contacts (UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
                                   AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
                                   IsGroup, GroupMemberIds, GroupOwnerUserId, GroupVersion, GroupIsDeleted, GroupMembersJson,
-                                  VerifiedBadgeId, BadgeCertificateJson, IdentityPublicKey, BadgeVerifiedAtUtc)
+                                  IdentityPublicKey, CustomStatus)
             VALUES ($userId, $displayName, $ipAddress, $messagePort, $status, $lastSeenUtc, $avatarKind, $avatarPath,
                     $avatarScale, $avatarOffsetX, $avatarOffsetY, $avatarVideoStartSeconds, $avatarVideoDurationSeconds,
                     $isGroup, $groupMemberIds, $groupOwnerUserId, $groupVersion, $groupIsDeleted, $groupMembersJson,
-                    $verifiedBadgeId, $badgeCertificateJson, $identityPublicKey, $badgeVerifiedAtUtc)
+                    $identityPublicKey, $customStatus)
             ON CONFLICT(UserId) DO UPDATE SET
                 DisplayName = excluded.DisplayName,
                 IpAddress = excluded.IpAddress,
@@ -335,10 +353,8 @@ internal sealed class HistoryStore
                 GroupVersion = excluded.GroupVersion,
                 GroupIsDeleted = excluded.GroupIsDeleted,
                 GroupMembersJson = excluded.GroupMembersJson,
-                VerifiedBadgeId = excluded.VerifiedBadgeId,
-                BadgeCertificateJson = excluded.BadgeCertificateJson,
                 IdentityPublicKey = excluded.IdentityPublicKey,
-                BadgeVerifiedAtUtc = excluded.BadgeVerifiedAtUtc;
+                CustomStatus = excluded.CustomStatus;
             """;
         command.Parameters.AddWithValue("$userId", contact.UserId);
         command.Parameters.AddWithValue("$displayName", contact.DisplayName);
@@ -359,19 +375,25 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$groupVersion", contact.GroupVersion);
         command.Parameters.AddWithValue("$groupIsDeleted", contact.GroupIsDeleted ? 1 : 0);
         command.Parameters.AddWithValue("$groupMembersJson", contact.GroupMembersJson);
-        command.Parameters.AddWithValue("$verifiedBadgeId", contact.VerifiedBadgeId);
-        command.Parameters.AddWithValue("$badgeCertificateJson", contact.BadgeCertificateJson);
         command.Parameters.AddWithValue("$identityPublicKey", contact.IdentityPublicKey);
-        command.Parameters.AddWithValue("$badgeVerifiedAtUtc", contact.BadgeVerifiedAtUtc?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$customStatus", contact.CustomStatus);
 
         await command.ExecuteNonQueryAsync();
     }
 
     public async Task<IReadOnlyList<ContactViewModel>> LoadContactsAsync()
     {
+        if (!_useLocalDatabase)
+        {
+            return _memoryContacts.Values
+                .Where(x => !x.GroupIsDeleted)
+                .OrderBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
         var contacts = new List<ContactViewModel>();
 
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();
@@ -379,7 +401,7 @@ internal sealed class HistoryStore
             SELECT UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
                    AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
                    IsGroup, GroupMemberIds, GroupOwnerUserId, GroupVersion, GroupIsDeleted, GroupMembersJson,
-                   VerifiedBadgeId, BadgeCertificateJson, IdentityPublicKey, BadgeVerifiedAtUtc
+                   IdentityPublicKey, CustomStatus
             FROM Contacts
             WHERE GroupIsDeleted = 0
             ORDER BY DisplayName COLLATE NOCASE ASC;
@@ -413,10 +435,8 @@ internal sealed class HistoryStore
                 GroupVersion = reader.IsDBNull(16) ? 0 : reader.GetInt64(16),
                 GroupIsDeleted = !reader.IsDBNull(17) && reader.GetInt32(17) == 1,
                 GroupMembersJson = reader.IsDBNull(18) ? "" : reader.GetString(18),
-                VerifiedBadgeId = reader.IsDBNull(19) ? "" : reader.GetString(19),
-                BadgeCertificateJson = reader.IsDBNull(20) ? "" : reader.GetString(20),
-                IdentityPublicKey = reader.IsDBNull(21) ? "" : reader.GetString(21),
-                BadgeVerifiedAtUtc = reader.IsDBNull(22) ? null : DateTimeOffset.Parse(reader.GetString(22))
+                IdentityPublicKey = reader.IsDBNull(19) ? "" : reader.GetString(19),
+                CustomStatus = reader.IsDBNull(20) ? "" : reader.GetString(20)
             });
         }
 
@@ -425,7 +445,13 @@ internal sealed class HistoryStore
 
     public async Task DeleteContactAsync(string userId)
     {
-        await using var connection = new SqliteConnection(_connectionString);
+        if (!_useLocalDatabase)
+        {
+            _memoryContacts.Remove(userId);
+            return;
+        }
+
+        await using var connection = new SqliteConnection(ConnectionString);
         await connection.OpenAsync();
 
         var command = connection.CreateCommand();

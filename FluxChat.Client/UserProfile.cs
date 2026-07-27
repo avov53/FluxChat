@@ -17,10 +17,14 @@ internal sealed record UserProfile(
     double AvatarOffsetX = 0,
     double AvatarOffsetY = 0,
     double AvatarVideoStartSeconds = 0,
-    double AvatarVideoDurationSeconds = 10);
+    double AvatarVideoDurationSeconds = 10,
+    UserPresenceStatus SelectedStatus = UserPresenceStatus.Online,
+    string CustomStatus = "");
 
 internal static class UserProfileStore
 {
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     public static async Task<UserProfile> LoadOrCreateAsync()
     {
         AppPaths.EnsureCreated();
@@ -33,6 +37,7 @@ internal static class UserProfileStore
                 var existing = JsonSerializer.Deserialize<UserProfile>(json);
                 if (existing is not null && IsUsable(existing))
                 {
+                    await SaveProfileCopyAsync(existing);
                     return existing;
                 }
             }
@@ -44,13 +49,7 @@ internal static class UserProfileStore
             MoveBrokenProfileAside();
         }
 
-        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var publicKey = Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo());
-        var privateKey = ecdsa.ExportPkcs8PrivateKey();
-        var protectedKey = ProtectedData.Protect(privateKey, null, DataProtectionScope.CurrentUser);
-        var userId = BadgeCrypto.CreateUserId(publicKey);
-        var profile = new UserProfile(userId, Environment.UserName, Convert.ToBase64String(protectedKey), publicKey);
-
+        var profile = CreateNew(Environment.UserName);
         await SaveAsync(profile);
         return profile;
     }
@@ -58,8 +57,72 @@ internal static class UserProfileStore
     public static async Task SaveAsync(UserProfile profile)
     {
         AppPaths.EnsureCreated();
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        await File.WriteAllTextAsync(AppPaths.ProfilePath, JsonSerializer.Serialize(profile, options));
+        await File.WriteAllTextAsync(AppPaths.ProfilePath, JsonSerializer.Serialize(profile, JsonOptions));
+        await SaveProfileCopyAsync(profile);
+    }
+
+    public static async Task<UserProfile> CreateNewAsync(string? displayName = null)
+    {
+        var profile = CreateNew(displayName);
+        await SaveProfileCopyAsync(profile);
+        return profile;
+    }
+
+    public static async Task<UserProfile?> TryLoadProfileAsync(string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return null;
+        }
+
+        try
+        {
+            var path = GetProfileCopyPath(userId);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var json = await File.ReadAllTextAsync(path);
+            var profile = JsonSerializer.Deserialize<UserProfile>(json);
+            return profile is not null && IsUsable(profile) ? profile : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or CryptographicException or FormatException)
+        {
+            AppLog.Write(ex, "Saved local account profile could not be loaded");
+            return null;
+        }
+    }
+
+    public static Task ActivateAsync(UserProfile profile)
+        => SaveAsync(profile);
+
+    private static UserProfile CreateNew(string? displayName)
+    {
+        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var publicKey = Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo());
+        var privateKey = ecdsa.ExportPkcs8PrivateKey();
+        var protectedKey = ProtectedData.Protect(privateKey, null, DataProtectionScope.CurrentUser);
+        var userId = IdentityCrypto.CreateUserId(publicKey);
+        var name = string.IsNullOrWhiteSpace(displayName) ? Environment.UserName : displayName.Trim();
+        return new UserProfile(userId, name, Convert.ToBase64String(protectedKey), publicKey);
+    }
+
+    private static async Task SaveProfileCopyAsync(UserProfile profile)
+    {
+        AppPaths.EnsureProfilesDirectoryCreated();
+        await File.WriteAllTextAsync(GetProfileCopyPath(profile.UserId), JsonSerializer.Serialize(profile, JsonOptions));
+    }
+
+    private static string GetProfileCopyPath(string userId)
+    {
+        var safeUserId = new string(userId.Where(char.IsLetterOrDigit).ToArray());
+        if (string.IsNullOrWhiteSpace(safeUserId))
+        {
+            safeUserId = Guid.NewGuid().ToString("N");
+        }
+
+        return Path.Combine(AppPaths.ProfilesDirectory, safeUserId + ".json");
     }
 
     private static bool IsUsable(UserProfile profile)
