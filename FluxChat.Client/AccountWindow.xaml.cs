@@ -34,8 +34,38 @@ public partial class AccountWindow : Window
         LoginInput.Text = settings.AccountLogin;
         NewLoginInput.Text = settings.AccountLogin;
         TryFillSavedPassword(LoginInput.Text);
+        ApplyLocalization();
         _currentPage = WelcomePage;
         AnimateShell();
+    }
+
+    private static string L(string key) => AppLanguage.Text(key);
+
+    private void ApplyLocalization()
+    {
+        AccountPrivateText.Text = L("account.private");
+        WelcomeTitleText.Text = L("account.welcome.title");
+        WelcomeSubtitleText.Text = L("account.welcome.subtitle");
+        WelcomeSignInButton.Content = L("account.welcome.signIn");
+        WelcomeCreateAccountButton.Content = L("account.welcome.create");
+        WelcomePrivacyText.Text = L("account.welcome.privacy");
+        SignInBackButton.ToolTip = L("account.back");
+        RegisterBackButton.ToolTip = L("account.back");
+        SignInTitleText.Text = L("account.signin.title");
+        SignInSubtitleText.Text = L("account.signin.subtitle");
+        SignInLoginLabelText.Text = L("account.login");
+        SignInPasswordLabelText.Text = L("account.password");
+        SignInServerLabelText.Text = L("account.vpsServer");
+        SignInButton.Content = L("account.welcome.signIn");
+        RegisterTitleText.Text = L("account.create.title");
+        RegisterSubtitleText.Text = L("account.create.subtitle");
+        RegisterLoginLabelText.Text = L("account.login");
+        RegisterPasswordLabelText.Text = L("account.passwordLong");
+        RegisterRepeatPasswordLabelText.Text = L("account.repeatPassword");
+        RegisterServerLabelText.Text = L("account.vpsServer");
+        RegisterInviteLabelText.Text = L("account.inviteCode");
+        RegisterButton.Content = L("account.welcome.create");
+        BusyText.Text = L("account.wait");
     }
 
     private void WelcomeSignInButton_OnClick(object sender, RoutedEventArgs e)

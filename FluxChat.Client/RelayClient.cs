@@ -292,7 +292,9 @@ internal sealed class RelayClient : IAsyncDisposable
         double avatarOffsetY = 0,
         double avatarVideoStartSeconds = 0,
         double avatarVideoDurationSeconds = 10,
-        string? customStatus = null)
+        string? customStatus = null,
+        string activityVisibility = "Friends",
+        IReadOnlyList<string>? activitySelectedFriendIds = null)
     {
         if (_writer is null)
         {
@@ -311,7 +313,9 @@ internal sealed class RelayClient : IAsyncDisposable
                 avatarOffsetY,
                 avatarVideoStartSeconds,
                 avatarVideoDurationSeconds,
-                customStatus);
+                customStatus,
+                activityVisibility,
+                activitySelectedFriendIds);
         await SendRawAsync(_identitySigner.Sign(presence), cancellationToken);
     }
 

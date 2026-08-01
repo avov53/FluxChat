@@ -13,6 +13,7 @@ database.Initialize();
 
 var postgresConnection = Environment.GetEnvironmentVariable("FLUXCHAT_POSTGRES_CONNECTION");
 AccountStore? accountStore = null;
+AccountApiHost? accountApi = null;
 var federationServerId = Environment.GetEnvironmentVariable("FLUXCHAT_FEDERATION_SERVER_ID") ?? Environment.MachineName;
 if (!string.IsNullOrWhiteSpace(postgresConnection))
 {
@@ -28,9 +29,8 @@ if (!string.IsNullOrWhiteSpace(postgresConnection))
     }
     var federationPublisher = new FederationUsernamePublisher(federationServerId, federationKey, federationPeers);
     var retentionDays = int.TryParse(Environment.GetEnvironmentVariable("FLUXCHAT_RETENTION_DAYS"), out var configuredRetentionDays) ? configuredRetentionDays : 730;
-    var accountApi = new AccountApiHost(accountStore, database, accountPrefix, federationPublisher, retentionDays);
-    accountApi.Start();
-    Console.WriteLine($"FluxChat account API listening on {accountPrefix}");
+    accountApi = new AccountApiHost(accountStore, database, accountPrefix, federationPublisher, retentionDays);
+    Console.WriteLine($"FluxChat account API configured on {accountPrefix}");
 }
 else
 {
@@ -45,7 +45,7 @@ if (!string.IsNullOrWhiteSpace(publicAccountApiUrl) &&
 }
 
 var server = new RelayServer(database, accountStore, publicAccountApiUrl);
-await server.RunAsync();
+await server.RunAsync(accountApi);
 
 static void EnsurePrivateAccountApiPrefix(string prefix)
 {
@@ -99,11 +99,18 @@ internal sealed class RelayServer
         _publicAccountApiUrl = publicAccountApiUrl;
     }
 
-    public async Task RunAsync()
+    public async Task RunAsync(AccountApiHost? accountApi = null)
     {
-        var listener = new TcpListener(IPAddress.Any, FluxChatPorts.Relay);
-        using var audioUdp = new UdpClient(FluxChatPorts.Relay);
-        listener.Start();
+        accountApi?.Start();
+        if (accountApi is not null)
+        {
+            Console.WriteLine("FluxChat account API started.");
+        }
+
+        var (listener, audioUdp) = await BindRelaySocketsWithRetryAsync(FluxChatPorts.Relay, TimeSpan.FromSeconds(90));
+        using (listener.Server)
+        using (audioUdp)
+        {
         _ = Task.Run(SweepStaleSessionsAsync);
         _ = Task.Run(() => RunAudioUdpRelayAsync(audioUdp));
         _ = Task.Run(RunMaintenanceAsync);
@@ -119,27 +126,73 @@ internal sealed class RelayServer
             : "TURN disabled. Set FLUXCHAT_TURN_HOST and FLUXCHAT_TURN_SECRET to enable WebRTC relay.");
         Console.WriteLine("Use `fluxus` on the VPS to create invites and manage users.");
 
+            while (true)
+            {
+                var client = await listener.AcceptTcpClientAsync();
+                if (!await _connectionSlots.WaitAsync(TimeSpan.Zero))
+                {
+                    client.Dispose();
+                    Interlocked.Increment(ref _controlPacketsRejected);
+                    continue;
+                }
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await HandleClientAsync(client);
+                    }
+                    finally
+                    {
+                        _connectionSlots.Release();
+                    }
+                });
+            }
+        }
+    }
+
+    private static async Task<(TcpListener Listener, UdpClient AudioUdp)> BindRelaySocketsWithRetryAsync(int port, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        var attempt = 0;
+
         while (true)
         {
-            var client = await listener.AcceptTcpClientAsync();
-            if (!await _connectionSlots.WaitAsync(TimeSpan.Zero))
+            attempt++;
+            TcpListener? listener = null;
+            UdpClient? audioUdp = null;
+
+            try
             {
-                client.Dispose();
-                Interlocked.Increment(ref _controlPacketsRejected);
-                continue;
+                listener = new TcpListener(IPAddress.Any, port);
+                listener.Server.ExclusiveAddressUse = false;
+                listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                audioUdp = CreateReusableUdpClient(port);
+                listener.Start();
+                return (listener, audioUdp);
             }
-            _ = Task.Run(async () =>
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse && DateTimeOffset.UtcNow < deadline)
             {
-                try
-                {
-                    await HandleClientAsync(client);
-                }
-                finally
-                {
-                    _connectionSlots.Release();
-                }
-            });
+                listener?.Server.Dispose();
+                audioUdp?.Dispose();
+                Console.WriteLine($"FluxChat relay port {port} is busy; retrying bind in 1s (attempt {attempt}).");
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
+            catch
+            {
+                listener?.Server.Dispose();
+                audioUdp?.Dispose();
+                throw;
+            }
         }
+    }
+
+    private static UdpClient CreateReusableUdpClient(int port)
+    {
+        var udp = new UdpClient(AddressFamily.InterNetwork);
+        udp.Client.ExclusiveAddressUse = false;
+        udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        udp.Client.Bind(new IPEndPoint(IPAddress.Any, port));
+        return udp;
     }
 
     private async Task HandleClientAsync(TcpClient client)
@@ -395,7 +448,25 @@ internal sealed class RelayServer
             Console.WriteLine($"Friend request received: {packet.FromUserId} -> {packet.ToUserId}, messageId={packet.MessageId}");
         }
 
-        if (_accounts is not null && packet.Intent is "chat-rich" or "chat-e2e-message")
+        if (_accounts is not null)
+        {
+            try
+            {
+                var access = await _accounts.ValidatePacketAccessAsync(packet);
+                if (!access.Accepted)
+                {
+                    Console.WriteLine($"Rejected server packet {packet.MessageId} from {packet.FromUserId}: {access.Message}");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Server packet permission check failed for {packet.MessageId}: {ex.Message}");
+                return;
+            }
+        }
+
+        if (_accounts is not null && packet.Intent is "chat-rich" or "chat-e2e-message" or "group-message")
         {
             try
             {

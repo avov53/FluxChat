@@ -316,7 +316,7 @@
         <Grid Margin="44,30">
             <TextBlock Text="FluxChat" FontSize="18" FontWeight="Bold"
                        HorizontalAlignment="Left" VerticalAlignment="Top"/>
-            <TextBlock Text="Private conversations, one account."
+            <TextBlock x:Name="AccountPrivateText" Text="Private conversations, one account."
                        Foreground="#747B8B" FontSize="12"
                        HorizontalAlignment="Right" VerticalAlignment="Top"/>
 
@@ -338,16 +338,16 @@
                                 <TextBlock Text="#" FontSize="34" FontWeight="Bold" Foreground="#7ED7C4"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
-                            <TextBlock Text="Welcome to FluxChat" FontSize="30" FontWeight="SemiBold"
+                            <TextBlock x:Name="WelcomeTitleText" Text="Welcome to FluxChat" FontSize="30" FontWeight="SemiBold"
                                        TextAlignment="Center"/>
-                            <TextBlock Text="Sign in to see your conversations, or create your account."
+                            <TextBlock x:Name="WelcomeSubtitleText" Text="Sign in to see your conversations, or create your account."
                                        Foreground="#9EA4B2" TextAlignment="Center" TextWrapping="Wrap"
                                        FontSize="14" Margin="30,10,30,30"/>
-                            <Button Content="Sign in" Style="{StaticResource PrimaryButton}"
+                            <Button x:Name="WelcomeSignInButton" Content="Sign in" Style="{StaticResource PrimaryButton}"
                                     Margin="70,0,70,12" Click="WelcomeSignInButton_OnClick"/>
-                            <Button Content="Create account" Style="{StaticResource AccentButton}"
+                            <Button x:Name="WelcomeCreateAccountButton" Content="Create account" Style="{StaticResource AccentButton}"
                                     Margin="70,0" Click="WelcomeCreateAccountButton_OnClick"/>
-                            <TextBlock Text="Your contacts and status stay hidden until you sign in."
+                            <TextBlock x:Name="WelcomePrivacyText" Text="Your contacts and status stay hidden until you sign in."
                                        Foreground="#6F7685" FontSize="11" TextAlignment="Center"
                                        Margin="20,24,20,0"/>
                         </StackPanel>
@@ -360,7 +360,7 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
-                            <Button Style="{StaticResource BackButton}" Click="BackToWelcomeButton_OnClick"
+                            <Button x:Name="SignInBackButton" Style="{StaticResource BackButton}" Click="BackToWelcomeButton_OnClick"
                                     ToolTip="Back" VerticalAlignment="Top">
                                 <Viewbox Width="16" Height="16">
                                     <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -369,12 +369,12 @@
                                 </Viewbox>
                             </Button>
                             <StackPanel Margin="12,0,0,0">
-                                <TextBlock Text="Sign in" FontSize="25" FontWeight="SemiBold"/>
-                                <TextBlock Text="Continue to your FluxChat account." Foreground="#9EA4B2" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="SignInTitleText" Text="Sign in" FontSize="25" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="SignInSubtitleText" Text="Continue to your FluxChat account." Foreground="#9EA4B2" Margin="0,4,0,0"/>
                             </StackPanel>
                         </StackPanel>
                         <StackPanel Grid.Row="1" Margin="0,22,0,0">
-                            <TextBlock Text="Login" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="SignInLoginLabelText" Text="Login" Style="{StaticResource FieldLabel}"/>
                             <TextBox x:Name="LoginInput"
                                      GotKeyboardFocus="LoginInput_OnGotKeyboardFocus"
                                      PreviewMouseDown="LoginInput_OnPreviewMouseDown"
@@ -401,13 +401,13 @@
                                              SelectionChanged="SavedAccountsList_OnSelectionChanged"/>
                                 </Border>
                             </Popup>
-                            <TextBlock Text="Password" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="SignInPasswordLabelText" Text="Password" Style="{StaticResource FieldLabel}"/>
                             <PasswordBox x:Name="PasswordInput" GotKeyboardFocus="PasswordInput_OnGotKeyboardFocus"/>
                             <Button x:Name="SignInButton" Content="Sign in" Style="{StaticResource PrimaryButton}"
                                     Margin="0,22,0,0" Click="SignInButton_OnClick"/>
                         </StackPanel>
                         <StackPanel Grid.Row="2">
-                            <TextBlock Text="VPS server" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock x:Name="SignInServerLabelText" Text="VPS server" Style="{StaticResource FieldLabel}"/>
                             <TextBox x:Name="SignInApiUrlInput" ToolTip="IP address and relay port, for example 91.186.217.186:42800"/>
                         </StackPanel>
                     </Grid>
@@ -418,7 +418,7 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
-                            <Button Style="{StaticResource BackButton}" Click="BackToWelcomeButton_OnClick"
+                            <Button x:Name="RegisterBackButton" Style="{StaticResource BackButton}" Click="BackToWelcomeButton_OnClick"
                                     ToolTip="Back" VerticalAlignment="Top">
                                 <Viewbox Width="16" Height="16">
                                     <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -427,21 +427,21 @@
                                 </Viewbox>
                             </Button>
                             <StackPanel Margin="12,0,0,0">
-                                <TextBlock Text="Create account" FontSize="25" FontWeight="SemiBold"/>
-                                <TextBlock Text="One account for all your FluxChat devices." Foreground="#9EA4B2" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="RegisterTitleText" Text="Create account" FontSize="25" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="RegisterSubtitleText" Text="One account for all your FluxChat devices." Foreground="#9EA4B2" Margin="0,4,0,0"/>
                             </StackPanel>
                         </StackPanel>
                         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,18,0,0">
                             <StackPanel Margin="0,0,10,0">
-                                <TextBlock Text="Login" Style="{StaticResource FieldLabel}"/>
+                                <TextBlock x:Name="RegisterLoginLabelText" Text="Login" Style="{StaticResource FieldLabel}"/>
                                 <TextBox x:Name="NewLoginInput"/>
-                                <TextBlock Text="Password (10 or more characters)" Style="{StaticResource FieldLabel}"/>
+                                <TextBlock x:Name="RegisterPasswordLabelText" Text="Password (10 or more characters)" Style="{StaticResource FieldLabel}"/>
                                 <PasswordBox x:Name="NewPasswordInput"/>
-                                <TextBlock Text="Repeat password" Style="{StaticResource FieldLabel}"/>
+                                <TextBlock x:Name="RegisterRepeatPasswordLabelText" Text="Repeat password" Style="{StaticResource FieldLabel}"/>
                                 <PasswordBox x:Name="ConfirmPasswordInput"/>
-                                <TextBlock Text="VPS server" Style="{StaticResource FieldLabel}"/>
+                                <TextBlock x:Name="RegisterServerLabelText" Text="VPS server" Style="{StaticResource FieldLabel}"/>
                                 <TextBox x:Name="RegisterApiUrlInput" ToolTip="IP address and relay port, for example 91.186.217.186:42800"/>
-                                <TextBlock Text="Invite code" Style="{StaticResource FieldLabel}"/>
+                                <TextBlock x:Name="RegisterInviteLabelText" Text="Invite code" Style="{StaticResource FieldLabel}"/>
                                 <TextBox x:Name="RegisterInviteInput" ToolTip="Your one-time VPS invite code"/>
                                 <Button x:Name="RegisterButton" Content="Create account"
                                         Style="{StaticResource AccentButton}" Margin="0,22,0,0"
@@ -516,7 +516,7 @@
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                             <ProgressBar IsIndeterminate="True" Width="180" Height="4"
                                          Foreground="#65CDB7" Background="#353A45"/>
-                            <TextBlock Text="Please wait..." Foreground="#B8BCC8" TextAlignment="Center" Margin="0,14,0,0"/>
+                            <TextBlock x:Name="BusyText" Text="Please wait..." Foreground="#B8BCC8" TextAlignment="Center" Margin="0,14,0,0"/>
                         </StackPanel>
                     </Border>
 

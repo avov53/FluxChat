@@ -59,6 +59,11 @@ internal sealed class HistoryStore
                 GroupVersion INTEGER NOT NULL DEFAULT 0,
                 GroupIsDeleted INTEGER NOT NULL DEFAULT 0,
                 GroupMembersJson TEXT NOT NULL DEFAULT '',
+                ServerTemplate TEXT NOT NULL DEFAULT '',
+                ServerChannelsJson TEXT NOT NULL DEFAULT '',
+                ServerRolesJson TEXT NOT NULL DEFAULT '',
+                ServerModerationJson TEXT NOT NULL DEFAULT '',
+                SelectedServerChannelId TEXT NOT NULL DEFAULT 'general',
                 IdentityPublicKey TEXT NOT NULL DEFAULT '',
                 CustomStatus TEXT NOT NULL DEFAULT ''
             );
@@ -78,6 +83,11 @@ internal sealed class HistoryStore
         await AddContactColumnAsync(connection, "GroupVersion INTEGER NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "GroupIsDeleted INTEGER NOT NULL DEFAULT 0");
         await AddContactColumnAsync(connection, "GroupMembersJson TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "ServerTemplate TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "ServerChannelsJson TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "ServerRolesJson TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "ServerModerationJson TEXT NOT NULL DEFAULT ''");
+        await AddContactColumnAsync(connection, "SelectedServerChannelId TEXT NOT NULL DEFAULT 'general'");
         await AddContactColumnAsync(connection, "IdentityPublicKey TEXT NOT NULL DEFAULT ''");
         await AddContactColumnAsync(connection, "CustomStatus TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "Kind TEXT NOT NULL DEFAULT 'Text'");
@@ -253,6 +263,22 @@ internal sealed class HistoryStore
         await command.ExecuteNonQueryAsync();
     }
 
+    public async Task DeleteConversationAsync(string peerUserId)
+    {
+        if (!PersistMessageCache) return;
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM Messages
+            WHERE PeerUserId = $peerUserId;
+            """;
+        command.Parameters.AddWithValue("$peerUserId", peerUserId);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
     public async Task<IReadOnlyList<MessageViewModel>> LoadConversationAsync(string peerUserId)
     {
         if (!PersistMessageCache) return [];
@@ -329,10 +355,12 @@ internal sealed class HistoryStore
             INSERT INTO Contacts (UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
                                   AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
                                   IsGroup, GroupMemberIds, GroupOwnerUserId, GroupVersion, GroupIsDeleted, GroupMembersJson,
+                                  ServerTemplate, ServerChannelsJson, ServerRolesJson, ServerModerationJson, SelectedServerChannelId,
                                   IdentityPublicKey, CustomStatus)
             VALUES ($userId, $displayName, $ipAddress, $messagePort, $status, $lastSeenUtc, $avatarKind, $avatarPath,
                     $avatarScale, $avatarOffsetX, $avatarOffsetY, $avatarVideoStartSeconds, $avatarVideoDurationSeconds,
                     $isGroup, $groupMemberIds, $groupOwnerUserId, $groupVersion, $groupIsDeleted, $groupMembersJson,
+                    $serverTemplate, $serverChannelsJson, $serverRolesJson, $serverModerationJson, $selectedServerChannelId,
                     $identityPublicKey, $customStatus)
             ON CONFLICT(UserId) DO UPDATE SET
                 DisplayName = excluded.DisplayName,
@@ -353,6 +381,11 @@ internal sealed class HistoryStore
                 GroupVersion = excluded.GroupVersion,
                 GroupIsDeleted = excluded.GroupIsDeleted,
                 GroupMembersJson = excluded.GroupMembersJson,
+                ServerTemplate = excluded.ServerTemplate,
+                ServerChannelsJson = excluded.ServerChannelsJson,
+                ServerRolesJson = excluded.ServerRolesJson,
+                ServerModerationJson = excluded.ServerModerationJson,
+                SelectedServerChannelId = excluded.SelectedServerChannelId,
                 IdentityPublicKey = excluded.IdentityPublicKey,
                 CustomStatus = excluded.CustomStatus;
             """;
@@ -375,6 +408,11 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$groupVersion", contact.GroupVersion);
         command.Parameters.AddWithValue("$groupIsDeleted", contact.GroupIsDeleted ? 1 : 0);
         command.Parameters.AddWithValue("$groupMembersJson", contact.GroupMembersJson);
+        command.Parameters.AddWithValue("$serverTemplate", contact.ServerTemplate);
+        command.Parameters.AddWithValue("$serverChannelsJson", contact.ServerChannelsJson);
+        command.Parameters.AddWithValue("$serverRolesJson", contact.ServerRolesJson);
+        command.Parameters.AddWithValue("$serverModerationJson", contact.ServerModerationJson);
+        command.Parameters.AddWithValue("$selectedServerChannelId", contact.SelectedServerChannelId);
         command.Parameters.AddWithValue("$identityPublicKey", contact.IdentityPublicKey);
         command.Parameters.AddWithValue("$customStatus", contact.CustomStatus);
 
@@ -401,6 +439,7 @@ internal sealed class HistoryStore
             SELECT UserId, DisplayName, IpAddress, MessagePort, Status, LastSeenUtc, AvatarKind, AvatarPath,
                    AvatarScale, AvatarOffsetX, AvatarOffsetY, AvatarVideoStartSeconds, AvatarVideoDurationSeconds,
                    IsGroup, GroupMemberIds, GroupOwnerUserId, GroupVersion, GroupIsDeleted, GroupMembersJson,
+                   ServerTemplate, ServerChannelsJson, ServerRolesJson, ServerModerationJson, SelectedServerChannelId,
                    IdentityPublicKey, CustomStatus
             FROM Contacts
             WHERE GroupIsDeleted = 0
@@ -435,8 +474,13 @@ internal sealed class HistoryStore
                 GroupVersion = reader.IsDBNull(16) ? 0 : reader.GetInt64(16),
                 GroupIsDeleted = !reader.IsDBNull(17) && reader.GetInt32(17) == 1,
                 GroupMembersJson = reader.IsDBNull(18) ? "" : reader.GetString(18),
-                IdentityPublicKey = reader.IsDBNull(19) ? "" : reader.GetString(19),
-                CustomStatus = reader.IsDBNull(20) ? "" : reader.GetString(20)
+                ServerTemplate = reader.IsDBNull(19) ? "" : reader.GetString(19),
+                ServerChannelsJson = reader.IsDBNull(20) ? "" : reader.GetString(20),
+                ServerRolesJson = reader.IsDBNull(21) ? "" : reader.GetString(21),
+                ServerModerationJson = reader.IsDBNull(22) ? "" : reader.GetString(22),
+                SelectedServerChannelId = reader.IsDBNull(23) ? "general" : reader.GetString(23),
+                IdentityPublicKey = reader.IsDBNull(24) ? "" : reader.GetString(24),
+                CustomStatus = reader.IsDBNull(25) ? "" : reader.GetString(25)
             });
         }
 

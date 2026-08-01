@@ -27,6 +27,27 @@ if exist "%DIST%" (
     exit /b 1
 )
 
+dotnet restore "%PROJECT%" ^
+    -r win-x64 ^
+    -p:NuGetAudit=false
+
+if errorlevel 1 (
+    echo.
+    echo Restore failed.
+    exit /b 1
+)
+
+dotnet clean "%PROJECT%" ^
+    -c Release ^
+    -r win-x64 ^
+    -p:NuGetAudit=false
+
+if errorlevel 1 (
+    echo.
+    echo Clean failed.
+    exit /b 1
+)
+
 dotnet publish "%PROJECT%" ^
     -m:1 ^
     -c Release ^

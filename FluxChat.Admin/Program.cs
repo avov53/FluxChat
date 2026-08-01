@@ -1,5 +1,6 @@
 using FluxChat.Server.Core;
 using System.Diagnostics;
+using System.Globalization;
 
 LoadAccountEnvironment();
 
@@ -91,7 +92,13 @@ internal sealed class FluxusApp
             new("Очистить очередь пользователя", ClearPending),
             new("Статус сервера", ShowStatus)
         ];
-        _items = [.. _items, new("PostgreSQL database", ManagePostgres), new("Message retention", ManageRetention)];
+        _items =
+        [
+            .. _items,
+            new("PostgreSQL database", ManagePostgres),
+            new("Message retention", ManageRetention),
+            new("Server limits", ManageServerLimits)
+        ];
     }
 
     public void Run()
@@ -359,22 +366,6 @@ internal sealed class FluxusApp
         Console.WriteLine();
         Console.WriteLine("Backup: pg_dump --format=custom --file /root/fluxchat-backup.dump fluxchat");
         Console.WriteLine("Restore: pg_restore --clean --if-exists --dbname fluxchat /root/fluxchat-backup.dump");
-        Console.WriteLine("Migrate old relay SQLite: fluxus migrate-sqlite /var/lib/fluxchat/fluxchat.db");
-        Console.WriteLine();
-        Console.WriteLine("Run legacy SQLite migration now? Type MIGRATE to continue:");
-        if (!string.Equals(Console.ReadLine(), "MIGRATE", StringComparison.Ordinal)) return;
-
-        Console.WriteLine("Absolute path to the legacy fluxchat.db:");
-        var path = (Console.ReadLine() ?? string.Empty).Trim();
-        try
-        {
-            var result = LegacySqliteMigration.ImportAsync(_accounts, path).GetAwaiter().GetResult();
-            Console.WriteLine($"Imported {result.UsersImported} users and {result.PendingPacketsImported} pending packets. Source SQLite was not modified.");
-        }
-        catch (Exception exception)
-        {
-            Console.WriteLine($"Migration failed: {exception.Message}");
-        }
     }
 
     private void ManageRetention()
@@ -401,6 +392,49 @@ internal sealed class FluxusApp
 
         var result = _accounts.DeleteExpiredAsync(days).GetAwaiter().GetResult();
         Console.WriteLine($"Deleted {result.MessagesDeleted} messages and {result.MediaDeleted} media records older than {result.CutoffUtc:yyyy-MM-dd HH:mm} UTC.");
+    }
+
+    private void ManageServerLimits()
+    {
+        if (_accounts is null)
+        {
+            Console.WriteLine("PostgreSQL account storage is not configured.");
+            return;
+        }
+
+        try
+        {
+            var currentLimit = _accounts.GetMaxServersPerVpsAsync().GetAwaiter().GetResult();
+            var currentCount = _accounts.CountCreatedServersAsync().GetAwaiter().GetResult();
+
+            Console.WriteLine("FluxChat server limits");
+            Console.WriteLine();
+            Console.WriteLine($"Created servers on this VPS: {currentCount}");
+            Console.WriteLine($"Current server limit: {currentLimit}");
+            Console.WriteLine("Allowed range: 1-1000");
+            Console.WriteLine();
+            Console.Write("New limit (blank to keep current): ");
+            var input = (Console.ReadLine() ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                Console.WriteLine("Server limit was not changed.");
+                return;
+            }
+
+            if (!int.TryParse(input, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ||
+                value is < 1 or > 1000)
+            {
+                Console.WriteLine("Invalid limit. Use a number from 1 to 1000.");
+                return;
+            }
+
+            _accounts.SetMaxServersPerVpsAsync(value).GetAwaiter().GetResult();
+            Console.WriteLine($"Server limit updated to {value}.");
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"Server limit update failed: {exception.Message}");
+        }
     }
 
     private static System.Diagnostics.Process? FindRelayProcess()

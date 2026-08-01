@@ -121,6 +121,36 @@ internal sealed class AccountClient(string apiUrl)
         return await ReadResultAsync(response, cancellationToken);
     }
 
+    public async Task<AccountPreferencesResponse> GetPreferencesAsync(string token, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "api/v1/accounts/preferences");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _http.SendAsync(request, cancellationToken);
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<AccountPreferencesResponse>(cancellationToken: cancellationToken)
+                   ?? new AccountPreferencesResponse(false, response.ReasonPhrase ?? "Account service did not return preferences.");
+        }
+        catch (JsonException)
+        {
+            return new AccountPreferencesResponse(false, await BuildNonJsonErrorAsync(response, cancellationToken));
+        }
+    }
+
+    public async Task<AccountResult> SavePreferencesAsync(
+        string token,
+        AccountPreferencesUpdateRequest preferences,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/accounts/preferences")
+        {
+            Content = JsonContent.Create(preferences)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _http.SendAsync(request, cancellationToken);
+        return await ReadResultAsync(response, cancellationToken);
+    }
+
     public async Task<AccountResult> DeleteAccountAsync(string token, string currentPassword, string confirmation, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/accounts/delete")

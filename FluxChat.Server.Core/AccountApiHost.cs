@@ -133,6 +133,26 @@ public sealed class AccountApiHost : IAsyncDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" && path == "/api/v1/read-states")
+            {
+                var session = await RequireSessionAsync(context, cancellationToken);
+                if (session is null) return;
+                if (!await TryRateLimitAsync(context, $"read-states:{session.UserId}", 120, TimeSpan.FromMinutes(1), cancellationToken)) return;
+                var states = await _store.LoadReadStatesAsync(session, cancellationToken);
+                await WriteJsonAsync(context, HttpStatusCode.OK, new AccountReadStatesResponse(true, "Read states loaded.", states), cancellationToken);
+                return;
+            }
+
+            if (context.Request.HttpMethod == "GET" && path == "/api/v1/accounts/preferences")
+            {
+                var session = await RequireSessionAsync(context, cancellationToken);
+                if (session is null) return;
+                if (!await TryRateLimitAsync(context, $"preferences:{session.UserId}", 60, TimeSpan.FromMinutes(1), cancellationToken)) return;
+                var preferences = await _store.LoadPreferencesAsync(session, cancellationToken);
+                await WriteJsonAsync(context, HttpStatusCode.OK, new AccountPreferencesResponse(true, "Account preferences loaded.", preferences), cancellationToken);
+                return;
+            }
+
             if (context.Request.HttpMethod == "GET" && path.StartsWith("/api/v1/media/", StringComparison.Ordinal))
             {
                 var session = await RequireSessionAsync(context, cancellationToken);
@@ -300,6 +320,16 @@ public sealed class AccountApiHost : IAsyncDisposable
                     await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
                     return;
                 }
+                case "/api/v1/accounts/preferences":
+                {
+                    var session = await RequireSessionAsync(context, cancellationToken);
+                    if (session is null) return;
+                    if (!await TryRateLimitAsync(context, $"preferences-save:{session.UserId}", 60, TimeSpan.FromMinutes(1), cancellationToken)) return;
+                    var request = await ReadJsonAsync<AccountPreferencesUpdateRequest>(context, cancellationToken);
+                    var result = await _store.SavePreferencesAsync(session, request, cancellationToken);
+                    await WriteJsonAsync(context, HttpStatusCode.OK, result, cancellationToken);
+                    return;
+                }
                 case "/api/v1/accounts/delete":
                 {
                     var session = await RequireSessionAsync(context, cancellationToken);
@@ -340,6 +370,26 @@ public sealed class AccountApiHost : IAsyncDisposable
                     await WriteJsonAsync(context, HttpStatusCode.Created, new AccountResult(true, "Message archived."), cancellationToken);
                     return;
                 }
+                case "/api/v1/read-states/mark-read":
+                {
+                    var session = await RequireSessionAsync(context, cancellationToken);
+                    if (session is null) return;
+                    if (!await TryRateLimitAsync(context, $"mark-read:{session.UserId}", 240, TimeSpan.FromMinutes(1), cancellationToken)) return;
+                    var request = await ReadJsonAsync<AccountMarkReadRequest>(context, cancellationToken);
+                    var result = await _store.MarkReadAsync(session, request, cancellationToken);
+                    await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
+                    return;
+                }
+                case "/api/v1/history/delete":
+                {
+                    var session = await RequireSessionAsync(context, cancellationToken);
+                    if (session is null) return;
+                    if (!await TryRateLimitAsync(context, $"history-delete:{session.UserId}", 60, TimeSpan.FromMinutes(5), cancellationToken)) return;
+                    var request = await ReadJsonAsync<AccountHistoryDeleteRequest>(context, cancellationToken);
+                    var result = await _store.DeleteConversationAsync(session.UserId, request.PeerUserId, cancellationToken);
+                    await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
+                    return;
+                }
                 case "/api/v1/media/upload":
                 {
                     var session = await RequireSessionAsync(context, cancellationToken);
@@ -352,6 +402,16 @@ public sealed class AccountApiHost : IAsyncDisposable
                     var media = await _store.StoreMediaAsync(session.UserId, kind, fileName, mimeType, bytes, cancellationToken);
                     await WriteJsonAsync(context, HttpStatusCode.Created, new AccountMediaUploadResponse(
                         true, "Media uploaded.", media.MediaId.ToString("N"), null, media.MimeType, media.ByteLength), cancellationToken);
+                    return;
+                }
+                case "/api/v1/media/delete":
+                {
+                    var session = await RequireSessionAsync(context, cancellationToken);
+                    if (session is null) return;
+                    if (!await TryRateLimitAsync(context, $"media-delete:{session.UserId}", 120, TimeSpan.FromMinutes(10), cancellationToken)) return;
+                    var request = await ReadJsonAsync<AccountMediaDeleteRequest>(context, cancellationToken);
+                    var result = await _store.DeleteMediaAsync(session, request.MediaId, cancellationToken);
+                    await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
                     return;
                 }
                 case "/api/v1/profile/avatar":

@@ -20,6 +20,7 @@ public partial class App : System.Windows.Application
         try
         {
             var settings = await AppSettingsStore.LoadAsync();
+            AppLanguage.Apply(settings.UiLanguage);
             var profile = await UserProfileStore.LoadOrCreateAsync();
             AppPaths.UseAccountData(profile.UserId);
             var accountVault = LocalAccountVault.Load();

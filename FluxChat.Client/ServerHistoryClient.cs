@@ -22,6 +22,26 @@ internal sealed class ServerHistoryClient(string apiUrl, string sessionToken)
         return result ?? [];
     }
 
+    public async Task<IReadOnlyList<AccountReadState>> LoadReadStatesAsync(CancellationToken cancellationToken)
+    {
+        var result = await _http.GetFromJsonAsync<AccountReadStatesResponse>("api/v1/read-states", cancellationToken);
+        return result?.Accepted == true ? result.ReadStates ?? [] : [];
+    }
+
+    public async Task<AccountResult> MarkReadAsync(AccountMarkReadRequest request, CancellationToken cancellationToken)
+    {
+        using var response = await _http.PostAsJsonAsync("api/v1/read-states/mark-read", request, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AccountResult>(cancellationToken: cancellationToken)
+               ?? new AccountResult(false, response.ReasonPhrase ?? "Read-state sync did not return a result.");
+    }
+
+    public async Task<AccountResult> DeleteConversationAsync(string peerUserId, CancellationToken cancellationToken)
+    {
+        using var response = await _http.PostAsJsonAsync("api/v1/history/delete", new AccountHistoryDeleteRequest(peerUserId), cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AccountResult>(cancellationToken: cancellationToken)
+               ?? new AccountResult(false, response.ReasonPhrase ?? "History delete did not return a result.");
+    }
+
     public async Task<IReadOnlyList<AccountSyncedContact>> LoadContactsAsync(CancellationToken cancellationToken)
     {
         var result = await _http.GetFromJsonAsync<AccountContactsResponse>("api/v1/contacts", cancellationToken);
@@ -50,6 +70,13 @@ internal sealed class ServerHistoryClient(string apiUrl, string sessionToken)
         CancellationToken cancellationToken)
         => await UploadBytesAsync("api/v1/media/upload", kind, fileName, mimeType, bytes, cancellationToken);
 
+    public async Task<AccountResult> DeleteMediaAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        using var response = await _http.PostAsJsonAsync("api/v1/media/delete", new AccountMediaDeleteRequest(mediaId), cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AccountResult>(cancellationToken: cancellationToken)
+               ?? new AccountResult(false, response.ReasonPhrase ?? "Media delete did not return a result.");
+    }
+
     public async Task<AccountMediaUploadResponse> UploadAvatarAsync(
         string avatarKind,
         string fileName,
@@ -61,11 +88,27 @@ internal sealed class ServerHistoryClient(string apiUrl, string sessionToken)
     public async Task<string?> DownloadMediaAsync(string mediaId, string preferredExtension, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(mediaId)) return null;
-        using var response = await _http.GetAsync($"api/v1/media/{Uri.EscapeDataString(mediaId)}", cancellationToken);
-        if (!response.IsSuccessStatusCode) return null;
         var extension = NormalizeExtension(preferredExtension);
         AppPaths.EnsureMediaCacheDirectoryCreated();
         var path = Path.Combine(AppPaths.MediaCacheDirectory, $"{mediaId}{extension}");
+        try
+        {
+            var cachedFile = new FileInfo(path);
+            if (cachedFile.Exists && cachedFile.Length > 0)
+            {
+                cachedFile.LastAccessTimeUtc = DateTime.UtcNow;
+                return path;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        using var response = await _http.GetAsync($"api/v1/media/{Uri.EscapeDataString(mediaId)}", cancellationToken);
+        if (!response.IsSuccessStatusCode) return null;
         await using var file = File.Create(path);
         await response.Content.CopyToAsync(file, cancellationToken);
         return path;

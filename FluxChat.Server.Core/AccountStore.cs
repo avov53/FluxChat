@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using FluxChat.Shared;
@@ -9,6 +12,8 @@ namespace FluxChat.Server.Core;
 
 public sealed class AccountStore
 {
+    private static readonly HttpClient GeoLocationHttpClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private static readonly ConcurrentDictionary<string, GeoLocationCacheEntry> GeoLocationCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan CodeCooldown = TimeSpan.FromMinutes(1);
     private const int MaxCodeAttempts = 5;
@@ -17,6 +22,21 @@ public sealed class AccountStore
     private const int MaxPendingPacketsPerRecipient = 5000;
     private const int MaxMediaBytes = 25 * 1024 * 1024;
     private const int MaxAvatarBytes = 8 * 1024 * 1024;
+    private const int DefaultMaxServersPerVps = 5;
+    private const int MinMaxServersPerVps = 1;
+    private const int MaxMaxServersPerVps = 1000;
+    private const string MaxServersPerVpsSettingKey = "max_servers_per_vps";
+    private const string ServerPermissionViewChannel = "view_channel";
+    private const string ServerPermissionReadHistory = "read_history";
+    private const string ServerPermissionSendMessages = "send_messages";
+    private const string ServerPermissionAddReactions = "add_reactions";
+    private const string ServerPermissionJoinVoice = "join_voice";
+    private const string ServerPermissionSpeak = "speak";
+    private const string ServerPermissionCreateInvite = "create_invite";
+    private const string ServerPermissionManageChannels = "manage_channels";
+    private const string ServerPermissionManageRoles = "manage_roles";
+    private const string ServerPermissionManageMembers = "manage_members";
+    private const string ServerPermissionManageServer = "manage_server";
     private readonly string _connectionString;
     private readonly ServerDataProtector _protector;
     private readonly string _serverId;
@@ -157,6 +177,24 @@ public sealed class AccountStore
                 target_user_id TEXT NULL,
                 detail TEXT NOT NULL DEFAULT '',
                 created_at_utc TIMESTAMPTZ NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS fc_read_states (
+                account_id TEXT NOT NULL REFERENCES fc_accounts(user_id) ON DELETE CASCADE,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL DEFAULT '',
+                last_read_at_utc TIMESTAMPTZ NOT NULL,
+                last_read_message_id UUID NULL,
+                updated_at_utc TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY(account_id, scope_type, scope_id, channel_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS fc_account_preferences (
+                account_id TEXT PRIMARY KEY REFERENCES fc_accounts(user_id) ON DELETE CASCADE,
+                activity_visibility TEXT NOT NULL DEFAULT 'Friends',
+                activity_selected_friend_ids_json TEXT NOT NULL DEFAULT '[]',
+                updated_at_utc TIMESTAMPTZ NOT NULL
             );
             """, connection);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -452,26 +490,43 @@ public sealed class AccountStore
             """, connection);
         command.Parameters.AddWithValue("userId", current.UserId);
         command.Parameters.AddWithValue("currentSessionId", NormalizeSessionId(current.SessionId));
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var sessions = new List<AccountDeviceSession>();
-        while (await reader.ReadAsync(cancellationToken))
+        var sessionRows = new List<(string SessionId, string DeviceName, string Ip, DateTimeOffset CreatedAtUtc, DateTimeOffset LastSeenAtUtc, DateTimeOffset ExpiresAtUtc, bool IsCurrent, bool IsActive)>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
-            var sessionId = reader.IsDBNull(0) ? "" : reader.GetGuid(0).ToString("N");
-            var lastIp = reader.GetString(6);
-            var createdIp = reader.GetString(5);
-            var isActive = reader.IsDBNull(7) && reader.GetFieldValue<DateTimeOffset>(4) > DateTimeOffset.UtcNow;
-            sessions.Add(new AccountDeviceSession(
-                sessionId,
-                reader.GetString(1),
-                BuildApproximateLocation(string.IsNullOrWhiteSpace(lastIp) ? createdIp : lastIp),
-                reader.GetFieldValue<DateTimeOffset>(2),
-                reader.GetFieldValue<DateTimeOffset>(3),
-                reader.GetFieldValue<DateTimeOffset>(4),
-                string.Equals(sessionId, current.SessionId, StringComparison.OrdinalIgnoreCase),
-                isActive));
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var sessionId = reader.IsDBNull(0) ? "" : reader.GetGuid(0).ToString("N");
+                var lastIp = reader.GetString(6);
+                var createdIp = reader.GetString(5);
+                var isActive = reader.IsDBNull(7) && reader.GetFieldValue<DateTimeOffset>(4) > DateTimeOffset.UtcNow;
+                var sessionIp = string.IsNullOrWhiteSpace(lastIp) ? createdIp : lastIp;
+                sessionRows.Add((
+                    sessionId,
+                    reader.GetString(1),
+                    sessionIp,
+                    reader.GetFieldValue<DateTimeOffset>(2),
+                    reader.GetFieldValue<DateTimeOffset>(3),
+                    reader.GetFieldValue<DateTimeOffset>(4),
+                    string.Equals(sessionId, current.SessionId, StringComparison.OrdinalIgnoreCase),
+                    isActive));
+            }
         }
 
-        return sessions;
+        var sessions = new List<AccountDeviceSession>();
+        foreach (var session in sessionRows)
+        {
+            sessions.Add(new AccountDeviceSession(
+                session.SessionId,
+                session.DeviceName,
+                await BuildApproximateLocationAsync(session.Ip, cancellationToken),
+                session.CreatedAtUtc,
+                session.LastSeenAtUtc,
+                session.ExpiresAtUtc,
+                session.IsCurrent,
+                session.IsActive));
+        }
+
+        return DeduplicateDeviceSessions(sessions);
     }
 
     public async Task<IReadOnlyList<AccountSyncedContact>> ListContactsAsync(AccountSession current, CancellationToken cancellationToken = default)
@@ -504,6 +559,29 @@ public sealed class AccountStore
         return contacts;
     }
 
+    public async Task<int> GetMaxServersPerVpsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        return await GetMaxServersPerVpsAsync(connection, cancellationToken);
+    }
+
+    public async Task SetMaxServersPerVpsAsync(int value, CancellationToken cancellationToken = default)
+    {
+        if (value is < MinMaxServersPerVps or > MaxMaxServersPerVps)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), $"Server limit must be between {MinMaxServersPerVps} and {MaxMaxServersPerVps}.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await UpsertServerSettingAsync(connection, MaxServersPerVpsSettingKey, value.ToString(CultureInfo.InvariantCulture), cancellationToken);
+    }
+
+    public async Task<int> CountCreatedServersAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        return await CountCreatedServersAsync(connection, "", cancellationToken);
+    }
+
     public async Task<AccountResult> UpsertContactAsync(AccountSession current, AccountSyncedContact contact, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(contact.UserId))
@@ -519,8 +597,18 @@ public sealed class AccountStore
         var updated = contact.UpdatedAtUtc == default
             ? contact with { UpdatedAtUtc = DateTimeOffset.UtcNow }
             : contact;
-        var payload = JsonSerializer.Serialize(updated);
         await using var connection = await OpenAsync(cancellationToken);
+        if (IsCreatedServerContact(current.UserId, updated))
+        {
+            var maxServers = await GetMaxServersPerVpsAsync(connection, cancellationToken);
+            var currentServerCount = await CountCreatedServersAsync(connection, updated.UserId, cancellationToken);
+            if (currentServerCount >= maxServers)
+            {
+                return AccountResult.Denied($"Server limit reached on this VPS ({maxServers}). Ask the VPS admin to increase it in fluxus menu 13.");
+            }
+        }
+
+        var payload = JsonSerializer.Serialize(updated);
         await using var command = new NpgsqlCommand("""
             INSERT INTO fc_contacts (owner_user_id, contact_user_id, payload_json, updated_at_utc, is_deleted)
             VALUES (@ownerUserId, @contactUserId, @payloadJson, @updatedAtUtc, FALSE)
@@ -537,6 +625,96 @@ public sealed class AccountStore
         await command.ExecuteNonQueryAsync(cancellationToken);
         return AccountResult.Success("Contact synced.");
     }
+
+    private async Task<int> GetMaxServersPerVpsAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var value = await GetServerSettingAsync(connection, MaxServersPerVpsSettingKey, cancellationToken);
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+               parsed is >= MinMaxServersPerVps and <= MaxMaxServersPerVps
+            ? parsed
+            : DefaultMaxServersPerVps;
+    }
+
+    private async Task<string> GetServerSettingAsync(NpgsqlConnection connection, string key, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT protected_value
+            FROM fc_server_settings
+            WHERE setting_key=@key;
+            """, connection);
+        command.Parameters.AddWithValue("key", key);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        if (value is not byte[] protectedBytes || protectedBytes.Length == 0)
+        {
+            return "";
+        }
+
+        try
+        {
+            return Encoding.UTF8.GetString(_protector.Unprotect(protectedBytes));
+        }
+        catch (CryptographicException)
+        {
+            return "";
+        }
+    }
+
+    private async Task UpsertServerSettingAsync(NpgsqlConnection connection, string key, string value, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            INSERT INTO fc_server_settings (setting_key, protected_value, updated_at_utc)
+            VALUES (@key, @value, @updatedAtUtc)
+            ON CONFLICT (setting_key)
+            DO UPDATE SET protected_value=EXCLUDED.protected_value,
+                          updated_at_utc=EXCLUDED.updated_at_utc;
+            """, connection);
+        command.Parameters.AddWithValue("key", key);
+        command.Parameters.AddWithValue("value", _protector.Protect(Encoding.UTF8.GetBytes(value)));
+        command.Parameters.AddWithValue("updatedAtUtc", DateTimeOffset.UtcNow);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<int> CountCreatedServersAsync(NpgsqlConnection connection, string excludeServerId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT owner_user_id, contact_user_id, payload_json
+            FROM fc_contacts
+            WHERE is_deleted=FALSE;
+            """, connection);
+        var count = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            try
+            {
+                var ownerUserId = reader.GetString(0);
+                var contactUserId = reader.GetString(1);
+                if (!string.IsNullOrWhiteSpace(excludeServerId) &&
+                    string.Equals(contactUserId, excludeServerId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var contact = JsonSerializer.Deserialize<AccountSyncedContact>(reader.GetString(2));
+                if (contact is not null && IsCreatedServerContact(ownerUserId, contact))
+                {
+                    count++;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return count;
+    }
+
+    private static bool IsCreatedServerContact(string ownerUserId, AccountSyncedContact contact)
+        => contact.IsGroup &&
+           !contact.GroupIsDeleted &&
+           !string.IsNullOrWhiteSpace(contact.GroupOwnerUserId) &&
+           string.Equals(ownerUserId, contact.GroupOwnerUserId, StringComparison.Ordinal) &&
+           contact.UserId.StartsWith("group:", StringComparison.OrdinalIgnoreCase);
 
     public async Task<AccountResult> DeleteContactAsync(AccountSession current, string userId, CancellationToken cancellationToken = default)
     {
@@ -558,6 +736,98 @@ public sealed class AccountStore
         command.Parameters.AddWithValue("updatedAtUtc", DateTimeOffset.UtcNow);
         await command.ExecuteNonQueryAsync(cancellationToken);
         return AccountResult.Success("Contact removed.");
+    }
+
+    public async Task<AccountResult> ValidatePacketAccessAsync(ChatPacket packet, CancellationToken cancellationToken = default)
+    {
+        if (!TryExtractServerPacket(packet, out var request))
+        {
+            return AccountResult.Success("Packet does not need server permission checks.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        var server = await LoadAuthoritativeServerContactAsync(connection, request.ServerId, cancellationToken);
+        if (server is null || !IsServerContact(server))
+        {
+            if (request.Kind == ServerPacketKind.Upsert &&
+                TryReadJsonString(packet.Body, "OwnerUserId", out var ownerUserId) &&
+                !string.Equals(ownerUserId, packet.FromUserId, StringComparison.Ordinal))
+            {
+                return AccountResult.Denied("Only the owner can create a server snapshot.");
+            }
+
+            return AccountResult.Success("Server snapshot is not available yet.");
+        }
+
+        if (IsServerBanned(server, packet.FromUserId))
+        {
+            return AccountResult.Denied("Sender is banned from this server.");
+        }
+
+        if (!IsServerMember(server, packet.FromUserId))
+        {
+            return AccountResult.Denied("Sender is not a member of this server.");
+        }
+
+        return request.Kind switch
+        {
+            ServerPacketKind.Message => HasServerPermission(server, packet.FromUserId, ServerPermissionSendMessages, request.ChannelId) &&
+                                        HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
+                ? AccountResult.Success("Server message accepted.")
+                : AccountResult.Denied("Sender cannot send messages in this server channel."),
+            ServerPacketKind.HistoryRead => HasServerPermission(server, packet.FromUserId, ServerPermissionReadHistory, request.ChannelId) &&
+                                            HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
+                ? AccountResult.Success("Server history access accepted.")
+                : AccountResult.Denied("Sender cannot read this server channel."),
+            ServerPacketKind.Voice => HasServerPermission(server, packet.FromUserId, ServerPermissionJoinVoice, request.ChannelId) &&
+                                      HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
+                ? AccountResult.Success("Server voice signal accepted.")
+                : AccountResult.Denied("Sender cannot join this server voice channel."),
+            ServerPacketKind.Invite => IsServerInviteStillValid(packet.Body) &&
+                                       HasServerPermission(server, packet.FromUserId, ServerPermissionCreateInvite, request.ChannelId) &&
+                                       HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
+                ? AccountResult.Success("Server invite accepted.")
+                : AccountResult.Denied("Sender cannot create invites for this server channel."),
+            ServerPacketKind.ManageMembers => HasServerPermission(server, packet.FromUserId, ServerPermissionManageMembers, request.ChannelId)
+                ? AccountResult.Success("Server member action accepted.")
+                : AccountResult.Denied("Sender cannot manage server members."),
+            ServerPacketKind.ManageServer => HasServerPermission(server, packet.FromUserId, ServerPermissionManageServer, request.ChannelId)
+                ? AccountResult.Success("Server management action accepted.")
+                : AccountResult.Denied("Sender cannot manage this server."),
+            ServerPacketKind.Upsert => CanUpsertServerSnapshot(server, packet.FromUserId, packet.Body)
+                ? AccountResult.Success("Server snapshot accepted.")
+                : AccountResult.Denied("Sender cannot update this server snapshot."),
+            _ => AccountResult.Success("Server packet accepted.")
+        };
+    }
+
+    public async Task<AccountResult> ValidateConversationAccessAsync(string authenticatedUserId, string peerUserId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(peerUserId))
+        {
+            return AccountResult.Denied("Conversation id is required.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        var server = await LoadAuthoritativeServerContactAsync(connection, peerUserId, cancellationToken);
+        if (server is null || !IsServerContact(server))
+        {
+            return AccountResult.Success("Direct conversation accepted.");
+        }
+
+        if (IsServerBanned(server, authenticatedUserId))
+        {
+            return AccountResult.Denied("User is banned from this server.");
+        }
+
+        if (!IsServerMember(server, authenticatedUserId))
+        {
+            return AccountResult.Denied("User is not a member of this server.");
+        }
+
+        return HasServerPermission(server, authenticatedUserId, ServerPermissionReadHistory)
+            ? AccountResult.Success("Server history accepted.")
+            : AccountResult.Denied("User cannot read server history.");
     }
 
     public async Task<AccountResult> RevokeSessionAsync(AccountSession current, string sessionId, CancellationToken cancellationToken = default)
@@ -920,6 +1190,40 @@ public sealed class AccountStore
         return new StoredMediaDownload(mediaId, fileName, mimeType, byteLength, bytes);
     }
 
+    public async Task<AccountResult> DeleteMediaAsync(AccountSession current, string mediaId, CancellationToken cancellationToken = default)
+    {
+        if (!Guid.TryParse(mediaId, out var parsedMediaId))
+        {
+            return new AccountResult(false, "Invalid media id.");
+        }
+
+        string? storageKey = null;
+        await using var connection = await OpenAsync(cancellationToken);
+        await using (var select = new NpgsqlCommand("""
+            SELECT storage_key
+            FROM fc_media_objects
+            WHERE media_id=@mediaId AND owner_user_id=@ownerUserId AND deleted_at_utc IS NULL;
+            """, connection))
+        {
+            select.Parameters.AddWithValue("mediaId", parsedMediaId);
+            select.Parameters.AddWithValue("ownerUserId", current.UserId);
+            await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                storageKey = reader.IsDBNull(0) ? null : reader.GetString(0);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(storageKey))
+        {
+            return new AccountResult(true, "Media already deleted.");
+        }
+
+        await MarkMediaDeletedAsync(connection, parsedMediaId, cancellationToken);
+        TryDeleteMediaFile(storageKey);
+        return new AccountResult(true, "Media deleted.");
+    }
+
     public async Task<StoredMediaResult> StoreAvatarAsync(
         string userId,
         string avatarKind,
@@ -1015,13 +1319,27 @@ public sealed class AccountStore
             throw new ArgumentException("Message recipient is required.");
         }
 
+        var access = await ValidatePacketAccessAsync(packet, cancellationToken);
+        if (!access.Accepted)
+        {
+            throw new UnauthorizedAccessException(access.Message);
+        }
+
         var serialized = JsonSerializer.SerializeToUtf8Bytes(packet);
         if (serialized.Length > MaxArchivedPacketBytes)
         {
             throw new InvalidDataException($"Archived message exceeds the {MaxArchivedPacketBytes / 1024 / 1024} MB limit.");
         }
 
+        var recipientUserId = packet.ToUserId;
         var conversationId = CreateConversationId(packet.FromUserId, packet.ToUserId);
+        if (string.Equals(packet.Intent, "group-message", StringComparison.Ordinal) &&
+            TryGetGroupMessageScope(packet, out var groupId))
+        {
+            recipientUserId = groupId;
+            conversationId = CreateGroupConversationId(groupId);
+        }
+
         var payload = _protector.Protect(serialized);
         await using var connection = await OpenAsync(cancellationToken);
         await EnsureArchiveQuotaAsync(connection, authenticatedUserId, payload.Length, cancellationToken);
@@ -1033,7 +1351,7 @@ public sealed class AccountStore
         command.Parameters.AddWithValue("messageId", packet.MessageId);
         command.Parameters.AddWithValue("conversationId", conversationId);
         command.Parameters.AddWithValue("senderUserId", packet.FromUserId);
-        command.Parameters.AddWithValue("recipientUserId", packet.ToUserId);
+        command.Parameters.AddWithValue("recipientUserId", recipientUserId);
         command.Parameters.AddWithValue("payload", payload);
         command.Parameters.AddWithValue("metadata", string.IsNullOrWhiteSpace(packet.Intent) ? "" : packet.Intent);
         command.Parameters.AddWithValue("createdAtUtc", packet.SentAtUtc);
@@ -1124,8 +1442,16 @@ public sealed class AccountStore
     public async Task<IReadOnlyList<ChatPacket>> LoadConversationAsync(string authenticatedUserId, string peerUserId, int take, CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, 200);
-        var conversationId = CreateConversationId(authenticatedUserId, peerUserId);
+        var access = await ValidateConversationAccessAsync(authenticatedUserId, peerUserId, cancellationToken);
+        if (!access.Accepted)
+        {
+            throw new UnauthorizedAccessException(access.Message);
+        }
+
         await using var connection = await OpenAsync(cancellationToken);
+        var conversationId = await IsGroupConversationPeerAsync(connection, authenticatedUserId, peerUserId, cancellationToken)
+            ? CreateGroupConversationId(peerUserId)
+            : CreateConversationId(authenticatedUserId, peerUserId);
         await using var command = new NpgsqlCommand("""
             SELECT encrypted_payload
             FROM fc_message_archive
@@ -1143,6 +1469,163 @@ public sealed class AccountStore
         }
         packets.Reverse();
         return packets;
+    }
+
+    public async Task<IReadOnlyList<AccountReadState>> LoadReadStatesAsync(AccountSession current, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT scope_type, scope_id, channel_id, last_read_at_utc, last_read_message_id
+            FROM fc_read_states
+            WHERE account_id=@accountId
+            ORDER BY updated_at_utc DESC;
+            """, connection);
+        command.Parameters.AddWithValue("accountId", current.UserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var states = new List<AccountReadState>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            states.Add(new AccountReadState(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetFieldValue<DateTimeOffset>(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4)));
+        }
+
+        return states;
+    }
+
+    public async Task<AccountPreferences> LoadPreferencesAsync(AccountSession current, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT activity_visibility, activity_selected_friend_ids_json
+            FROM fc_account_preferences
+            WHERE account_id=@accountId;
+            """, connection);
+        command.Parameters.AddWithValue("accountId", current.UserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new AccountPreferences("Friends", []);
+        }
+
+        var selected = JsonSerializer.Deserialize<List<string>>(reader.GetString(1)) ?? [];
+        return new AccountPreferences(
+            NormalizeActivityVisibility(reader.GetString(0)),
+            selected.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).Take(500).ToArray());
+    }
+
+    public async Task<AccountResult> SavePreferencesAsync(AccountSession current, AccountPreferencesUpdateRequest request, CancellationToken cancellationToken = default)
+    {
+        var visibility = NormalizeActivityVisibility(request.ActivityVisibility);
+        var selected = (request.ActivitySelectedFriendIds ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Where(x => x.Length <= 128 && !string.Equals(x, current.UserId, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .Take(500)
+            .ToArray();
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            INSERT INTO fc_account_preferences (
+                account_id, activity_visibility, activity_selected_friend_ids_json, updated_at_utc)
+            VALUES (@accountId, @visibility, @selected, @updatedAtUtc)
+            ON CONFLICT (account_id) DO UPDATE SET
+                activity_visibility=EXCLUDED.activity_visibility,
+                activity_selected_friend_ids_json=EXCLUDED.activity_selected_friend_ids_json,
+                updated_at_utc=EXCLUDED.updated_at_utc;
+            """, connection);
+        command.Parameters.AddWithValue("accountId", current.UserId);
+        command.Parameters.AddWithValue("visibility", visibility);
+        command.Parameters.AddWithValue("selected", JsonSerializer.Serialize(selected));
+        command.Parameters.AddWithValue("updatedAtUtc", DateTimeOffset.UtcNow);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return AccountResult.Success("Account preferences saved.");
+    }
+
+    private static string NormalizeActivityVisibility(string? value)
+        => value?.Trim().ToLowerInvariant() switch
+        {
+            "everyone" => "Everyone",
+            "selected" => "Selected",
+            _ => "Friends"
+        };
+
+    public async Task<AccountResult> MarkReadAsync(AccountSession current, AccountMarkReadRequest request, CancellationToken cancellationToken = default)
+    {
+        var scopeType = NormalizeReadScopeType(request.ScopeType);
+        if (scopeType is null)
+        {
+            return AccountResult.Denied("Read-state scope is invalid.");
+        }
+
+        var scopeId = request.ScopeId.Trim();
+        if (scopeId.Length == 0 || scopeId.Length > 256)
+        {
+            return AccountResult.Denied("Read-state scope id is invalid.");
+        }
+
+        var channelId = scopeType == "server_channel" ? request.ChannelId.Trim() : "";
+        if (channelId.Length > 128)
+        {
+            return AccountResult.Denied("Read-state channel id is invalid.");
+        }
+
+        if (scopeType == "server_channel" && channelId.Length == 0)
+        {
+            channelId = "general";
+        }
+
+        var lastReadAt = request.LastReadAtUtc == default ? DateTimeOffset.UtcNow : request.LastReadAtUtc.ToUniversalTime();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            INSERT INTO fc_read_states (
+                account_id, scope_type, scope_id, channel_id, last_read_at_utc, last_read_message_id, updated_at_utc)
+            VALUES (
+                @accountId, @scopeType, @scopeId, @channelId, @lastReadAtUtc, @lastReadMessageId, @updatedAtUtc)
+            ON CONFLICT (account_id, scope_type, scope_id, channel_id)
+            DO UPDATE SET
+                last_read_at_utc=GREATEST(fc_read_states.last_read_at_utc, EXCLUDED.last_read_at_utc),
+                last_read_message_id=CASE
+                    WHEN EXCLUDED.last_read_at_utc >= fc_read_states.last_read_at_utc
+                    THEN EXCLUDED.last_read_message_id
+                    ELSE fc_read_states.last_read_message_id
+                END,
+                updated_at_utc=EXCLUDED.updated_at_utc;
+            """, connection);
+        command.Parameters.AddWithValue("accountId", current.UserId);
+        command.Parameters.AddWithValue("scopeType", scopeType);
+        command.Parameters.AddWithValue("scopeId", scopeId);
+        command.Parameters.AddWithValue("channelId", channelId);
+        command.Parameters.AddWithValue("lastReadAtUtc", lastReadAt);
+        command.Parameters.AddWithValue("lastReadMessageId", request.LastReadMessageId.HasValue ? request.LastReadMessageId.Value : (object)DBNull.Value);
+        command.Parameters.AddWithValue("updatedAtUtc", DateTimeOffset.UtcNow);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return AccountResult.Success("Read state saved.");
+    }
+
+    public async Task<AccountResult> DeleteConversationAsync(string authenticatedUserId, string peerUserId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(peerUserId))
+        {
+            return AccountResult.Denied("Peer user id is required.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        var trimmedPeerUserId = peerUserId.Trim();
+        var conversationId = await IsGroupConversationPeerAsync(connection, authenticatedUserId, trimmedPeerUserId, cancellationToken)
+            ? CreateGroupConversationId(trimmedPeerUserId)
+            : CreateConversationId(authenticatedUserId, trimmedPeerUserId);
+        await using var command = new NpgsqlCommand("""
+            DELETE FROM fc_message_archive
+            WHERE conversation_id=@conversationId;
+            """, connection);
+        command.Parameters.AddWithValue("conversationId", conversationId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return AccountResult.Success("Conversation history deleted.");
     }
 
     public async Task<bool> ApplyFederationClaimAsync(FederationUsernameClaim claim, CancellationToken cancellationToken = default)
@@ -1216,6 +1699,21 @@ public sealed class AccountStore
         var sessionId = Guid.NewGuid();
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
         var expires = DateTimeOffset.UtcNow.AddDays(30);
+        var normalizedDeviceName = NormalizeDeviceName(deviceName);
+        await using (var revokeDeviceSessions = new NpgsqlCommand("""
+            UPDATE fc_account_sessions
+            SET revoked_at_utc=@now
+            WHERE user_id=@userId
+              AND device_name=@deviceName
+              AND revoked_at_utc IS NULL;
+            """, connection))
+        {
+            revokeDeviceSessions.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
+            revokeDeviceSessions.Parameters.AddWithValue("userId", userId);
+            revokeDeviceSessions.Parameters.AddWithValue("deviceName", normalizedDeviceName);
+            await revokeDeviceSessions.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         await using var command = new NpgsqlCommand("""
             INSERT INTO fc_account_sessions (token_hash, session_id, user_id, device_name, expires_at_utc, created_at_utc, last_seen_at_utc, created_ip, last_ip)
             VALUES (@tokenHash, @sessionId, @userId, @deviceName, @expiresAtUtc, @now, @now, @clientIp, @clientIp);
@@ -1224,20 +1722,141 @@ public sealed class AccountStore
         command.Parameters.AddWithValue("tokenHash", HashToken(token));
         command.Parameters.AddWithValue("sessionId", sessionId);
         command.Parameters.AddWithValue("userId", userId);
-        command.Parameters.AddWithValue("deviceName", string.IsNullOrWhiteSpace(deviceName) ? "FluxChat" : deviceName[..Math.Min(deviceName.Length, 120)]);
+        command.Parameters.AddWithValue("deviceName", normalizedDeviceName);
         command.Parameters.AddWithValue("expiresAtUtc", expires);
         command.Parameters.AddWithValue("now", DateTimeOffset.UtcNow);
         command.Parameters.AddWithValue("clientIp", clientIp ?? "");
         await command.ExecuteNonQueryAsync(cancellationToken);
         await AuditAsync(connection, null, "account-login", userId, userId, "password-or-code", cancellationToken);
-        return AccountLoginResult.Success(userId, displayName, login, token, expires, sessionId.ToString("N"), string.IsNullOrWhiteSpace(deviceName) ? "FluxChat" : deviceName);
+        return AccountLoginResult.Success(userId, displayName, login, token, expires, sessionId.ToString("N"), normalizedDeviceName);
+    }
+
+    private static IReadOnlyList<AccountDeviceSession> DeduplicateDeviceSessions(IReadOnlyList<AccountDeviceSession> sessions)
+        => sessions
+            .GroupBy(session => NormalizeDeviceName(session.DeviceName), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(session => session.IsCurrent)
+                .ThenByDescending(session => session.IsActive)
+                .ThenByDescending(session => session.LastSeenAtUtc)
+                .First())
+            .OrderByDescending(session => session.IsCurrent)
+            .ThenByDescending(session => session.IsActive)
+            .ThenByDescending(session => session.LastSeenAtUtc)
+            .ToArray();
+
+    private static string NormalizeDeviceName(string? deviceName)
+    {
+        if (string.IsNullOrWhiteSpace(deviceName))
+        {
+            return "FluxChat";
+        }
+
+        var normalized = deviceName.Trim();
+        return normalized.Length <= 120 ? normalized : normalized[..120];
     }
 
     private static string NormalizeSessionId(string value)
         => Guid.TryParse(value, out var guid) ? guid.ToString("D") : value;
 
-    private static string BuildApproximateLocation(string ip)
-        => string.IsNullOrWhiteSpace(ip) ? "Unknown location" : $"IP {ip}";
+    private static async Task<string> BuildApproximateLocationAsync(string ip, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ip))
+        {
+            return "Unknown location";
+        }
+
+        var normalizedIp = ip.Trim();
+        var location = await ResolveIpLocationAsync(normalizedIp, cancellationToken);
+        return $"IP {normalizedIp}{Environment.NewLine}{location}";
+    }
+
+    private static async Task<string> ResolveIpLocationAsync(string ip, CancellationToken cancellationToken)
+    {
+        if (IsPrivateOrLocalIp(ip))
+        {
+            return "Local network";
+        }
+
+        if (GeoLocationCache.TryGetValue(ip, out var cached) && cached.ExpiresAtUtc > DateTimeOffset.UtcNow)
+        {
+            return cached.Location;
+        }
+
+        var location = "Unknown location";
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://ipwho.is/{Uri.EscapeDataString(ip)}?fields=success,city,country");
+            request.Headers.UserAgent.ParseAdd("FluxChat/1.0");
+            using var response = await GeoLocationHttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (response.IsSuccessStatusCode)
+            {
+                await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: timeout.Token);
+                var root = document.RootElement;
+                var success = !root.TryGetProperty("success", out var successProperty) || successProperty.GetBoolean();
+                if (success)
+                {
+                    var city = root.TryGetProperty("city", out var cityProperty) ? cityProperty.GetString() : null;
+                    var country = root.TryGetProperty("country", out var countryProperty) ? countryProperty.GetString() : null;
+                    location = FormatGeoLocation(city, country);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            location = "Unknown location";
+        }
+
+        var ttl = location == "Unknown location" ? TimeSpan.FromHours(6) : TimeSpan.FromDays(7);
+        GeoLocationCache[ip] = new GeoLocationCacheEntry(location, DateTimeOffset.UtcNow.Add(ttl));
+        return location;
+    }
+
+    private static string FormatGeoLocation(string? city, string? country)
+    {
+        city = string.IsNullOrWhiteSpace(city) ? null : city.Trim();
+        country = string.IsNullOrWhiteSpace(country) ? null : country.Trim();
+        return (city, country) switch
+        {
+            ({ Length: > 0 }, { Length: > 0 }) => $"{city}, {country}",
+            ({ Length: > 0 }, _) => city,
+            (_, { Length: > 0 }) => country,
+            _ => "Unknown location"
+        };
+    }
+
+    private static bool IsPrivateOrLocalIp(string ip)
+    {
+        if (!IPAddress.TryParse(ip, out var address))
+        {
+            return false;
+        }
+
+        if (IPAddress.IsLoopback(address))
+        {
+            return true;
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            return bytes[0] == 10 ||
+                   bytes[0] == 127 ||
+                   bytes[0] == 169 && bytes[1] == 254 ||
+                   bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31 ||
+                   bytes[0] == 192 && bytes[1] == 168 ||
+                   bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127;
+        }
+
+        var ipv6 = address.GetAddressBytes();
+        return address.IsIPv6LinkLocal ||
+               address.IsIPv6SiteLocal ||
+               ipv6.Length > 0 && (ipv6[0] == 0xfc || ipv6[0] == 0xfd);
+    }
+
+    private sealed record GeoLocationCacheEntry(string Location, DateTimeOffset ExpiresAtUtc);
 
     private async Task<AccountRecord?> VerifyCodeAsync(string loginOrEmail, string code, string purpose, CancellationToken cancellationToken)
     {
@@ -1317,6 +1936,514 @@ public sealed class AccountStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static bool TryExtractServerPacket(ChatPacket packet, out ServerPacketAccessRequest request)
+    {
+        request = default;
+        var intent = packet.Intent ?? "";
+        if (string.Equals(intent, "group-message", StringComparison.Ordinal))
+        {
+            if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
+            {
+                TryReadJsonString(packet.Body, "ChannelId", out var channelId);
+                request = new ServerPacketAccessRequest(groupId, string.IsNullOrWhiteSpace(channelId) ? "general" : channelId, ServerPacketKind.Message);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (intent is "call-invite" or "call-accept" or "call-join" or "call-screen-start")
+        {
+            if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
+            {
+                TryReadJsonString(packet.Body, "ChannelId", out var channelId);
+                request = new ServerPacketAccessRequest(groupId, string.IsNullOrWhiteSpace(channelId) ? "general" : channelId, ServerPacketKind.Voice);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (string.Equals(intent, "server-channel-invite", StringComparison.Ordinal))
+        {
+            if (TryReadJsonString(packet.Body, "ServerId", out var serverId))
+            {
+                TryReadJsonString(packet.Body, "ChannelId", out var channelId);
+                request = new ServerPacketAccessRequest(serverId, string.IsNullOrWhiteSpace(channelId) ? "general" : channelId, ServerPacketKind.Invite);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (string.Equals(intent, "group-upsert", StringComparison.Ordinal))
+        {
+            if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
+            {
+                request = new ServerPacketAccessRequest(groupId, "", ServerPacketKind.Upsert);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (intent is "group-kick")
+        {
+            if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
+            {
+                request = new ServerPacketAccessRequest(groupId, "", ServerPacketKind.ManageMembers);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (intent is "group-delete" or "group-transfer-owner")
+        {
+            if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
+            {
+                request = new ServerPacketAccessRequest(groupId, "", ServerPacketKind.ManageServer);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsServerInviteStillValid(string body)
+    {
+        if (!TryReadJsonDateTimeOffset(body, "ExpiresAtUtc", out var expiresAtUtc))
+        {
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        return expiresAtUtc > now && expiresAtUtc <= now.AddDays(30);
+    }
+
+    private static bool TryReadJsonString(string json, string propertyName, out string value)
+    {
+        value = "";
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                value = property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() ?? "" : property.Value.ToString();
+                return !string.IsNullOrWhiteSpace(value);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
+
+    private static bool TryReadJsonDateTimeOffset(string json, string propertyName, out DateTimeOffset value)
+    {
+        value = default;
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (property.Value.ValueKind == JsonValueKind.String &&
+                    DateTimeOffset.TryParse(
+                        property.Value.GetString(),
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                        out value))
+                {
+                    return true;
+                }
+
+                if (property.Value.ValueKind == JsonValueKind.Number &&
+                    property.Value.TryGetInt64(out var unixSeconds))
+                {
+                    value = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+                    return true;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
+
+    private async Task<AccountSyncedContact?> LoadAuthoritativeServerContactAsync(
+        NpgsqlConnection connection,
+        string serverId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(serverId))
+        {
+            return null;
+        }
+
+        await using var command = new NpgsqlCommand("""
+            SELECT owner_user_id, payload_json
+            FROM fc_contacts
+            WHERE contact_user_id=@serverId AND is_deleted=FALSE
+            ORDER BY updated_at_utc DESC;
+            """, connection);
+        command.Parameters.AddWithValue("serverId", serverId.Trim());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            try
+            {
+                var ownerUserId = reader.GetString(0);
+                var contact = JsonSerializer.Deserialize<AccountSyncedContact>(reader.GetString(1));
+                if (contact is null || !IsServerContact(contact))
+                {
+                    continue;
+                }
+
+                if (string.Equals(contact.GroupOwnerUserId, ownerUserId, StringComparison.Ordinal))
+                {
+                    return contact;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> IsGroupConversationPeerAsync(
+        NpgsqlConnection connection,
+        string ownerUserId,
+        string peerUserId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(peerUserId))
+        {
+            return false;
+        }
+
+        await using var command = new NpgsqlCommand("""
+            SELECT payload_json
+            FROM fc_contacts
+            WHERE owner_user_id=@ownerUserId AND contact_user_id=@peerUserId AND is_deleted=FALSE
+            LIMIT 1;
+            """, connection);
+        command.Parameters.AddWithValue("ownerUserId", ownerUserId);
+        command.Parameters.AddWithValue("peerUserId", peerUserId.Trim());
+        var payload = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return false;
+        }
+
+        try
+        {
+            var contact = JsonSerializer.Deserialize<AccountSyncedContact>(payload);
+            return contact?.IsGroup == true && !contact.GroupIsDeleted;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsServerContact(AccountSyncedContact contact)
+        => contact.IsGroup &&
+           !contact.GroupIsDeleted &&
+           !string.IsNullOrWhiteSpace(contact.UserId) &&
+           !string.IsNullOrWhiteSpace(contact.ServerChannelsJson);
+
+    private static bool IsServerBanned(AccountSyncedContact server, string userId)
+    {
+        var moderation = LoadServerModeration(server);
+        return (moderation.Bans ?? []).Any(x => string.Equals(x.UserId, userId, StringComparison.Ordinal));
+    }
+
+    private static bool IsServerMember(AccountSyncedContact server, string userId)
+        => string.Equals(server.GroupOwnerUserId, userId, StringComparison.Ordinal) ||
+           LoadGroupMembers(server).Any(x => string.Equals(x.UserId, userId, StringComparison.Ordinal));
+
+    private static bool CanUpsertServerSnapshot(AccountSyncedContact server, string actorUserId, string body)
+    {
+        if (string.Equals(server.GroupOwnerUserId, actorUserId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (TryReadJsonString(body, "OwnerUserId", out var ownerUserId) &&
+            !string.Equals(ownerUserId, server.GroupOwnerUserId, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return HasServerPermission(server, actorUserId, ServerPermissionManageServer);
+    }
+
+    private static bool HasServerPermission(AccountSyncedContact server, string userId, string permission, string channelId = "")
+    {
+        if (!IsServerContact(server))
+        {
+            return true;
+        }
+
+        if (string.Equals(server.GroupOwnerUserId, userId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var roles = LoadServerRoles(server);
+        var roleIds = GetServerRoleIds(server, userId, roles);
+        var effective = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var role in roles.Where(x => roleIds.Contains(x.Id)))
+        {
+            if (string.Equals(role.Permissions, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            foreach (var id in SplitPermissionIds(role.Permissions))
+            {
+                effective.Add(id);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(channelId))
+        {
+            var allow = false;
+            var deny = false;
+            foreach (var role in roles.Where(x => roleIds.Contains(x.Id)).OrderBy(x => x.Position))
+            {
+                var channelOverride = LoadChannelOverrides(role)
+                    .FirstOrDefault(x => string.Equals(x.ChannelId, channelId, StringComparison.OrdinalIgnoreCase));
+                if (channelOverride is null)
+                {
+                    continue;
+                }
+
+                allow |= SplitPermissionIds(channelOverride.Allow).Contains(permission, StringComparer.OrdinalIgnoreCase);
+                deny |= SplitPermissionIds(channelOverride.Deny).Contains(permission, StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (deny)
+            {
+                return false;
+            }
+
+            if (allow)
+            {
+                return true;
+            }
+        }
+
+        return effective.Contains(permission);
+    }
+
+    private static HashSet<string> GetServerRoleIds(AccountSyncedContact server, string userId, IReadOnlyList<ServerRolePayload> roles)
+    {
+        var roleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "member" };
+        if (string.Equals(server.GroupOwnerUserId, userId, StringComparison.Ordinal))
+        {
+            roleIds.Add("owner");
+        }
+
+        var member = LoadGroupMembers(server).FirstOrDefault(x => string.Equals(x.UserId, userId, StringComparison.Ordinal));
+        if (member is not null)
+        {
+            foreach (var roleId in SplitRoleIds(member.RoleIds))
+            {
+                roleIds.Add(roleId);
+            }
+        }
+
+        foreach (var role in roles)
+        {
+            if (SplitRoleIds(role.MemberIds).Contains(userId, StringComparer.Ordinal))
+            {
+                roleIds.Add(role.Id);
+            }
+        }
+
+        return roleIds;
+    }
+
+    private static IReadOnlyList<GroupMemberPayload> LoadGroupMembers(AccountSyncedContact server)
+    {
+        if (string.IsNullOrWhiteSpace(server.GroupMembersJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<GroupMemberPayload>>(server.GroupMembersJson)?
+                       .Where(x => !string.IsNullOrWhiteSpace(x.UserId))
+                       .ToArray()
+                   ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<ServerRolePayload> LoadServerRoles(AccountSyncedContact server)
+    {
+        var roles = new List<ServerRolePayload>();
+        if (!string.IsNullOrWhiteSpace(server.ServerRolesJson))
+        {
+            try
+            {
+                roles = JsonSerializer.Deserialize<List<ServerRolePayload>>(server.ServerRolesJson)?
+                            .Where(x => !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Name))
+                            .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+                            .Select(x => x.First())
+                            .ToList()
+                        ?? [];
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        foreach (var role in BuildDefaultServerRoles())
+        {
+            if (roles.All(x => !string.Equals(x.Id, role.Id, StringComparison.OrdinalIgnoreCase)))
+            {
+                roles.Add(role);
+            }
+        }
+
+        return roles
+            .Select(NormalizeServerRolePermissions)
+            .OrderBy(x => x.Position)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static ServerRolePayload NormalizeServerRolePermissions(ServerRolePayload role)
+    {
+        if (string.Equals(role.Permissions, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return role;
+        }
+
+        var permissions = SplitPermissionIds(role.Permissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (permissions.Contains(ServerPermissionManageServer) ||
+            permissions.Contains(ServerPermissionManageChannels) ||
+            permissions.Contains(ServerPermissionManageRoles) ||
+            permissions.Contains(ServerPermissionManageMembers) ||
+            permissions.Contains(ServerPermissionSendMessages) ||
+            permissions.Contains(ServerPermissionJoinVoice))
+        {
+            permissions.Add(ServerPermissionViewChannel);
+            permissions.Add(ServerPermissionReadHistory);
+        }
+
+        if (permissions.Contains(ServerPermissionSendMessages))
+        {
+            permissions.Add(ServerPermissionAddReactions);
+        }
+
+        if (permissions.Contains(ServerPermissionJoinVoice))
+        {
+            permissions.Add(ServerPermissionSpeak);
+        }
+
+        return role with { Permissions = string.Join(',', permissions.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) };
+    }
+
+    private static IReadOnlyList<ServerRolePayload> BuildDefaultServerRoles()
+        =>
+        [
+            new("owner", "Owner", "#FBBF24", "all", 0, true, ShowSeparately: true),
+            new("admin", "Admin", "#60A5FA", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_server,manage_channels,manage_roles,manage_members,delete_messages", 1, false, ShowSeparately: true),
+            new("moderator", "Moderator", "#34D399", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_members,delete_messages", 2, false, ShowSeparately: true),
+            new("member", "Member", "#9CA3AF", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak", 100, false)
+        ];
+
+    private static ServerModerationPayload LoadServerModeration(AccountSyncedContact server)
+    {
+        if (string.IsNullOrWhiteSpace(server.ServerModerationJson))
+        {
+            return new ServerModerationPayload(Bans: [], AuditLog: []);
+        }
+
+        try
+        {
+            var payload = JsonSerializer.Deserialize<ServerModerationPayload>(server.ServerModerationJson);
+            return payload is null
+                ? new ServerModerationPayload(Bans: [], AuditLog: [])
+                : payload with
+                {
+                    InviteExpiryDays = Math.Clamp(payload.InviteExpiryDays <= 0 ? 7 : payload.InviteExpiryDays, 1, 30),
+                    Bans = payload.Bans ?? [],
+                    AuditLog = payload.AuditLog ?? []
+                };
+        }
+        catch (JsonException)
+        {
+            return new ServerModerationPayload(Bans: [], AuditLog: []);
+        }
+    }
+
+    private static IReadOnlyList<ServerChannelPermissionOverridePayload> LoadChannelOverrides(ServerRolePayload role)
+    {
+        if (string.IsNullOrWhiteSpace(role.ChannelOverridesJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<ServerChannelPermissionOverridePayload>>(role.ChannelOverridesJson)?
+                       .Where(x => !string.IsNullOrWhiteSpace(x.ChannelId))
+                       .ToArray()
+                   ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<string> SplitRoleIds(string roleIds)
+        => string.IsNullOrWhiteSpace(roleIds)
+            ? []
+            : roleIds.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+    private static IReadOnlyList<string> SplitPermissionIds(string permissions)
+        => string.IsNullOrWhiteSpace(permissions)
+            ? []
+            : permissions.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var connection = new NpgsqlConnection(_connectionString);
@@ -1352,6 +2479,15 @@ public sealed class AccountStore
     private static string NormalizeEmail(string value) => value.Trim().ToLowerInvariant();
     private static string NormalizeIdentifier(string value) => value.Trim().ToLowerInvariant();
 
+    private static string? NormalizeReadScopeType(string value)
+        => value.Trim().ToLowerInvariant() switch
+        {
+            "direct" => "direct",
+            "group" => "group",
+            "server_channel" => "server_channel",
+            _ => null
+        };
+
     private static void ValidateRegistration(string userId, string displayName, string login, string email, string password, string publicKey)
     {
         if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(publicKey)) throw new ArgumentException("User identity is required.");
@@ -1373,6 +2509,29 @@ public sealed class AccountStore
         => string.CompareOrdinal(firstUserId, secondUserId) <= 0
             ? $"{firstUserId}:{secondUserId}"
             : $"{secondUserId}:{firstUserId}";
+
+    private static string CreateGroupConversationId(string groupId)
+        => $"group:{groupId.Trim()}";
+
+    private static bool TryGetGroupMessageScope(ChatPacket packet, out string groupId)
+    {
+        groupId = "";
+        try
+        {
+            using var document = JsonDocument.Parse(packet.Body);
+            if (!document.RootElement.TryGetProperty("GroupId", out var property))
+            {
+                return false;
+            }
+
+            groupId = property.GetString()?.Trim() ?? "";
+            return groupId.Length > 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     private static bool WinsOver(FederationUsernameClaim candidate, FederationUsernameClaim current)
         => candidate.ClaimedAtUtc < current.ClaimedAtUtc ||
@@ -1506,3 +2665,65 @@ public sealed record StoredMediaResult(Guid MediaId, string MediaKind, string Fi
 public sealed record StoredMediaDownload(Guid MediaId, string FileName, string MimeType, long ByteLength, byte[] Bytes);
 public sealed record StoredAvatarDownload(Guid MediaId, string AvatarKind, long AvatarVersion, string FileName, string MimeType, long ByteLength, byte[] Bytes);
 internal sealed record AccountRecord(string UserId, string DisplayName, string Login, string Email, bool IsBanned, bool IsEmailVerified);
+internal enum ServerPacketKind
+{
+    Message,
+    HistoryRead,
+    Voice,
+    Invite,
+    ManageMembers,
+    ManageServer,
+    Upsert
+}
+
+internal readonly record struct ServerPacketAccessRequest(string ServerId, string ChannelId, ServerPacketKind Kind);
+internal sealed record GroupMemberPayload(
+    string UserId,
+    string DisplayName,
+    string RelayServer = "",
+    string AvatarKind = "",
+    string AvatarSha256 = "",
+    DateTimeOffset? JoinedAtUtc = null,
+    string RoleIds = "");
+
+internal sealed record ServerRolePayload(
+    string Id,
+    string Name,
+    string Color,
+    string Permissions,
+    int Position,
+    bool IsSystem,
+    string MemberIds = "",
+    string ChannelOverridesJson = "",
+    bool ShowSeparately = false);
+
+internal sealed record ServerModerationPayload(
+    bool AuditEnabled = false,
+    bool AuditAutoCleanup = false,
+    int AuditRetentionDays = 20,
+    int InviteExpiryDays = 7,
+    IReadOnlyList<ServerBanPayload>? Bans = null,
+    IReadOnlyList<ServerAuditEntryPayload>? AuditLog = null);
+
+internal sealed record ServerBanPayload(
+    string UserId,
+    string DisplayName,
+    string Type,
+    string Reason,
+    string BannedByUserId,
+    DateTimeOffset BannedAtUtc);
+
+internal sealed record ServerAuditEntryPayload(
+    string Id,
+    string ActorUserId,
+    string ActorDisplayName,
+    string ActorRoleName,
+    string Action,
+    string Target,
+    string Details,
+    DateTimeOffset CreatedAtUtc);
+
+internal sealed record ServerChannelPermissionOverridePayload(
+    string ChannelId,
+    string Allow,
+    string Deny);

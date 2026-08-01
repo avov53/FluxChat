@@ -231,6 +231,38 @@ public sealed record AccountSessionResponse(
 
 public sealed record AccountResult(bool Accepted, string Message);
 
+public sealed record AccountPreferences(
+    string ActivityVisibility,
+    IReadOnlyList<string> ActivitySelectedFriendIds);
+
+public sealed record AccountPreferencesResponse(
+    bool Accepted,
+    string Message,
+    AccountPreferences? Preferences = null);
+
+public sealed record AccountPreferencesUpdateRequest(
+    string ActivityVisibility,
+    IReadOnlyList<string> ActivitySelectedFriendIds);
+
+public sealed record AccountReadState(
+    string ScopeType,
+    string ScopeId,
+    string ChannelId,
+    DateTimeOffset LastReadAtUtc,
+    Guid? LastReadMessageId);
+
+public sealed record AccountReadStatesResponse(
+    bool Accepted,
+    string Message,
+    IReadOnlyList<AccountReadState>? ReadStates = null);
+
+public sealed record AccountMarkReadRequest(
+    string ScopeType,
+    string ScopeId,
+    string ChannelId,
+    DateTimeOffset LastReadAtUtc,
+    Guid? LastReadMessageId);
+
 public sealed record AccountDeviceSession(
     string SessionId,
     string DeviceName,
@@ -265,7 +297,13 @@ public sealed record AccountSyncedContact(
     string GroupMembersJson,
     string IdentityPublicKey,
     DateTimeOffset UpdatedAtUtc,
-    string CustomStatus = "");
+    string CustomStatus = "",
+    string ServerTemplate = "",
+    string ServerChannelsJson = "",
+    string ServerRolesJson = "",
+    string SelectedServerChannelId = "",
+    string ServerModerationJson = "",
+    string ServerBackgroundPath = "");
 
 public sealed record AccountContactsResponse(
     bool Accepted,
@@ -275,6 +313,10 @@ public sealed record AccountContactsResponse(
 public sealed record AccountContactUpsertRequest(AccountSyncedContact Contact);
 
 public sealed record AccountContactDeleteRequest(string UserId);
+
+public sealed record AccountHistoryDeleteRequest(string PeerUserId);
+
+public sealed record AccountMediaDeleteRequest(string MediaId);
 
 public sealed record AccountSessionRevokeRequest(string SessionId);
 
@@ -318,7 +360,9 @@ public sealed record RelayPresencePacket(
     [property: JsonPropertyName("publicKey")] string? PublicKey = null,
     [property: JsonPropertyName("identityNonce")] string? IdentityNonce = null,
     [property: JsonPropertyName("identitySignature")] string? IdentitySignature = null,
-    [property: JsonPropertyName("customStatus")] string? CustomStatus = null)
+    [property: JsonPropertyName("customStatus")] string? CustomStatus = null,
+    [property: JsonPropertyName("activityVisibility")] string ActivityVisibility = "Friends",
+    [property: JsonPropertyName("activitySelectedFriendIds")] IReadOnlyList<string>? ActivitySelectedFriendIds = null)
 {
     public static RelayPresencePacket Create(
         string userId,
@@ -332,7 +376,9 @@ public sealed record RelayPresencePacket(
         double avatarOffsetY = 0,
         double avatarVideoStartSeconds = 0,
         double avatarVideoDurationSeconds = 10,
-        string? customStatus = null)
+        string? customStatus = null,
+        string activityVisibility = "Friends",
+        IReadOnlyList<string>? activitySelectedFriendIds = null)
         => new(
             "fluxchat.relay-presence.v1",
             userId,
@@ -350,7 +396,9 @@ public sealed record RelayPresencePacket(
             null,
             null,
             null,
-            customStatus);
+            customStatus,
+            activityVisibility,
+            activitySelectedFriendIds);
 }
 
 public sealed record RelayAudioPacket(

@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Globalization;
 using System.Net;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text;
 using System.Windows.Media;
@@ -25,11 +27,21 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     private string _groupMembersJson = "";
     private string _currentUserId = "";
     private string _customStatus = "";
+    private string _serverTemplate = "";
+    private string _serverChannelsJson = "";
+    private string _serverRolesJson = "";
+    private string _serverModerationJson = "";
+    private string _selectedServerChannelId = "general";
     private long _groupVersion;
     private bool _groupIsDeleted;
     private bool _isGroup;
+    private bool _showServerSectionHeader;
+    private bool _isPinned;
+    private int _unreadCount;
     private int _messagePort;
     private string _identityPublicKey = "";
+    private DateTimeOffset _lastActivityAtUtc;
+    private string _notificationMode = "All";
 
     public ContactViewModel()
     {
@@ -105,6 +117,8 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsAvatarVideo));
             OnPropertyChanged(nameof(HasAvatar));
             OnPropertyChanged(nameof(AvatarImageSource));
+            OnPropertyChanged(nameof(AvatarVideoSource));
+            OnPropertyChanged(nameof(HasRenderableAvatar));
         }
     }
 
@@ -124,6 +138,8 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsAvatarImage));
             OnPropertyChanged(nameof(IsAvatarVideo));
             OnPropertyChanged(nameof(AvatarImageSource));
+            OnPropertyChanged(nameof(AvatarVideoSource));
+            OnPropertyChanged(nameof(HasRenderableAvatar));
         }
     }
 
@@ -146,6 +162,12 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CanEditGroup));
             OnPropertyChanged(nameof(CanLeaveGroup));
             OnPropertyChanged(nameof(HasActiveVoiceParticipants));
+            OnPropertyChanged(nameof(IsServer));
+            OnPropertyChanged(nameof(ServerKindGlyph));
+            OnPropertyChanged(nameof(EditGroupNameMenuText));
+            OnPropertyChanged(nameof(EditGroupPictureMenuText));
+            OnPropertyChanged(nameof(DeleteGroupMenuText));
+            OnPropertyChanged(nameof(LeaveGroupMenuText));
         }
     }
 
@@ -183,7 +205,94 @@ public sealed class ContactViewModel : INotifyPropertyChanged
 
     public int GroupMemberCount => GroupMemberIdsList.Count;
 
-    public string GroupMemberCountText => IsGroup ? $"{GroupMemberCount} participants" : "";
+    public string GroupMemberCountText => IsServer
+        ? $"Server • {GroupMemberCount} members"
+        : IsGroup
+            ? $"Group • {GroupMemberCount} participants"
+            : "";
+
+    public string ServerKindGlyph => IsServer ? "#" : "";
+
+    public int UnreadCount
+    {
+        get => _unreadCount;
+        set
+        {
+            var normalized = Math.Max(0, value);
+            if (_unreadCount == normalized)
+            {
+                return;
+            }
+
+            _unreadCount = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasUnread));
+            OnPropertyChanged(nameof(UnreadBadgeText));
+        }
+    }
+
+    public bool HasUnread => UnreadCount > 0;
+
+    public string UnreadBadgeText => UnreadCount > 3
+        ? "3+"
+        : UnreadCount.ToString(CultureInfo.InvariantCulture);
+
+    public bool IsPinned
+    {
+        get => _isPinned;
+        set
+        {
+            if (_isPinned == value)
+            {
+                return;
+            }
+
+            _isPinned = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PinMenuText));
+        }
+    }
+
+    public string PinMenuText => IsPinned ? "Unpin chat" : "Pin chat";
+
+    public DateTimeOffset LastActivityAtUtc
+    {
+        get => _lastActivityAtUtc;
+        set
+        {
+            if (_lastActivityAtUtc == value)
+            {
+                return;
+            }
+
+            _lastActivityAtUtc = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string NotificationMode
+    {
+        get => _notificationMode;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "All" : value;
+            if (string.Equals(_notificationMode, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _notificationMode = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(NotificationModeText));
+        }
+    }
+
+    public string NotificationModeText => NotificationMode switch
+    {
+        "Muted" => "Muted",
+        "Mentions" => "Mentions only",
+        _ => "All notifications"
+    };
 
     public string GroupOwnerUserId
     {
@@ -247,6 +356,118 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
+
+    public string ServerTemplate
+    {
+        get => _serverTemplate;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (_serverTemplate == normalized)
+            {
+                return;
+            }
+
+            _serverTemplate = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ServerChannelsJson
+    {
+        get => _serverChannelsJson;
+        set
+        {
+            if (_serverChannelsJson == value)
+            {
+                return;
+            }
+
+            _serverChannelsJson = value ?? "";
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasServerChannels));
+            OnPropertyChanged(nameof(IsServer));
+            OnPropertyChanged(nameof(GroupMemberCountText));
+            OnPropertyChanged(nameof(ServerKindGlyph));
+            OnPropertyChanged(nameof(EditGroupNameMenuText));
+            OnPropertyChanged(nameof(EditGroupPictureMenuText));
+            OnPropertyChanged(nameof(DeleteGroupMenuText));
+            OnPropertyChanged(nameof(LeaveGroupMenuText));
+        }
+    }
+
+    public string ServerRolesJson
+    {
+        get => _serverRolesJson;
+        set
+        {
+            if (_serverRolesJson == value)
+            {
+                return;
+            }
+
+            _serverRolesJson = value ?? "";
+            OnPropertyChanged();
+        }
+    }
+
+    public string ServerModerationJson
+    {
+        get => _serverModerationJson;
+        set
+        {
+            if (_serverModerationJson == value)
+            {
+                return;
+            }
+
+            _serverModerationJson = value ?? "";
+            OnPropertyChanged();
+        }
+    }
+
+    public string SelectedServerChannelId
+    {
+        get => string.IsNullOrWhiteSpace(_selectedServerChannelId) ? "general" : _selectedServerChannelId;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "general" : value.Trim();
+            if (_selectedServerChannelId == normalized)
+            {
+                return;
+            }
+
+            _selectedServerChannelId = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool HasServerChannels => IsGroup && !string.IsNullOrWhiteSpace(ServerChannelsJson);
+
+    public bool IsServer => HasServerChannels;
+
+    public bool ShowServerSectionHeader
+    {
+        get => _showServerSectionHeader;
+        set
+        {
+            if (_showServerSectionHeader == value)
+            {
+                return;
+            }
+
+            _showServerSectionHeader = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string EditGroupNameMenuText => IsServer ? "Edit server name" : "Edit group name";
+
+    public string EditGroupPictureMenuText => IsServer ? "Edit server picture" : "Edit group picture";
+
+    public string DeleteGroupMenuText => IsServer ? "Delete server" : "Delete group";
+
+    public string LeaveGroupMenuText => IsServer ? "Leave server" : "Leave group";
 
     public string CurrentUserId
     {
@@ -360,9 +581,11 @@ public sealed class ContactViewModel : INotifyPropertyChanged
     }
 
     public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarPath);
-    public bool IsAvatarImage => AvatarKind == "image" && HasAvatar;
-    public bool IsAvatarVideo => AvatarKind == "video" && HasAvatar;
+    public bool HasRenderableAvatar => HasAvatar && File.Exists(AvatarPath);
+    public bool IsAvatarImage => AvatarKind == "image" && HasRenderableAvatar;
+    public bool IsAvatarVideo => AvatarKind == "video" && HasRenderableAvatar;
     public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
+    public Uri? AvatarVideoSource => IsAvatarVideo && File.Exists(AvatarPath) ? new Uri(AvatarPath, UriKind.Absolute) : null;
 
     public string IdentityPublicKey { get => _identityPublicKey; set { if (_identityPublicKey == value) return; _identityPublicKey = value; OnPropertyChanged(); } }
 
@@ -379,7 +602,8 @@ public sealed class ContactViewModel : INotifyPropertyChanged
 
             _customStatus = normalized;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(StatusText));
+            OnPropertyChanged(nameof(ActivityText));
+            OnPropertyChanged(nameof(HasActivity));
         }
     }
 
@@ -432,14 +656,15 @@ public sealed class ContactViewModel : INotifyPropertyChanged
         }
     }
 
-    public string StatusText => !string.IsNullOrWhiteSpace(CustomStatus)
-        ? CustomStatus
-        : Status switch
+    public string ActivityText => CustomStatus;
+    public bool HasActivity => !string.IsNullOrWhiteSpace(ActivityText);
+
+    public string StatusText => Status switch
         {
-            UserPresenceStatus.Online => "online",
-            UserPresenceStatus.Idle => "idle",
-            UserPresenceStatus.DoNotDisturb => "do not disturb",
-            _ => "offline"
+            UserPresenceStatus.Online => AppLanguage.Text("profile.status.online").ToLower(CultureInfo.CurrentCulture),
+            UserPresenceStatus.Idle => AppLanguage.Text("profile.status.idle").ToLower(CultureInfo.CurrentCulture),
+            UserPresenceStatus.DoNotDisturb => AppLanguage.Text("profile.status.dnd").ToLower(CultureInfo.CurrentCulture),
+            _ => AppLanguage.Text("profile.status.offline").ToLower(CultureInfo.CurrentCulture)
         };
 
     public string StatusColor => Status switch
@@ -484,6 +709,166 @@ public sealed class GroupVoiceParticipantViewModel
     }
 }
 
+public sealed class ServerChannelViewModel : INotifyPropertyChanged
+{
+    private bool _isSelected;
+    private bool _isVoiceActive;
+    private string _voiceElapsedText = "";
+    private int _userLimit;
+    private int _unreadCount;
+
+    public required string Id { get; init; }
+
+    public required string Name { get; init; }
+
+    public required string Type { get; init; }
+
+    public string DisplayName => string.Equals(Type, "voice", StringComparison.OrdinalIgnoreCase) ? Name : $"# {Name}";
+
+    public string Icon => string.Equals(Type, "voice", StringComparison.OrdinalIgnoreCase) ? "♪" : "#";
+
+    public bool IsText => string.Equals(Type, "text", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsVoice => string.Equals(Type, "voice", StringComparison.OrdinalIgnoreCase);
+
+    public int UnreadCount
+    {
+        get => _unreadCount;
+        set
+        {
+            var normalized = Math.Max(0, value);
+            if (_unreadCount == normalized)
+            {
+                return;
+            }
+
+            _unreadCount = normalized;
+            OnPropertyChanged(nameof(UnreadCount));
+            OnPropertyChanged(nameof(IsUnread));
+            OnPropertyChanged(nameof(UnreadBadgeText));
+        }
+    }
+
+    public bool IsUnread => IsText && UnreadCount > 0;
+
+    public string UnreadBadgeText => UnreadCount > 3
+        ? "3+"
+        : UnreadCount.ToString(CultureInfo.InvariantCulture);
+
+    public bool CanInvite { get; init; }
+
+    public bool CanManageChannels { get; init; }
+
+    public ObservableCollection<GroupVoiceParticipantViewModel> VoiceParticipants { get; } = [];
+
+    public bool HasVoiceParticipants => VoiceParticipants.Count > 0;
+
+    public int UserLimit
+    {
+        get => _userLimit;
+        set
+        {
+            if (_userLimit == value)
+            {
+                return;
+            }
+
+            _userLimit = value;
+            OnPropertyChanged(nameof(UserLimit));
+        }
+    }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            OnPropertyChanged(nameof(IsSelected));
+        }
+    }
+
+    public bool IsVoiceActive
+    {
+        get => _isVoiceActive;
+        set
+        {
+            if (_isVoiceActive == value)
+            {
+                return;
+            }
+
+            _isVoiceActive = value;
+            OnPropertyChanged(nameof(IsVoiceActive));
+            OnPropertyChanged(nameof(IsVoiceTimerVisible));
+        }
+    }
+
+    public string VoiceElapsedText
+    {
+        get => _voiceElapsedText;
+        set
+        {
+            if (_voiceElapsedText == value)
+            {
+                return;
+            }
+
+            _voiceElapsedText = value;
+            OnPropertyChanged(nameof(VoiceElapsedText));
+            OnPropertyChanged(nameof(IsVoiceTimerVisible));
+        }
+    }
+
+    public bool IsVoiceTimerVisible => IsVoice && IsVoiceActive && !string.IsNullOrWhiteSpace(VoiceElapsedText);
+
+    public void ReplaceVoiceParticipants(IEnumerable<GroupVoiceParticipantViewModel> participants)
+    {
+        VoiceParticipants.Clear();
+        foreach (var participant in participants)
+        {
+            VoiceParticipants.Add(participant);
+        }
+
+        OnPropertyChanged(nameof(HasVoiceParticipants));
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged(string propertyName)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerInviteFriendViewModel
+{
+    public required string UserId { get; init; }
+    public required string DisplayName { get; init; }
+    public string ShortId { get; init; } = "";
+    public string StatusText { get; init; } = "";
+    public bool IsAlreadyMember { get; init; }
+
+    public string Initials
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(DisplayName))
+            {
+                return "?";
+            }
+
+            var initials = string.Concat(DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => x[0])).ToUpperInvariant();
+            return initials.Length <= 2 ? initials : initials[..2];
+        }
+    }
+
+    public string InviteButtonText => IsAlreadyMember ? "Invite" : "Add";
+}
+
 public enum UserPresenceStatus
 {
     Online,
@@ -491,6 +876,136 @@ public enum UserPresenceStatus
     DoNotDisturb,
     Invisible,
     Offline
+}
+
+public sealed class MiniProfileViewModel : INotifyPropertyChanged
+{
+    private string _draftText = "";
+    private string _selectedEmoji = "\U0001F525";
+
+    public required string UserId { get; init; }
+    public required string DisplayName { get; init; }
+    public string AvatarKind { get; init; } = "color";
+    public string AvatarPath { get; init; } = "";
+    public UserPresenceStatus Status { get; init; } = UserPresenceStatus.Offline;
+    public string CustomStatus { get; init; } = "";
+    public int CommonGroupsCount { get; init; }
+    public bool IsSelf { get; init; }
+    public bool IsKnownContact { get; init; }
+
+    public string ShortUserId => string.IsNullOrWhiteSpace(UserId)
+        ? ""
+        : UserId.Length <= 8 ? UserId : UserId[..8];
+
+    public string Initials => BuildInitials(DisplayName);
+    public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarPath);
+    public bool IsAvatarImage => HasAvatar && AvatarKind == "image";
+    public bool IsAvatarVideo => HasAvatar && AvatarKind == "video";
+    public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
+    public string CommonGroupsText => string.Format(
+        CultureInfo.CurrentCulture,
+        AppLanguage.Text("miniProfile.commonGroups"),
+        CommonGroupsCount);
+
+    public string StatusText => !string.IsNullOrWhiteSpace(CustomStatus)
+        ? CustomStatus
+        : Status switch
+        {
+            UserPresenceStatus.Online => AppLanguage.Text("profile.status.online").ToLower(CultureInfo.CurrentCulture),
+            UserPresenceStatus.Idle => AppLanguage.Text("profile.status.idle").ToLower(CultureInfo.CurrentCulture),
+            UserPresenceStatus.DoNotDisturb => AppLanguage.Text("profile.status.dnd").ToLower(CultureInfo.CurrentCulture),
+            _ => AppLanguage.Text("profile.status.offline").ToLower(CultureInfo.CurrentCulture)
+        };
+
+    public System.Windows.Media.Brush StatusBrush => new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Status switch
+    {
+        UserPresenceStatus.Online => "#35d07f",
+        UserPresenceStatus.Idle => "#f2b84b",
+        UserPresenceStatus.DoNotDisturb => "#ed4245",
+        _ => "#687080"
+    }));
+
+    public string DraftText
+    {
+        get => _draftText;
+        set
+        {
+            value ??= "";
+            if (_draftText == value)
+            {
+                return;
+            }
+
+            _draftText = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasDraftText));
+        }
+    }
+
+    public bool HasDraftText => !string.IsNullOrWhiteSpace(DraftText);
+
+    public string SelectedEmoji
+    {
+        get => _selectedEmoji;
+        set
+        {
+            value = string.IsNullOrWhiteSpace(value) ? "\U0001F525" : value;
+            if (_selectedEmoji == value)
+            {
+                return;
+            }
+
+            _selectedEmoji = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedEmojiImageSource));
+        }
+    }
+
+    public ImageSource? SelectedEmojiImageSource => LoadTwemojiImage(SelectedEmoji);
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    private static string BuildInitials(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "?";
+        }
+
+        var initials = string.Concat(value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => x[0])).ToUpperInvariant();
+        return initials.Length <= 2 ? initials : initials[..2];
+    }
+
+    private static ImageSource? LoadTwemojiImage(string emoji)
+    {
+        var codepoints = emoji.EnumerateRunes()
+            .Where(rune => rune.Value != 0xFE0F)
+            .Select(rune => rune.Value.ToString("x"))
+            .ToArray();
+        if (codepoints.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.UriSource = new Uri($"https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{string.Join("-", codepoints)}.png");
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 public sealed class MessageViewModel : INotifyPropertyChanged
@@ -516,6 +1031,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     private double _videoPositionSeconds;
     private double _videoVolume = 0.8;
     private bool _isVideoPlaying;
+    private bool _isGroupStart = true;
 
     public required Guid MessageId { get; init; }
     public required string PeerUserId { get; init; }
@@ -733,7 +1249,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
         }
     }
 
-    public string TimeText
+    public string HeaderTimeText
     {
         get
         {
@@ -744,7 +1260,31 @@ public sealed class MessageViewModel : INotifyPropertyChanged
         }
     }
 
-    public string Side => IsOutgoing ? "Right" : "Left";
+    public string HoverTimeText => SentAtUtc.ToLocalTime().ToString("HH:mm");
+    public string TimeText => HoverTimeText;
+
+    public bool IsGroupStart
+    {
+        get => _isGroupStart;
+        set
+        {
+            if (_isGroupStart == value)
+            {
+                return;
+            }
+
+            _isGroupStart = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowSenderHeader));
+            OnPropertyChanged(nameof(ShowSenderAvatar));
+            OnPropertyChanged(nameof(IsCompactContinuation));
+        }
+    }
+
+    public bool ShowSenderHeader => IsGroupStart;
+    public bool ShowSenderAvatar => IsGroupStart;
+    public bool IsCompactContinuation => !IsGroupStart;
+    public string Side => "Left";
     public bool IsTextMessage => Kind == MessageKinds.Text;
     public bool IsImageMessage => Kind == MessageKinds.Image;
     public bool IsGifMessage => Kind == MessageKinds.Gif;
@@ -1129,11 +1669,17 @@ public sealed class ReactionViewModel
 
 public sealed class MessageTextSegment
 {
+    private static readonly Regex UrlRegex = new(
+        @"(?i)\b((?:https?://|www\.)[^\s<>()]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public string Text { get; init; } = "";
     public string ImageUrl { get; init; } = "";
+    public string Url { get; init; } = "";
     public double Size { get; init; } = 14;
     public bool IsEmoji => !string.IsNullOrWhiteSpace(ImageUrl);
-    public bool IsText => !IsEmoji;
+    public bool IsLink => !string.IsNullOrWhiteSpace(Url);
+    public bool IsText => !IsEmoji && !IsLink;
     public double ImageSize => Size >= 24 ? 30 : 20;
     public double TextLineHeight => Size >= 24 ? 34 : 21;
 
@@ -1191,12 +1737,69 @@ public sealed class MessageTextSegment
             return;
         }
 
+        foreach (var segment in SplitTextAndLinks(textBuffer.ToString(), size))
+        {
+            segments.Add(segment);
+        }
+
+        textBuffer.Clear();
+    }
+
+    private static IEnumerable<MessageTextSegment> SplitTextAndLinks(string text, double size)
+    {
+        var cursor = 0;
+        foreach (Match match in UrlRegex.Matches(text))
+        {
+            if (match.Index > cursor)
+            {
+                yield return new MessageTextSegment
+                {
+                    Text = text[cursor..match.Index],
+                    Size = size
+                };
+            }
+
+            var urlText = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', ')');
+            if (urlText.Length > 0)
+            {
+                var trimmedTrailing = match.Value.Length - urlText.Length;
+                yield return new MessageTextSegment
+                {
+                    Text = urlText,
+                    Url = urlText.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? $"https://{urlText}" : urlText,
+                    Size = size
+                };
+
+                if (trimmedTrailing > 0)
+                {
+                    yield return new MessageTextSegment
+                    {
+                        Text = match.Value[^trimmedTrailing..],
+                        Size = size
+                    };
+                }
+            }
+
+            cursor = match.Index + match.Length;
+        }
+
+        if (cursor < text.Length)
+        {
+            yield return new MessageTextSegment
+            {
+                Text = text[cursor..],
+                Size = size
+            };
+        }
+    }
+
+    private static void AddPlainText(ICollection<MessageTextSegment> segments, string text, double size)
+    {
         segments.Add(new MessageTextSegment
         {
-            Text = textBuffer.ToString(),
+            Text = text,
             Size = size
         });
-        textBuffer.Clear();
     }
 
     private static bool IsEmojiStart(Rune rune)
@@ -1344,6 +1947,11 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
     private bool _isFriend;
     private bool _isSelf;
     private bool _canManageGroup;
+    private string _roleSummary = "";
+    private string _roleGroupName = "";
+    private string _roleGroupColor = "#9CA3AF";
+    private string _displayNameColor = "#F2F3F5";
+    private bool _showRoleGroupHeader;
 
     public required string UserId { get; init; }
 
@@ -1435,7 +2043,8 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
 
             _customStatus = normalized;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(StatusText));
+            OnPropertyChanged(nameof(ActivityText));
+            OnPropertyChanged(nameof(HasActivity));
         }
     }
 
@@ -1524,19 +2133,102 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
         }
     }
 
+    public string RoleSummary
+    {
+        get => _roleSummary;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (_roleSummary == normalized)
+            {
+                return;
+            }
+
+            _roleSummary = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasRoleSummary));
+        }
+    }
+
+    public bool HasRoleSummary => !string.IsNullOrWhiteSpace(RoleSummary);
+
+    public string RoleGroupName
+    {
+        get => _roleGroupName;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (_roleGroupName == normalized)
+            {
+                return;
+            }
+
+            _roleGroupName = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public string RoleGroupColor
+    {
+        get => _roleGroupColor;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "#9CA3AF" : value.Trim();
+            if (_roleGroupColor == normalized)
+            {
+                return;
+            }
+
+            _roleGroupColor = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public string DisplayNameColor
+    {
+        get => _displayNameColor;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "#F2F3F5" : value.Trim();
+            if (_displayNameColor == normalized)
+            {
+                return;
+            }
+
+            _displayNameColor = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool ShowRoleGroupHeader
+    {
+        get => _showRoleGroupHeader;
+        set
+        {
+            if (_showRoleGroupHeader == value)
+            {
+                return;
+            }
+
+            _showRoleGroupHeader = value;
+            OnPropertyChanged();
+        }
+    }
+
     public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarPath);
     public bool IsAvatarImage => HasAvatar && AvatarKind == "image";
     public bool IsAvatarVideo => HasAvatar && AvatarKind == "video";
     public ImageSource? AvatarImageSource => IsAvatarImage ? AvatarImageLoader.Load(AvatarPath) : null;
     public string ShortId => UserId.Length <= 8 ? UserId : UserId[..8];
-    public string StatusText => !string.IsNullOrWhiteSpace(CustomStatus)
-        ? CustomStatus
-        : Status switch
+    public string ActivityText => CustomStatus;
+    public bool HasActivity => !string.IsNullOrWhiteSpace(ActivityText);
+
+    public string StatusText => Status switch
         {
-            UserPresenceStatus.Online => "online",
-            UserPresenceStatus.Idle => "idle",
-            UserPresenceStatus.DoNotDisturb => "do not disturb",
-            _ => "offline"
+            UserPresenceStatus.Online => AppLanguage.Text("profile.status.online").ToLower(CultureInfo.CurrentCulture),
+            UserPresenceStatus.Idle => AppLanguage.Text("profile.status.idle").ToLower(CultureInfo.CurrentCulture),
+            UserPresenceStatus.DoNotDisturb => AppLanguage.Text("profile.status.dnd").ToLower(CultureInfo.CurrentCulture),
+            _ => AppLanguage.Text("profile.status.offline").ToLower(CultureInfo.CurrentCulture)
         };
 
     public string StatusColor => Status switch
@@ -1575,6 +2267,573 @@ public sealed class GroupMemberViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerRoleEditorViewModel : INotifyPropertyChanged
+{
+    private string _name = "";
+    private string _color = "#5865f2";
+    private bool _isSystem;
+    private bool _showSeparately;
+    private int _position;
+    private bool _canMoveUp;
+    private bool _canMoveDown;
+
+    public required string Id { get; init; }
+
+    public required string Name
+    {
+        get => _name;
+        set
+        {
+            if (_name == value)
+            {
+                return;
+            }
+
+            _name = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DisplayName));
+        }
+    }
+
+    public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name;
+
+    public string Color
+    {
+        get => _color;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "#5865f2" : value.Trim();
+            if (_color == normalized)
+            {
+                return;
+            }
+
+            _color = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsSystem
+    {
+        get => _isSystem;
+        set
+        {
+            if (_isSystem == value)
+            {
+                return;
+            }
+
+            _isSystem = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanDelete));
+        }
+    }
+
+    public bool CanDelete => !IsSystem;
+
+    public bool ShowSeparately
+    {
+        get => _showSeparately;
+        set
+        {
+            if (_showSeparately == value)
+            {
+                return;
+            }
+
+            _showSeparately = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public int Position
+    {
+        get => _position;
+        set
+        {
+            if (_position == value)
+            {
+                return;
+            }
+
+            _position = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanMoveUp
+    {
+        get => _canMoveUp;
+        set
+        {
+            if (_canMoveUp == value)
+            {
+                return;
+            }
+
+            _canMoveUp = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanMoveDown
+    {
+        get => _canMoveDown;
+        set
+        {
+            if (_canMoveDown == value)
+            {
+                return;
+            }
+
+            _canMoveDown = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerMemberRoleAssignmentViewModel : INotifyPropertyChanged
+{
+    private string _displayName = "";
+    private bool _isSelected;
+    private bool _hasRole;
+
+    public required string UserId { get; init; }
+
+    public required string DisplayName
+    {
+        get => _displayName;
+        set
+        {
+            if (_displayName == value)
+            {
+                return;
+            }
+
+            _displayName = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool HasRole
+    {
+        get => _hasRole;
+        set
+        {
+            if (_hasRole == value)
+            {
+                return;
+            }
+
+            _hasRole = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerPermissionToggleViewModel : INotifyPropertyChanged
+{
+    private bool _isEnabled;
+
+    public required string Id { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public required string Description { get; init; }
+
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set
+        {
+            if (_isEnabled == value)
+            {
+                return;
+            }
+
+            _isEnabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerChannelAccessViewModel : INotifyPropertyChanged
+{
+    private bool _canView;
+    private bool _canSend;
+    private bool _canJoinVoice;
+
+    public required string ChannelId { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public required string Type { get; init; }
+
+    public bool IsText => string.Equals(Type, "text", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsVoice => string.Equals(Type, "voice", StringComparison.OrdinalIgnoreCase);
+
+    public bool CanView
+    {
+        get => _canView;
+        set
+        {
+            if (_canView == value)
+            {
+                return;
+            }
+
+            _canView = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanSend
+    {
+        get => _canSend;
+        set
+        {
+            if (_canSend == value)
+            {
+                return;
+            }
+
+            _canSend = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanJoinVoice
+    {
+        get => _canJoinVoice;
+        set
+        {
+            if (_canJoinVoice == value)
+            {
+                return;
+            }
+
+            _canJoinVoice = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerChannelRoleAccessViewModel : INotifyPropertyChanged
+{
+    private bool _canView;
+    private bool _canAction;
+    private bool _canReadHistory;
+    private bool _canAttachFiles;
+    private bool _canAddReactions;
+    private bool _canSpeak;
+    private bool _canStream;
+    private bool _isExpanded;
+
+    public required string RoleId { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public required string Color { get; init; }
+
+    public required string ChannelType { get; init; }
+
+    public bool IsVoice => string.Equals(ChannelType, "voice", StringComparison.OrdinalIgnoreCase);
+
+    public bool CanEdit => !string.Equals(RoleId, "owner", StringComparison.OrdinalIgnoreCase);
+
+    public string ActionLabel => IsVoice ? "Join" : "Send";
+
+    public bool CanView
+    {
+        get => _canView;
+        set
+        {
+            if (_canView == value)
+            {
+                return;
+            }
+
+            _canView = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanAction
+    {
+        get => _canAction;
+        set
+        {
+            if (_canAction == value)
+            {
+                return;
+            }
+
+            _canAction = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanReadHistory
+    {
+        get => _canReadHistory;
+        set
+        {
+            if (_canReadHistory == value)
+            {
+                return;
+            }
+
+            _canReadHistory = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanAttachFiles
+    {
+        get => _canAttachFiles;
+        set
+        {
+            if (_canAttachFiles == value)
+            {
+                return;
+            }
+
+            _canAttachFiles = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanAddReactions
+    {
+        get => _canAddReactions;
+        set
+        {
+            if (_canAddReactions == value)
+            {
+                return;
+            }
+
+            _canAddReactions = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanSpeak
+    {
+        get => _canSpeak;
+        set
+        {
+            if (_canSpeak == value)
+            {
+                return;
+            }
+
+            _canSpeak = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanStream
+    {
+        get => _canStream;
+        set
+        {
+            if (_canStream == value)
+            {
+                return;
+            }
+
+            _canStream = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (_isExpanded == value)
+            {
+                return;
+            }
+
+            _isExpanded = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ExpandGlyph));
+        }
+    }
+
+    public string ExpandGlyph => IsExpanded ? "\uE70E" : "\uE70D";
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerBanViewModel : INotifyPropertyChanged
+{
+    private string _displayName = "";
+    private string _reason = "";
+
+    public required string UserId { get; init; }
+
+    public required string DisplayName
+    {
+        get => _displayName;
+        set
+        {
+            if (_displayName == value)
+            {
+                return;
+            }
+
+            _displayName = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public required string Type { get; init; }
+
+    public string TypeText => string.Equals(Type, "device", StringComparison.OrdinalIgnoreCase)
+        ? "Account + device"
+        : "Account";
+
+    public string Reason
+    {
+        get => _reason;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (_reason == normalized)
+            {
+                return;
+            }
+
+            _reason = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasReason));
+        }
+    }
+
+    public bool HasReason => !string.IsNullOrWhiteSpace(Reason);
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ServerAuditEntryViewModel
+{
+    public required string Title { get; init; }
+    public required string Details { get; init; }
+    public required string TimeText { get; init; }
+}
+
+public sealed class NotificationRuleViewModel : INotifyPropertyChanged
+{
+    private string _mode = "All";
+
+    public required string ContactId { get; init; }
+    public required string DisplayName { get; init; }
+    public bool IsServer { get; init; }
+
+    public string Mode
+    {
+        get => _mode;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "All" : value;
+            if (string.Equals(_mode, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _mode = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ModeText));
+        }
+    }
+
+    public string ModeText => Mode switch
+    {
+        "Muted" => "Muted",
+        "Mentions" => "Mentions only",
+        _ => "All"
+    };
+
+    public string ScopeText => IsServer ? "Server" : "Direct / group";
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class ActivityAudienceFriendViewModel : INotifyPropertyChanged
+{
+    private bool _isSelected;
+
+    public required string UserId { get; init; }
+    public required string DisplayName { get; init; }
+    public required string Initials { get; init; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public sealed class FriendRequestViewModel : INotifyPropertyChanged
@@ -1691,11 +2950,11 @@ public sealed class AccountDeviceSessionViewModel(AccountDeviceSession session)
     public string SessionId { get; } = session.SessionId;
 
     public string DeviceName { get; } = string.IsNullOrWhiteSpace(session.DeviceName)
-        ? "FluxChat device"
+        ? AppLanguage.Text("settings.device.defaultName")
         : session.DeviceName;
 
     public string Location { get; } = string.IsNullOrWhiteSpace(session.Location)
-        ? "Unknown location"
+        ? AppLanguage.Text("settings.device.unknownLocation")
         : session.Location;
 
     public string LastSeenText { get; } = FormatLastSeen(session.LastSeenAtUtc);
@@ -1709,10 +2968,10 @@ public sealed class AccountDeviceSessionViewModel(AccountDeviceSession session)
     public bool CanRevoke { get; } = session.IsActive;
 
     public string CurrentLabel { get; } = session.IsCurrent
-        ? "Current device"
+        ? AppLanguage.Text("settings.device.current")
         : session.IsActive
-            ? "Active"
-            : "Signed out";
+            ? AppLanguage.Text("settings.device.active")
+            : AppLanguage.Text("settings.device.signedOut");
 
     public System.Windows.Media.Brush CurrentLabelBrush { get; } = session.IsCurrent
         ? new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#57f287"))
@@ -1726,15 +2985,15 @@ public sealed class AccountDeviceSessionViewModel(AccountDeviceSession session)
         var age = DateTimeOffset.UtcNow - lastSeenUtc;
         if (age < TimeSpan.FromMinutes(2))
         {
-            return "Active now";
+            return AppLanguage.Text("settings.device.activeNow");
         }
 
         if (local.Date == DateTime.Today)
         {
-            return $"Last active {local:HH:mm}";
+            return string.Format(CultureInfo.CurrentCulture, AppLanguage.Text("settings.device.lastActiveTime"), local.ToString("HH:mm", CultureInfo.CurrentCulture));
         }
 
-        return $"Last active {local:dd.MM.yyyy HH:mm}";
+        return string.Format(CultureInfo.CurrentCulture, AppLanguage.Text("settings.device.lastActiveTime"), local.ToString("dd.MM.yyyy HH:mm", CultureInfo.CurrentCulture));
     }
 }
 

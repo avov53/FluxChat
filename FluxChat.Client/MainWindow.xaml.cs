@@ -51,6 +51,7 @@ public partial class MainWindow : Window
     private const string GroupKickIntent = "group-kick";
     private const string GroupTransferOwnerIntent = "group-transfer-owner";
     private const string GroupMessageIntent = "group-message";
+    private const string ServerChannelInviteIntent = "server-channel-invite";
     private const string ChatRichIntent = "chat-rich";
     private const string ChatEditIntent = "chat-edit";
     private const string ChatReactionIntent = "chat-reaction";
@@ -138,6 +139,9 @@ public partial class MainWindow : Window
     private static readonly TimeSpan CallAudioSendTimeout = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan CallNetworkPingInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan CallNetworkPingTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan CallPeerReconnectGrace = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan CallPeerDisconnectAfter = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan CallSelfSessionLimit = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CallAudioLossReportDelay = TimeSpan.FromSeconds(4);
     private const double AvatarEditorPreviewSize = 350;
     private const double AvatarEditorCircleSize = 344;
@@ -150,12 +154,27 @@ public partial class MainWindow : Window
     private const int MaxGifSearchResults = 1000;
     private const int GiphyGifPageSize = 50;
     private const int WikimediaGifPageSize = 200;
+    private static readonly string[] MiniProfileEmojiChoices = BuildMiniProfileEmojiChoices();
 
     private enum ScreenShareFocusTarget
     {
         Auto,
         Local,
         Peer
+    }
+
+    private enum ServerSettingsTab
+    {
+        Profile,
+        Roles,
+        Bans,
+        Audit
+    }
+
+    private enum AvatarEditorTarget
+    {
+        Profile,
+        ServerProfile
     }
 
     private readonly ObservableCollection<ContactViewModel> _contacts = [];
@@ -167,6 +186,24 @@ public partial class MainWindow : Window
     private readonly HttpClient _httpClient = new();
     private readonly ObservableCollection<GroupCandidateViewModel> _groupCandidates = [];
     private readonly ObservableCollection<GroupMemberViewModel> _groupMembers = [];
+    private readonly ObservableCollection<ServerChannelViewModel> _serverChannels = [];
+    private readonly ObservableCollection<ServerRoleEditorViewModel> _serverRoles = [];
+    private readonly ObservableCollection<ServerMemberRoleAssignmentViewModel> _serverRoleMembers = [];
+    private readonly ObservableCollection<ServerPermissionToggleViewModel> _serverRolePermissions = [];
+    private readonly ObservableCollection<ServerChannelAccessViewModel> _serverRoleChannelPermissions = [];
+    private readonly ObservableCollection<ServerChannelRoleAccessViewModel> _serverChannelRoleAccess = [];
+    private readonly ObservableCollection<ServerBanViewModel> _serverBans = [];
+    private readonly ObservableCollection<ServerAuditEntryViewModel> _serverAuditEntries = [];
+    private readonly ObservableCollection<ServerInviteFriendViewModel> _serverInviteFriends = [];
+    private readonly ObservableCollection<ActivityAudienceFriendViewModel> _activityAudienceFriends = [];
+    private readonly HashSet<string> _mutedServerTextChannels = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isRefreshingServerChannels;
+    private bool _isRefreshingServerRoleMembers;
+    private bool _isRefreshingServerModeration;
+    private System.Windows.Point _serverRoleDragStartPoint;
+    private string? _serverRoleDragRoleId;
+    private bool _serverRoleLiveDragActive;
+    private bool _serverRoleReorderDirty;
     private readonly ObservableCollection<AccountDeviceSessionViewModel> _accountDeviceSessions = [];
     private readonly ObservableCollection<ScreenShareSourceItem> _screenShareSources = [];
     private readonly ObservableCollection<ScreenShareSourceItem> _visibleScreenShareSources = [];
@@ -174,9 +211,12 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _selectedGroupMemberIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _activeCallPeerUserIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, DateTimeOffset>> _groupVoiceRooms = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _selfServerVoiceChannels = new(StringComparer.Ordinal);
     private IReadOnlyList<string> _activeCallTargetUserIds = [];
     private readonly Dictionary<string, DateTimeOffset> _profileRequestAttempts = [];
     private readonly Dictionary<string, string> _messageDrafts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AccountReadState> _readStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _serverChannelUnreadCounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<CoreWebView2, WeakReference<Microsoft.Web.WebView2.Wpf.WebView2CompositionControl>> _messageGifViews = [];
     private readonly Dictionary<string, GifRenderDimensions> _messageGifDimensions = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, List<WeakReference<MediaElement>>> _videoPlayers = [];
@@ -190,14 +230,24 @@ public partial class MainWindow : Window
     private readonly UserProfile? _startupProfile;
     private RelayClient? _relayClient;
     private DesktopNotificationService? _desktopNotifications;
+    private IncomingCallMiniWindow? _incomingCallMiniWindow;
+    private ContactViewModel? _incomingCallMiniContact;
     private readonly MediaPlayer _notificationSoundPlayer = new();
     private readonly Dictionary<string, MediaElement> _wallpaperVideoElements = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _syncedMediaRefs = new(StringComparer.OrdinalIgnoreCase);
+    private string _activeConversationWallpaperSection = "";
+    private string _activeSidebarWallpaperSection = "";
+    private string _activeServerWallpaperSection = "";
+    private ServerSettingsTab _serverSettingsTab = ServerSettingsTab.Roles;
     private ContactViewModel? _selectedContact;
     private ContactViewModel? _draftGroupContact;
     private MessageViewModel? _replyTarget;
     private MessageViewModel? _editingMessage;
     private MessageViewModel? _forwardTarget;
     private MessageViewModel? _reactionTarget;
+    private MessageViewModel? _activeMiniProfileMessage;
+    private MiniProfileViewModel? _activeMiniProfile;
+    private bool _miniProfileEmojiTargetActive;
     private MessageViewModel? _imageViewerMessage;
     private MessageViewModel? _videoViewerMessage;
     private TaskCompletionSource<bool>? _appConfirmDialogCompletion;
@@ -211,6 +261,8 @@ public partial class MainWindow : Window
     private GoogleDriveService? _googleDrive = null;
     private bool _isInitializingDataSettings;
     private bool _isInitializingCustomizationSettings;
+    private bool _isInitializingLanguageSettings;
+    private bool _isInitializingModernSettings;
     private bool _contactSyncReady;
     private bool _isApplyingServerContacts;
     private bool _isRestoringMessageDraft;
@@ -244,6 +296,13 @@ public partial class MainWindow : Window
     private double _pendingAvatarOffsetY;
     private double _pendingAvatarVideoStartSeconds;
     private double _pendingAvatarVideoDurationSeconds = 10;
+    private double _avatarEditorMaxVideoDurationSeconds = 10;
+    private AvatarEditorTarget _avatarEditorTarget = AvatarEditorTarget.Profile;
+    private string _serverProfileAvatarKind = "color";
+    private string _serverProfileAvatarPath = "";
+    private double _serverProfileAvatarVideoStartSeconds;
+    private double _serverProfileAvatarVideoDurationSeconds = 5;
+    private string _serverProfileBackgroundPath = "";
     private bool _isDraggingAvatar;
     private System.Windows.Point _lastAvatarDragPoint;
     private readonly DispatcherTimer _avatarVideoLoopTimer;
@@ -253,12 +312,27 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _callNetworkMetricsTimer;
     private readonly DispatcherTimer _videoPlaybackTimer;
     private readonly DispatcherTimer _screenShareMiniPlayerTimer;
+    private readonly DispatcherTimer _serverVoiceElapsedTimer;
     private readonly Queue<CallAudioSendReport> _peerAudioSendReports = new();
     private UserPresenceStatus _lastPublishedStatus = UserPresenceStatus.Offline;
     private string _lastPublishedCustomStatus = "";
+    private UserPresenceStatus _lastDisplayedPresenceStatus = UserPresenceStatus.Offline;
+    private string _lastDisplayedCustomStatus = "";
     private bool _isWindowActive = true;
     private ContactViewModel? _activeCallContact;
     private ContactViewModel? _activeCallPeerContact;
+    private ContactViewModel? _activeServerInviteContact;
+    private ServerChannelViewModel? _activeServerInviteChannel;
+    private string _activeServerInviteLink = "";
+    private ContactViewModel? _activeServerChannelSettingsContact;
+    private string _activeServerChannelSettingsId = "";
+    private string _activeServerChannelSettingsCategory = "";
+    private bool _activeServerChannelSettingsIsCategory;
+    private bool _activeServerChannelSettingsIsNewCategory;
+    private string _activeServerChannelOriginalName = "";
+    private int _activeServerChannelOriginalUserLimit;
+    private bool _isRefreshingServerChannelSettings;
+    private bool _suppressServerChannelSelectionAction;
     private string _activeCallState = "";
     private bool _selfInCall;
     private bool _peerInCall;
@@ -346,6 +420,10 @@ public partial class MainWindow : Window
     private double _currentCallPingMs = double.NaN;
     private double _averageCallPingMs;
     private int _callPingSamples;
+    private DateTimeOffset _callConnectedAtUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastCallPeerSignalUtc = DateTimeOffset.MinValue;
+    private bool _callPeerReconnecting;
+    private bool _callSelfLimitTriggered;
     private long _callAudioSendSequence;
     private readonly object _callAudioLossGate = new();
     private readonly SortedSet<long> _receivedCallAudioSequences = [];
@@ -443,6 +521,8 @@ public partial class MainWindow : Window
         _videoPlaybackTimer.Tick += VideoPlaybackTimer_OnTick;
         _screenShareMiniPlayerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
         _screenShareMiniPlayerTimer.Tick += ScreenShareMiniPlayerTimer_OnTick;
+        _serverVoiceElapsedTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _serverVoiceElapsedTimer.Tick += (_, _) => RefreshServerVoiceChannelTimers();
         ProfileAvatarVideo.MediaOpened += AvatarVideo_OnMediaOpened;
         ProfileAvatarVideo.MediaEnded += AvatarVideo_OnMediaEnded;
         SettingsAvatarVideo.MediaOpened += AvatarVideo_OnMediaOpened;
@@ -450,7 +530,9 @@ public partial class MainWindow : Window
         AvatarEditorVideo.MediaOpened += AvatarEditorVideo_OnMediaOpened;
         AvatarEditorVideo.MediaEnded += AvatarVideo_OnMediaEnded;
         ContactsList.ItemsSource = _contacts;
+        ActivityAudienceFriendsList.ItemsSource = _activityAudienceFriends;
         MessagesList.ItemsSource = _messages;
+        _messages.CollectionChanged += (_, _) => RefreshMessageGrouping();
         MessageInputEmojiPreview.ItemsSource = _messageInputTextSegments;
         GifResultsList.ItemsSource = _gifResults;
         GifFavoritesList.ItemsSource = _favoriteGifs;
@@ -459,6 +541,15 @@ public partial class MainWindow : Window
         FriendRequestsList.ItemsSource = _friendRequests;
         GroupFriendsList.ItemsSource = _groupCandidates;
         GroupMembersList.ItemsSource = _groupMembers;
+        ServerChannelsList.ItemsSource = _serverChannels;
+        ServerRolesList.ItemsSource = _serverRoles;
+        ServerRoleMembersList.ItemsSource = _serverRoleMembers;
+        ServerRolePermissionsList.ItemsSource = _serverRolePermissions;
+        ServerRoleChannelPermissionsList.ItemsSource = _serverRoleChannelPermissions;
+        ServerChannelRoleAccessList.ItemsSource = _serverChannelRoleAccess;
+        ServerBansList.ItemsSource = _serverBans;
+        ServerAuditList.ItemsSource = _serverAuditEntries;
+        ServerInviteFriendsList.ItemsSource = _serverInviteFriends;
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("FluxChat/1.0");
         Loaded += OnLoaded;
         Closed += OnClosed;
@@ -468,6 +559,7 @@ public partial class MainWindow : Window
         Activated += (_, _) =>
         {
             _isWindowActive = true;
+            TaskbarAttention.Stop(this);
             UpdateScreenShareMiniPlayerVisibility();
         };
         Deactivated += (_, _) =>
@@ -501,6 +593,13 @@ public partial class MainWindow : Window
     {
         if (e.Key != Key.Escape)
         {
+            return;
+        }
+
+        if (MiniProfileLayer.Visibility == Visibility.Visible)
+        {
+            CloseMiniProfile();
+            e.Handled = true;
             return;
         }
 
@@ -585,6 +684,8 @@ public partial class MainWindow : Window
         AppLog.Write("Main window initialization started");
         var isFirstRun = !AppSettingsStore.Exists();
         _settings = _startupSettings ?? await AppSettingsStore.LoadAsync();
+        AppLanguage.Apply(_settings.UiLanguage);
+        ApplyLocalization();
         AppLog.DetailedLoggingEnabled = _settings.DetailedLoggingEnabled;
         _ = Task.Run(VideoCacheStore.Trim);
         _isInitializingAudioFeatureControls = true;
@@ -637,10 +738,18 @@ public partial class MainWindow : Window
             {
                 _ = _history.SaveContactAsync(contact);
             }
+
+            if (contact.IsServer && contact.HasAvatar)
+            {
+                _ = DownloadServerAvatarForContactAsync(contact);
+            }
         }
 
         _contactSyncReady = true;
         await SyncContactsFromServerAsync(loadedContacts);
+        await LoadAccountPreferencesAsync();
+        RefreshActivityAudienceFriends();
+        _ = RefreshReadStatesAndUnreadAsync();
 
         _relayClient = new RelayClient(_profile);
         _relayClient.MessageReceived += OnRelayMessageReceived;
@@ -1236,6 +1345,7 @@ public partial class MainWindow : Window
         _callRingtoneTimer.Stop();
         _videoPlaybackTimer.Stop();
         _screenShareMiniPlayerTimer.Stop();
+        CloseIncomingCallMiniWindow();
         CloseExternalScreenShareMiniPlayer();
         CloseVideoViewer();
         foreach (var download in _videoDownloads.Values.ToArray())
@@ -1370,7 +1480,9 @@ public partial class MainWindow : Window
 
             contact.DisplayName = presence.DisplayName;
             contact.Status = ParsePresenceStatus(presence.Status);
-            contact.CustomStatus = NormalizeCustomStatus(presence.CustomStatus);
+            contact.CustomStatus = CanCurrentUserSeeActivity(presence)
+                ? NormalizeCustomStatus(presence.CustomStatus)
+                : "";
             contact.LastSeenUtc = presence.SentAtUtc;
             ApplyRelayPresenceAvatarToContact(presence, contact);
             _ = _history.SaveContactAsync(contact);
@@ -1420,6 +1532,12 @@ public partial class MainWindow : Window
         {
             if (IsFriendRequestPacket(packet))
             {
+                if (!AllowsPrivacyForUser(_settings.PrivacyFriendRequests, packet.FromUserId))
+                {
+                    NetworkStatusText.Text = "Friend request blocked by privacy settings.";
+                    return;
+                }
+
                 UpsertFriendRequest(packet);
                 _ = RequestProfileFromPacketAsync(packet);
                 NetworkStatusText.Text = $"Friend request from {packet.FromDisplayName}";
@@ -1509,6 +1627,12 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (packet.Intent == ServerChannelInviteIntent)
+            {
+                _ = HandleIncomingServerChannelInviteAsync(packet);
+                return;
+            }
+
             if (packet.Intent == GroupMessageIntent)
             {
                 HandleIncomingGroupMessage(packet, statusText);
@@ -1564,6 +1688,12 @@ public partial class MainWindow : Window
             var contact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId);
             if (contact is null)
             {
+                if (string.Equals(_settings.PrivacyMessages, "NoOne", StringComparison.OrdinalIgnoreCase))
+                {
+                    NetworkStatusText.Text = "Message blocked by privacy settings.";
+                    return;
+                }
+
                 UpsertFriendRequest(packet);
                 _ = RequestProfileFromPacketAsync(packet);
                 NetworkStatusText.Text = $"Message request from {packet.FromDisplayName}";
@@ -1579,8 +1709,14 @@ public partial class MainWindow : Window
             {
                 _messages.Add(message);
                 ScrollMessagesToEnd();
+                MarkContactRead(contact);
+            }
+            else
+            {
+                IncrementUnread(contact);
             }
 
+            TouchContactActivity(contact);
             NetworkStatusText.Text = $"{statusText}: {contact.DisplayName}";
             ShowIncomingNotificationIfNeeded(contact.DisplayName, packet);
         });
@@ -1605,11 +1741,19 @@ public partial class MainWindow : Window
 
     private async Task OpenContactAsync(ContactViewModel contact)
     {
+        CloseMiniProfile();
         SaveCurrentMessageDraft();
         ExitScreenShareFocusMode();
         CloseVideoViewer();
         PauseAllMessageVideos();
         _selectedContact = contact;
+        if (_activeCallState == "incoming" &&
+            _activeCallContact is not null &&
+            string.Equals(_activeCallContact.UserId, contact.UserId, StringComparison.Ordinal))
+        {
+            CloseIncomingCallMiniWindow(contact);
+        }
+
         ApplyCustomization();
         ContactsList.SelectedItem = contact;
         AddFriendPanel.Visibility = Visibility.Collapsed;
@@ -1619,13 +1763,14 @@ public partial class MainWindow : Window
             : $"{contact.IpAddress} | {contact.ShortId}";
         ComposerPanel.Visibility = Visibility.Visible;
         EmptyChatHint.Visibility = Visibility.Collapsed;
-        StartCallButton.Visibility = Visibility.Visible;
+        StartCallButton.Visibility = contact.IsServer ? Visibility.Collapsed : Visibility.Visible;
         ChatSearchInput.Visibility = Visibility.Visible;
         ChatSearchInput.Clear();
         _currentSearchIndex = -1;
         GroupMembersButton.Visibility = contact.IsGroup ? Visibility.Visible : Visibility.Collapsed;
         SetGroupMembersPanelVisible(false);
         RefreshGroupMembersPanel();
+        RefreshServerChannelsPanel();
         _ = RefreshEmojiOpenButtonAsync();
         ClearImageDraft();
 
@@ -1652,8 +1797,1396 @@ public partial class MainWindow : Window
         }
 
         ScrollMessagesToEnd();
+        MarkCurrentContactRead();
         RestoreMessageDraft(contact);
+        if (_activeCallState == "incoming" &&
+            _activeCallContact is not null &&
+            string.Equals(_activeCallContact.UserId, contact.UserId, StringComparison.Ordinal) &&
+            !_selfInCall)
+        {
+            ShowCallPanel(contact, "Incoming call", showIncomingActions: true);
+        }
+
         MessageInput.Focus();
+    }
+
+    private void SetServerChannelsPanelVisible(bool visible)
+    {
+        ServerChannelsPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ContactsList.Tag = visible ? "ChannelsOpen" : null;
+        DirectMessagesHeaderPanel.IsHitTestVisible = !visible;
+        DirectMessagesHeaderPanel.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(visible ? 0 : 1, TimeSpan.FromMilliseconds(visible ? 130 : 170))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+        MessagesList.Margin = new Thickness(0);
+        EmptyChatHint.Margin = new Thickness(0);
+    }
+
+    private void RefreshServerChannelsPanel()
+    {
+        _isRefreshingServerChannels = true;
+        try
+        {
+            _serverChannels.Clear();
+            if (_selectedContact is not { IsGroup: true, IsServer: true } group)
+            {
+                SetServerChannelsPanelVisible(false);
+                return;
+            }
+
+            EnsureServerMetadata(group);
+            ServerChannelsServerNameText.Text = group.DisplayName;
+            var canManageChannels = HasServerPermission(group, ServerPermissionManageChannels);
+            var canInvite = HasServerPermission(group, ServerPermissionCreateInvite);
+            var canOpenSettings = canManageChannels ||
+                                  HasServerPermission(group, ServerPermissionManageRoles) ||
+                                  HasServerPermission(group, ServerPermissionManageMembers) ||
+                                  HasServerPermission(group, ServerPermissionManageServer);
+            ServerInviteToServerButton.Visibility = canInvite ? Visibility.Visible : Visibility.Collapsed;
+            ServerMenuSettingsButton.Visibility = canOpenSettings ? Visibility.Visible : Visibility.Collapsed;
+            ServerCreateChannelButton.Visibility = canManageChannels ? Visibility.Visible : Visibility.Collapsed;
+            ServerCreateCategoryButton.Visibility = canManageChannels ? Visibility.Visible : Visibility.Collapsed;
+            ServerChannelsCategoryAddButton.Visibility = canManageChannels ? Visibility.Visible : Visibility.Collapsed;
+            var channels = LoadServerChannels(group)
+                .Where(x => HasServerPermission(group, ServerPermissionViewChannel, x.Id))
+                .ToArray();
+            if (channels.Length == 0)
+            {
+                ChatSubtitle.Text = "Server • no visible channels";
+                SetServerChannelsPanelVisible(true);
+                return;
+            }
+
+            if (channels.All(x => !string.Equals(x.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase)))
+            {
+                group.SelectedServerChannelId = channels.FirstOrDefault(x => string.Equals(x.Type, "text", StringComparison.OrdinalIgnoreCase))?.Id
+                                                ?? channels[0].Id;
+            }
+
+            foreach (var channel in channels)
+            {
+                DateTimeOffset voiceStart = default;
+                var voiceActive = string.Equals(channel.Type, "voice", StringComparison.OrdinalIgnoreCase) &&
+                                  TryGetServerVoiceChannelStart(group, channel.Id, out voiceStart);
+                var item = new ServerChannelViewModel
+                {
+                    Id = channel.Id,
+                    Name = channel.Name,
+                    Type = channel.Type,
+                    UserLimit = channel.UserLimit,
+                    IsSelected = string.Equals(channel.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase),
+                    CanInvite = canInvite,
+                    CanManageChannels = canManageChannels,
+                    IsVoiceActive = voiceActive,
+                    VoiceElapsedText = voiceActive ? FormatVoiceElapsed(voiceStart) : "",
+                    UnreadCount = GetServerChannelUnreadCount(group.UserId, channel.Id)
+                };
+                if (item.IsVoice)
+                {
+                    item.ReplaceVoiceParticipants(GetServerVoiceChannelParticipants(group, item.Id));
+                }
+
+                _serverChannels.Add(item);
+                if (item.IsSelected)
+                {
+                    ServerChannelsList.SelectedItem = item;
+                }
+            }
+
+            var selectedChannel = channels.FirstOrDefault(x => string.Equals(x.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase));
+            ChatSubtitle.Text = selectedChannel is null
+                ? $"Server • {group.GroupMemberCount} members"
+                : $"Server • {group.GroupMemberCount} members | #{selectedChannel.Name}";
+            SetServerChannelsPanelVisible(true);
+            RefreshServerVoiceTimerState();
+        }
+        finally
+        {
+            _isRefreshingServerChannels = false;
+        }
+    }
+
+    private async void ServerChannelsList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingServerChannels ||
+            _suppressServerChannelSelectionAction ||
+            _selectedContact is not { IsGroup: true } group ||
+            ServerChannelsList.SelectedItem is not ServerChannelViewModel channel)
+        {
+            return;
+        }
+
+        if (channel.IsVoice)
+        {
+            if (!HasServerPermission(group, ServerPermissionJoinVoice, channel.Id))
+            {
+                NetworkStatusText.Text = "You do not have permission to join this voice channel.";
+                ServerChannelsList.SelectedItem = _serverChannels.FirstOrDefault(x => string.Equals(x.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase));
+                return;
+            }
+
+            group.SelectedServerChannelId = channel.Id;
+            await _history.SaveContactAsync(group);
+            await SyncContactToServerAsync(group);
+            await StartCallForContactAsync(group);
+            RefreshServerChannelsPanel();
+            return;
+        }
+
+        group.SelectedServerChannelId = channel.Id;
+        await _history.SaveContactAsync(group);
+        await SyncContactToServerAsync(group);
+        MarkServerChannelRead(group, channel.Id);
+        RefreshServerChannelsPanel();
+    }
+
+    private static string NormalizeReadChannelId(string? channelId)
+        => string.IsNullOrWhiteSpace(channelId) ? "general" : channelId.Trim();
+
+    private static string BuildReadStateKey(string scopeType, string scopeId, string channelId)
+        => $"{scopeType}|{scopeId}|{NormalizeReadChannelId(channelId)}";
+
+    private static string BuildServerChannelUnreadKey(string serverId, string channelId)
+        => $"{serverId}|{NormalizeReadChannelId(channelId)}";
+
+    private async Task RefreshReadStatesAndUnreadAsync()
+    {
+        if (_serverHistory is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var states = await _serverHistory.LoadReadStatesAsync(_stop.Token);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _readStates.Clear();
+                foreach (var state in states)
+                {
+                    var channelId = string.Equals(state.ScopeType, "server_channel", StringComparison.OrdinalIgnoreCase)
+                        ? NormalizeReadChannelId(state.ChannelId)
+                        : "";
+                    _readStates[BuildReadStateKey(state.ScopeType, state.ScopeId, channelId)] = state;
+                }
+            });
+
+            await RecalculateUnreadFromServerHistoryAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or TaskCanceledException)
+        {
+            AppLog.Write(ex, "Read-state sync failed");
+        }
+    }
+
+    private async Task RecalculateUnreadFromServerHistoryAsync()
+    {
+        if (_serverHistory is null)
+        {
+            return;
+        }
+
+        ContactViewModel[] contactsSnapshot = [];
+        await Dispatcher.InvokeAsync(() =>
+        {
+            foreach (var contact in _contacts)
+            {
+                contact.UnreadCount = 0;
+            }
+
+            _serverChannelUnreadCounts.Clear();
+            contactsSnapshot = _contacts.ToArray();
+            foreach (var channel in _serverChannels)
+            {
+                channel.UnreadCount = 0;
+            }
+        });
+
+        foreach (var contact in contactsSnapshot)
+        {
+            if (_stop.IsCancellationRequested)
+            {
+                return;
+            }
+
+            IReadOnlyList<ChatPacket> archived;
+            try
+            {
+                archived = await _serverHistory.LoadAsync(contact.UserId, _stop.Token);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or TaskCanceledException)
+            {
+                AppLog.Write(ex, $"Unread history load failed: peer={contact.UserId}");
+                continue;
+            }
+
+            var contactUnread = 0;
+            var channelCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var packet in archived)
+            {
+                if (IsOwnPacket(packet))
+                {
+                    continue;
+                }
+
+                if (contact.IsServer && packet.Intent == GroupMessageIntent && TryGetGroupPayload(packet, out var payload) &&
+                    payload is not null && string.Equals(payload.GroupId, contact.UserId, StringComparison.Ordinal))
+                {
+                    var channelId = NormalizeReadChannelId(payload.ChannelId);
+                    if (IsPacketUnread("server_channel", contact.UserId, channelId, packet))
+                    {
+                        channelCounts[channelId] = channelCounts.GetValueOrDefault(channelId) + 1;
+                    }
+                }
+                else if (contact.IsGroup && packet.Intent == GroupMessageIntent && TryGetGroupPayload(packet, out var groupPayload) &&
+                         groupPayload is not null && string.Equals(groupPayload.GroupId, contact.UserId, StringComparison.Ordinal) &&
+                         IsPacketUnread("group", contact.UserId, "", packet))
+                {
+                    contactUnread++;
+                }
+                else if (!contact.IsGroup &&
+                         string.Equals(packet.FromUserId, contact.UserId, StringComparison.Ordinal) &&
+                         IsPacketUnread("direct", contact.UserId, "", packet))
+                {
+                    contactUnread++;
+                }
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (contact.IsServer)
+                {
+                    foreach (var (channelId, count) in channelCounts)
+                    {
+                        _serverChannelUnreadCounts[BuildServerChannelUnreadKey(contact.UserId, channelId)] = count;
+                    }
+
+                    contact.UnreadCount = channelCounts.Values.Sum();
+                    RefreshServerChannelUnreadView(contact);
+                }
+                else
+                {
+                    contact.UnreadCount = contactUnread;
+                }
+            });
+        }
+    }
+
+    private bool IsPacketUnread(string scopeType, string scopeId, string channelId, ChatPacket packet)
+    {
+        if (!_readStates.TryGetValue(BuildReadStateKey(scopeType, scopeId, channelId), out var state))
+        {
+            return false;
+        }
+
+        if (state.LastReadMessageId == packet.MessageId)
+        {
+            return false;
+        }
+
+        return packet.SentAtUtc > state.LastReadAtUtc;
+    }
+
+    private bool IsOwnPacket(ChatPacket packet)
+        => _profile is not null && string.Equals(packet.FromUserId, _profile.UserId, StringComparison.Ordinal);
+
+    private static bool TryGetGroupPayload(ChatPacket packet, out GroupMessagePayload? payload)
+    {
+        payload = null;
+        try
+        {
+            payload = JsonSerializer.Deserialize<GroupMessagePayload>(packet.Body);
+            return payload is not null && !string.IsNullOrWhiteSpace(payload.GroupId);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private void IncrementUnread(ContactViewModel contact)
+    {
+        if (IsOwnContact(contact))
+        {
+            return;
+        }
+
+        contact.UnreadCount++;
+    }
+
+    private bool IsOwnContact(ContactViewModel contact)
+        => _profile is not null && string.Equals(contact.UserId, _profile.UserId, StringComparison.Ordinal);
+
+    private void IncrementServerChannelUnread(ContactViewModel server, string channelId)
+    {
+        if (!server.IsServer)
+        {
+            IncrementUnread(server);
+            return;
+        }
+
+        var normalizedChannelId = NormalizeReadChannelId(channelId);
+        var key = BuildServerChannelUnreadKey(server.UserId, normalizedChannelId);
+        _serverChannelUnreadCounts[key] = _serverChannelUnreadCounts.GetValueOrDefault(key) + 1;
+        server.UnreadCount = _serverChannelUnreadCounts
+            .Where(x => x.Key.StartsWith(server.UserId + "|", StringComparison.OrdinalIgnoreCase))
+            .Sum(x => x.Value);
+        RefreshServerChannelUnreadView(server);
+    }
+
+    private void RefreshServerChannelUnreadView(ContactViewModel server)
+    {
+        if (_selectedContact is null || !string.Equals(_selectedContact.UserId, server.UserId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        foreach (var channel in _serverChannels)
+        {
+            channel.UnreadCount = _serverChannelUnreadCounts.GetValueOrDefault(BuildServerChannelUnreadKey(server.UserId, channel.Id));
+        }
+    }
+
+    private int GetServerChannelUnreadCount(string serverId, string channelId)
+        => _serverChannelUnreadCounts.GetValueOrDefault(BuildServerChannelUnreadKey(serverId, channelId));
+
+    private void MarkCurrentContactRead()
+    {
+        if (_selectedContact is null)
+        {
+            return;
+        }
+
+        if (_selectedContact.IsServer)
+        {
+            MarkServerChannelRead(_selectedContact, _selectedContact.SelectedServerChannelId);
+        }
+        else
+        {
+            MarkContactRead(_selectedContact);
+        }
+    }
+
+    private void MarkContactRead(ContactViewModel contact)
+    {
+        contact.UnreadCount = 0;
+        var scopeType = contact.IsGroup ? "group" : "direct";
+        _ = MarkReadOnServerAsync(scopeType, contact.UserId, "", DateTimeOffset.UtcNow, null);
+    }
+
+    private void MarkServerChannelRead(ContactViewModel server, string channelId)
+    {
+        if (!server.IsServer)
+        {
+            MarkContactRead(server);
+            return;
+        }
+
+        var normalizedChannelId = NormalizeReadChannelId(channelId);
+        _serverChannelUnreadCounts[BuildServerChannelUnreadKey(server.UserId, normalizedChannelId)] = 0;
+        server.UnreadCount = _serverChannelUnreadCounts
+            .Where(x => x.Key.StartsWith(server.UserId + "|", StringComparison.OrdinalIgnoreCase))
+            .Sum(x => x.Value);
+        RefreshServerChannelUnreadView(server);
+        _ = MarkReadOnServerAsync("server_channel", server.UserId, normalizedChannelId, DateTimeOffset.UtcNow, null);
+    }
+
+    private async Task MarkReadOnServerAsync(string scopeType, string scopeId, string channelId, DateTimeOffset lastReadAtUtc, Guid? lastReadMessageId)
+    {
+        if (_serverHistory is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var normalizedChannelId = string.Equals(scopeType, "server_channel", StringComparison.OrdinalIgnoreCase)
+                ? NormalizeReadChannelId(channelId)
+                : "";
+            var request = new AccountMarkReadRequest(scopeType, scopeId, normalizedChannelId, lastReadAtUtc, lastReadMessageId);
+            var result = await _serverHistory.MarkReadAsync(request, _stop.Token);
+            if (!result.Accepted)
+            {
+                AppLog.Write($"Read-state mark rejected: {result.Message}");
+                return;
+            }
+
+            _readStates[BuildReadStateKey(scopeType, scopeId, normalizedChannelId)] =
+                new AccountReadState(scopeType, scopeId, normalizedChannelId, lastReadAtUtc, lastReadMessageId);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or TaskCanceledException)
+        {
+            AppLog.Write(ex, $"Read-state mark failed: scope={scopeType}, id={scopeId}, channel={channelId}");
+        }
+    }
+
+    private void ServerChannelsMenuButton_OnClick(object sender, RoutedEventArgs e)
+        => ServerChannelsMenuPopup.IsOpen = !ServerChannelsMenuPopup.IsOpen;
+
+    private void ServerInviteToServerButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerChannelsMenuPopup.IsOpen = false;
+        if (_selectedContact is { IsGroup: true, IsServer: true } server)
+        {
+            OpenServerInviteDialog(server, null);
+        }
+    }
+
+    private void ServerMenuSettingsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerChannelsMenuPopup.IsOpen = false;
+        if (_selectedContact is { IsGroup: true, IsServer: true } server)
+        {
+            ShowServerRolesOverlay(server);
+        }
+    }
+
+    private async void ServerMenuLeaveServerButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerChannelsMenuPopup.IsOpen = false;
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server)
+        {
+            return;
+        }
+
+        if (!await ShowAppConfirmDialogAsync(
+                "Leave server",
+                $"Leave {server.DisplayName}? You can join again only with a new invite.",
+                "Leave",
+                "Cancel",
+                danger: true))
+        {
+            return;
+        }
+
+        await LeaveGroupAsync(server, notifyOwner: true);
+    }
+
+    private async void CreateServerChannelButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerChannelsMenuPopup.IsOpen = false;
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            NetworkStatusText.Text = "You do not have permission to create channels.";
+            return;
+        }
+
+        var channels = LoadServerChannels(server).ToList();
+        var baseName = "new-channel";
+        var baseId = NormalizeRoleId(baseName);
+        var channelId = baseId;
+        var suffix = 2;
+        while (channels.Any(x => string.Equals(x.Id, channelId, StringComparison.OrdinalIgnoreCase)))
+        {
+            channelId = $"{baseId}-{suffix++}";
+        }
+
+        var position = channels.Select(x => x.Position).DefaultIfEmpty(0).Max() + 1;
+        channels.Add(new ServerChannelPayload(channelId, baseName, "text", "TEXT CHANNELS", position));
+        SaveServerChannels(server, channels);
+        server.SelectedServerChannelId = channelId;
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Created channel", $"# {baseName}");
+        SaveServerModeration(server, moderation);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshServerChannelsPanel();
+        NetworkStatusText.Text = "Channel created. Rename it in server settings.";
+    }
+
+    private void CreateServerCategoryButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerChannelsMenuPopup.IsOpen = false;
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            NetworkStatusText.Text = "You do not have permission to create categories.";
+            return;
+        }
+
+        ShowServerCategorySettingsOverlay(server, createNew: true);
+    }
+
+    private void ServerChannelItem_OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        _suppressServerChannelSelectionAction = true;
+
+        if (sender is FrameworkElement element && element.ContextMenu is { } menu)
+        {
+            menu.DataContext = element.DataContext;
+            menu.PlacementTarget = element;
+            if (TryFindResource("FluxContextMenuStyle") is Style style)
+            {
+                menu.Style = style;
+            }
+
+            menu.IsOpen = true;
+        }
+
+        Dispatcher.BeginInvoke(new Action(() => _suppressServerChannelSelectionAction = false), DispatcherPriority.Background);
+    }
+
+    private void ServerChannelInviteButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (_selectedContact is { IsGroup: true, IsServer: true } server &&
+            sender is System.Windows.Controls.Button { Tag: ServerChannelViewModel channel })
+        {
+            OpenServerInviteDialog(server, channel);
+        }
+    }
+
+    private void ServerChannelManageButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (_selectedContact is { IsGroup: true, IsServer: true } server &&
+            sender is System.Windows.Controls.Button { Tag: ServerChannelViewModel channel })
+        {
+            ShowServerChannelSettingsOverlay(server, channel);
+        }
+    }
+
+    private static ServerChannelViewModel? GetServerChannelFromMenuItem(object sender)
+        => sender is System.Windows.Controls.MenuItem { DataContext: ServerChannelViewModel channel }
+            ? channel
+            : null;
+
+    private void ServerChannelInviteMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is { IsGroup: true, IsServer: true } server &&
+            GetServerChannelFromMenuItem(sender) is { } channel)
+        {
+            OpenServerInviteDialog(server, channel);
+        }
+    }
+
+    private void ServerChannelMuteMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            GetServerChannelFromMenuItem(sender) is not { IsText: true } channel)
+        {
+            return;
+        }
+
+        var key = $"{server.UserId}:{channel.Id}";
+        if (_mutedServerTextChannels.Add(key))
+        {
+            NetworkStatusText.Text = $"Muted #{channel.Name} on this device.";
+            return;
+        }
+
+        _mutedServerTextChannels.Remove(key);
+        NetworkStatusText.Text = $"Notifications enabled for #{channel.Name}.";
+    }
+
+    private void ServerChannelSettingsMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is { IsGroup: true, IsServer: true } server &&
+            GetServerChannelFromMenuItem(sender) is { } channel)
+        {
+            ShowServerChannelSettingsOverlay(server, channel);
+        }
+    }
+
+    private async void ServerChannelCloneMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            GetServerChannelFromMenuItem(sender) is not { } channel)
+        {
+            return;
+        }
+
+        if (!HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            NetworkStatusText.Text = "You do not have permission to clone channels.";
+            return;
+        }
+
+        var channels = LoadServerChannels(server).ToList();
+        var source = channels.FirstOrDefault(x => string.Equals(x.Id, channel.Id, StringComparison.OrdinalIgnoreCase));
+        if (source is null)
+        {
+            NetworkStatusText.Text = "Channel was not found.";
+            return;
+        }
+
+        var baseName = $"{source.Name}-copy";
+        var baseId = NormalizeRoleId(baseName);
+        var channelId = baseId;
+        var suffix = 2;
+        while (channels.Any(x => string.Equals(x.Id, channelId, StringComparison.OrdinalIgnoreCase)))
+        {
+            channelId = $"{baseId}-{suffix++}";
+        }
+
+        var position = channels.Select(x => x.Position).DefaultIfEmpty(0).Max() + 1;
+        var cloned = source with { Id = channelId, Name = baseName, Position = position };
+        channels.Add(cloned);
+        SaveServerChannels(server, channels);
+        server.SelectedServerChannelId = channelId;
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Cloned channel", source.Name);
+        SaveServerModeration(server, moderation);
+        await SaveServerChannelsAndBroadcastAsync(server);
+        RefreshServerChannelsPanel();
+        NetworkStatusText.Text = $"Cloned channel {source.Name}.";
+    }
+
+    private async void ServerChannelDeleteMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            GetServerChannelFromMenuItem(sender) is not { } channel)
+        {
+            return;
+        }
+
+        if (!HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            NetworkStatusText.Text = "You do not have permission to delete channels.";
+            return;
+        }
+
+        var channels = LoadServerChannels(server).ToList();
+        var sourceIndex = channels.FindIndex(x => string.Equals(x.Id, channel.Id, StringComparison.OrdinalIgnoreCase));
+        if (sourceIndex < 0)
+        {
+            NetworkStatusText.Text = "Channel was not found.";
+            return;
+        }
+
+        var source = channels[sourceIndex];
+        var isText = source.Type.Equals("text", StringComparison.OrdinalIgnoreCase);
+        if (isText && channels.Count(x => x.Type.Equals("text", StringComparison.OrdinalIgnoreCase)) <= 1)
+        {
+            NetworkStatusText.Text = "A server needs at least one text channel.";
+            return;
+        }
+
+        var label = isText ? $"# {source.Name}" : source.Name;
+        if (!await ShowAppConfirmDialogAsync("Delete channel", $"Delete {label}?", "Delete", "Cancel", danger: true))
+        {
+            return;
+        }
+
+        channels.RemoveAt(sourceIndex);
+        if (string.Equals(server.SelectedServerChannelId, source.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            server.SelectedServerChannelId = channels.FirstOrDefault(x => x.Type.Equals("text", StringComparison.OrdinalIgnoreCase))?.Id
+                                             ?? channels.FirstOrDefault()?.Id
+                                             ?? "general";
+        }
+
+        SaveServerChannels(server, channels);
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Deleted channel", source.Name);
+        SaveServerModeration(server, moderation);
+        await SaveServerChannelsAndBroadcastAsync(server);
+        RefreshServerChannelsPanel();
+        NetworkStatusText.Text = $"Deleted channel {source.Name}.";
+    }
+
+    private void ServerCategoryEditMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is { IsGroup: true, IsServer: true } server)
+        {
+            ShowServerCategorySettingsOverlay(server);
+        }
+    }
+
+    private async void ServerCategoryDeleteMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            NetworkStatusText.Text = "You do not have permission to delete categories.";
+            return;
+        }
+
+        var category = GetSelectedServerCategoryName(server);
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            NetworkStatusText.Text = "Select a category first.";
+            return;
+        }
+
+        var defaultCategory = category.Equals("TEXT CHANNELS", StringComparison.OrdinalIgnoreCase) ||
+                              category.Equals("VOICE CHANNELS", StringComparison.OrdinalIgnoreCase) ||
+                              category.Equals("CHANNELS", StringComparison.OrdinalIgnoreCase);
+        if (defaultCategory)
+        {
+            NetworkStatusText.Text = "Default categories cannot be deleted.";
+            return;
+        }
+
+        var channels = LoadServerChannels(server).ToList();
+        var changed = false;
+        for (var i = 0; i < channels.Count; i++)
+        {
+            if (!string.Equals(channels[i].Category, category, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var fallback = channels[i].Type.Equals("voice", StringComparison.OrdinalIgnoreCase)
+                ? "VOICE CHANNELS"
+                : "TEXT CHANNELS";
+            channels[i] = channels[i] with { Category = fallback };
+            changed = true;
+        }
+
+        if (!changed)
+        {
+            NetworkStatusText.Text = "Category is empty or was not found.";
+            return;
+        }
+
+        SaveServerChannels(server, channels);
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Deleted category", category);
+        SaveServerModeration(server, moderation);
+        await SaveServerChannelsAndBroadcastAsync(server);
+        RefreshServerChannelsPanel();
+        NetworkStatusText.Text = $"Category {category} deleted.";
+    }
+
+    private string GetSelectedServerCategoryName(ContactViewModel server)
+    {
+        var channels = LoadServerChannels(server).ToArray();
+        var selected = channels.FirstOrDefault(x => string.Equals(x.Id, server.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase))
+                       ?? channels.FirstOrDefault();
+        return string.IsNullOrWhiteSpace(selected?.Category) ? "CHANNELS" : selected.Category;
+    }
+
+    private void ShowServerChannelSettingsOverlay(ContactViewModel server, ServerChannelViewModel channel)
+    {
+        EnsureServerMetadata(server);
+        var payload = LoadServerChannels(server).FirstOrDefault(x => string.Equals(x.Id, channel.Id, StringComparison.OrdinalIgnoreCase));
+        if (payload is null)
+        {
+            NetworkStatusText.Text = "Channel was not found.";
+            return;
+        }
+
+        _activeServerChannelSettingsContact = server;
+        _activeServerChannelSettingsId = payload.Id;
+        _activeServerChannelSettingsCategory = payload.Category;
+        _activeServerChannelSettingsIsCategory = false;
+        _activeServerChannelOriginalName = payload.Name;
+        _activeServerChannelOriginalUserLimit = Math.Max(0, payload.UserLimit);
+
+        _isRefreshingServerChannelSettings = true;
+        try
+        {
+            ServerChannelSettingsTitleText.Text = payload.Type.Equals("voice", StringComparison.OrdinalIgnoreCase)
+                ? $"{payload.Name} voice settings"
+                : $"# {payload.Name} settings";
+            ServerChannelSettingsSubtitleText.Text = "Edit channel basics and role access.";
+            ServerChannelSettingsNameInput.Text = payload.Name;
+            ServerChannelSettingsUserLimitInput.Text = Math.Max(0, payload.UserLimit).ToString(CultureInfo.InvariantCulture);
+            ServerChannelSettingsUserLimitPanel.Visibility = payload.Type.Equals("voice", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            ServerChannelRolesTabButton.Visibility = Visibility.Visible;
+            ServerChannelSettingsStatusText.Text = "";
+            ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+            RefreshServerChannelRoleAccessRows(server, payload);
+            SetServerChannelSettingsTab(showRoleAccess: false);
+        }
+        finally
+        {
+            _isRefreshingServerChannelSettings = false;
+        }
+
+        ShowServerChannelSettingsOverlayAnimated();
+    }
+
+    private void ShowServerCategorySettingsOverlay(ContactViewModel server, bool createNew = false)
+    {
+        EnsureServerMetadata(server);
+        var category = createNew ? "" : GetSelectedServerCategoryName(server);
+
+        _activeServerChannelSettingsContact = server;
+        _activeServerChannelSettingsId = "";
+        _activeServerChannelSettingsCategory = category;
+        _activeServerChannelSettingsIsCategory = true;
+        _activeServerChannelSettingsIsNewCategory = createNew;
+        _activeServerChannelOriginalName = category;
+        _activeServerChannelOriginalUserLimit = 0;
+
+        _isRefreshingServerChannelSettings = true;
+        try
+        {
+            ServerChannelSettingsTitleText.Text = createNew ? "Create category" : "Category settings";
+            ServerChannelSettingsSubtitleText.Text = createNew
+                ? "Name the category. A starter text channel will be created inside it."
+                : "Rename the current channel category.";
+            ServerChannelSettingsNameInput.Text = category;
+            ServerChannelSettingsUserLimitPanel.Visibility = Visibility.Collapsed;
+            ServerChannelRolesTabButton.Visibility = Visibility.Collapsed;
+            ServerChannelSettingsStatusText.Text = "";
+            ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+            _serverChannelRoleAccess.Clear();
+            SetServerChannelSettingsTab(showRoleAccess: false);
+        }
+        finally
+        {
+            _isRefreshingServerChannelSettings = false;
+        }
+
+        ShowServerChannelSettingsOverlayAnimated();
+        ServerChannelSettingsNameInput.Focus();
+        ServerChannelSettingsNameInput.SelectAll();
+    }
+
+    private void ShowServerChannelSettingsOverlayAnimated()
+    {
+        ServerChannelSettingsOverlay.Visibility = Visibility.Visible;
+        ServerChannelSettingsOverlay.Opacity = 0;
+        UpdateScreenShareStageVisibility();
+
+        if (ServerChannelSettingsDialog.RenderTransform is ScaleTransform scale)
+        {
+            scale.ScaleX = _settings.ReducedMotionEnabled ? 1 : 0.97;
+            scale.ScaleY = _settings.ReducedMotionEnabled ? 1 : 0.97;
+            if (!_settings.ReducedMotionEnabled)
+            {
+                var scaleAnimation = new DoubleAnimation(1, TimeSpan.FromMilliseconds(160))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnimation);
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnimation);
+            }
+        }
+
+        ServerChannelSettingsOverlay.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(1, TimeSpan.FromMilliseconds(_settings.ReducedMotionEnabled ? 0 : 140))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    private void ServerChannelSettingsCloseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerChannelSettingsOverlay.Visibility = Visibility.Collapsed;
+        ServerChannelSettingsOverlay.Opacity = 1;
+        ServerChannelSettingsStatusText.Text = "";
+        _serverChannelRoleAccess.Clear();
+        _activeServerChannelSettingsContact = null;
+        _activeServerChannelSettingsId = "";
+        _activeServerChannelSettingsCategory = "";
+        _activeServerChannelSettingsIsCategory = false;
+        _activeServerChannelSettingsIsNewCategory = false;
+        UpdateScreenShareStageVisibility();
+    }
+
+    private void ServerChannelSettingsInput_OnChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isRefreshingServerChannelSettings)
+        {
+            return;
+        }
+
+        RefreshServerChannelSettingsUnsavedState();
+    }
+
+    private void RefreshServerChannelSettingsUnsavedState()
+    {
+        if (ServerChannelRoleAccessPanel.Visibility == Visibility.Visible)
+        {
+            ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var nameChanged = !string.Equals(ServerChannelSettingsNameInput.Text.Trim(), _activeServerChannelOriginalName, StringComparison.Ordinal);
+        var limitChanged = false;
+        if (!_activeServerChannelSettingsIsCategory &&
+            int.TryParse(ServerChannelSettingsUserLimitInput.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLimit))
+        {
+            limitChanged = Math.Max(0, parsedLimit) != _activeServerChannelOriginalUserLimit;
+        }
+
+        ServerChannelSettingsUnsavedBar.Visibility = nameChanged || limitChanged
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void ServerChannelSettingsNameInput_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        ServerChannelSettingsSaveButton_OnClick(sender, new RoutedEventArgs());
+    }
+
+    private void ServerChannelSettingsResetButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _isRefreshingServerChannelSettings = true;
+        try
+        {
+            ServerChannelSettingsNameInput.Text = _activeServerChannelOriginalName;
+            ServerChannelSettingsUserLimitInput.Text = _activeServerChannelOriginalUserLimit.ToString(CultureInfo.InvariantCulture);
+            ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+            ServerChannelSettingsStatusText.Text = "";
+        }
+        finally
+        {
+            _isRefreshingServerChannelSettings = false;
+        }
+    }
+
+    private async void ServerChannelSettingsSaveButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_activeServerChannelSettingsContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            ServerChannelSettingsStatusText.Text = "You do not have permission to edit channels.";
+            return;
+        }
+
+        var name = ServerChannelSettingsNameInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            ServerChannelSettingsStatusText.Text = "Enter a name.";
+            return;
+        }
+
+        if (_activeServerChannelSettingsIsCategory)
+        {
+            var channels = LoadServerChannels(server).ToList();
+            if (channels.Any(channel => string.Equals(channel.Category, name, StringComparison.OrdinalIgnoreCase)) &&
+                (_activeServerChannelSettingsIsNewCategory ||
+                 !string.Equals(_activeServerChannelSettingsCategory, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                ServerChannelSettingsStatusText.Text = "Category with this name already exists.";
+                return;
+            }
+
+            if (_activeServerChannelSettingsIsNewCategory)
+            {
+                var baseName = NormalizeRoleId(name);
+                if (string.IsNullOrWhiteSpace(baseName))
+                {
+                    baseName = "new-channel";
+                }
+
+                var channelId = baseName;
+                var suffix = 2;
+                while (channels.Any(channel => string.Equals(channel.Id, channelId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    channelId = $"{baseName}-{suffix++}";
+                }
+
+                var position = channels.Select(channel => channel.Position).DefaultIfEmpty(0).Max() + 1;
+                channels.Add(new ServerChannelPayload(channelId, baseName, "text", name, position));
+                server.SelectedServerChannelId = channelId;
+                SaveServerChannels(server, channels);
+                var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Created category", name);
+                SaveServerModeration(server, moderation);
+                await SaveServerChannelsAndBroadcastAsync(server);
+                _activeServerChannelSettingsCategory = name;
+                _activeServerChannelOriginalName = name;
+                _activeServerChannelSettingsIsNewCategory = false;
+                ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+                ServerChannelSettingsStatusText.Text = "Category created.";
+                RefreshServerChannelsPanel();
+                return;
+            }
+
+            channels = channels
+                .Select(channel => string.Equals(channel.Category, _activeServerChannelSettingsCategory, StringComparison.OrdinalIgnoreCase)
+                    ? channel with { Category = name }
+                    : channel)
+                .ToList();
+            SaveServerChannels(server, channels);
+            var renameAudit = AddServerAuditEntry(server, LoadServerModeration(server), "Renamed category", $"{_activeServerChannelSettingsCategory} -> {name}");
+            SaveServerModeration(server, renameAudit);
+            await SaveServerChannelsAndBroadcastAsync(server);
+            _activeServerChannelSettingsCategory = name;
+            _activeServerChannelOriginalName = name;
+            ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+            ServerChannelSettingsStatusText.Text = "Category saved.";
+            RefreshServerChannelsPanel();
+            return;
+        }
+
+        if (!int.TryParse(ServerChannelSettingsUserLimitInput.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var userLimit))
+        {
+            ServerChannelSettingsStatusText.Text = "User limit must be a number.";
+            return;
+        }
+
+        userLimit = Math.Clamp(userLimit, 0, 99);
+        var list = LoadServerChannels(server).ToList();
+        var index = list.FindIndex(x => string.Equals(x.Id, _activeServerChannelSettingsId, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            ServerChannelSettingsStatusText.Text = "Channel was not found.";
+            return;
+        }
+
+        list[index] = list[index] with { Name = name, UserLimit = userLimit };
+        SaveServerChannels(server, list);
+        var auditTarget = list[index].Type.Equals("voice", StringComparison.OrdinalIgnoreCase)
+            ? $"voice {name}"
+            : $"# {name}";
+        var audit = AddServerAuditEntry(server, LoadServerModeration(server), "Updated channel", auditTarget);
+        SaveServerModeration(server, audit);
+        await SaveServerChannelsAndBroadcastAsync(server);
+        _activeServerChannelOriginalName = name;
+        _activeServerChannelOriginalUserLimit = userLimit;
+        ServerChannelSettingsUnsavedBar.Visibility = Visibility.Collapsed;
+        ServerChannelSettingsStatusText.Text = "Channel saved.";
+        RefreshServerChannelsPanel();
+    }
+
+    private void ServerChannelOverviewTabButton_OnClick(object sender, RoutedEventArgs e)
+        => SetServerChannelSettingsTab(showRoleAccess: false);
+
+    private void ServerChannelRolesTabButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_activeServerChannelSettingsContact is not { IsGroup: true, IsServer: true } ||
+            _activeServerChannelSettingsIsCategory)
+        {
+            return;
+        }
+
+        SetServerChannelSettingsTab(showRoleAccess: true);
+    }
+
+    private void SetServerChannelSettingsTab(bool showRoleAccess)
+    {
+        ServerChannelOverviewPanel.Visibility = showRoleAccess ? Visibility.Collapsed : Visibility.Visible;
+        ServerChannelRoleAccessPanel.Visibility = showRoleAccess ? Visibility.Visible : Visibility.Collapsed;
+        ServerChannelOverviewTabButton.Opacity = showRoleAccess ? 0.72 : 1;
+        ServerChannelRolesTabButton.Opacity = showRoleAccess ? 1 : 0.72;
+        RefreshServerChannelSettingsUnsavedState();
+    }
+
+    private void RefreshServerChannelRoleAccessRows(ContactViewModel server, ServerChannelPayload channel)
+    {
+        _serverChannelRoleAccess.Clear();
+        var roles = LoadServerRoles(server).OrderBy(x => x.Position).ToArray();
+        foreach (var role in roles)
+        {
+            var permissions = string.Equals(role.Permissions, "all", StringComparison.OrdinalIgnoreCase)
+                ? ServerPermissionCatalog.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : SplitPermissionIds(role.Permissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var channelOverride = LoadChannelOverrides(role)
+                .FirstOrDefault(x => string.Equals(x.ChannelId, channel.Id, StringComparison.OrdinalIgnoreCase));
+            var allow = SplitPermissionIds(channelOverride?.Allow ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var deny = SplitPermissionIds(channelOverride?.Deny ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var actionPermission = channel.Type.Equals("voice", StringComparison.OrdinalIgnoreCase)
+                ? ServerPermissionJoinVoice
+                : ServerPermissionSendMessages;
+            _serverChannelRoleAccess.Add(new ServerChannelRoleAccessViewModel
+            {
+                RoleId = role.Id,
+                DisplayName = role.Name,
+                Color = string.IsNullOrWhiteSpace(role.Color) ? "#5865f2" : role.Color,
+                ChannelType = channel.Type,
+                CanView = allow.Contains(ServerPermissionViewChannel) ||
+                          (!deny.Contains(ServerPermissionViewChannel) && permissions.Contains(ServerPermissionViewChannel)),
+                CanAction = allow.Contains(actionPermission) ||
+                            (!deny.Contains(actionPermission) && permissions.Contains(actionPermission)),
+                CanReadHistory = allow.Contains(ServerPermissionReadHistory) ||
+                                 (!deny.Contains(ServerPermissionReadHistory) && permissions.Contains(ServerPermissionReadHistory)),
+                CanAddReactions = allow.Contains(ServerPermissionAddReactions) ||
+                                  (!deny.Contains(ServerPermissionAddReactions) && permissions.Contains(ServerPermissionAddReactions)),
+                CanAttachFiles = allow.Contains(ServerPermissionAttachFiles) ||
+                                 (!deny.Contains(ServerPermissionAttachFiles) && permissions.Contains(ServerPermissionAttachFiles)),
+                CanSpeak = allow.Contains(ServerPermissionSpeak) ||
+                           (!deny.Contains(ServerPermissionSpeak) && permissions.Contains(ServerPermissionSpeak)),
+                CanStream = allow.Contains(ServerPermissionStream) ||
+                            (!deny.Contains(ServerPermissionStream) && permissions.Contains(ServerPermissionStream))
+            });
+        }
+    }
+
+    private async void ServerChannelRoleAccessCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerChannelSettings ||
+            _activeServerChannelSettingsContact is not { IsGroup: true, IsServer: true } server ||
+            string.IsNullOrWhiteSpace(_activeServerChannelSettingsId) ||
+            sender is not System.Windows.Controls.CheckBox { DataContext: ServerChannelRoleAccessViewModel access } ||
+            string.Equals(access.RoleId, "owner", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!HasServerPermission(server, ServerPermissionManageRoles) &&
+            !HasServerPermission(server, ServerPermissionManageChannels))
+        {
+            ServerChannelSettingsStatusText.Text = "You do not have permission to edit role access.";
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, access.RoleId, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0)
+        {
+            ServerChannelSettingsStatusText.Text = "Role was not found.";
+            return;
+        }
+
+        var rolePayload = roles[roleIndex];
+        var basePermissions = string.Equals(rolePayload.Permissions, "all", StringComparison.OrdinalIgnoreCase)
+            ? ServerPermissionCatalog.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : SplitPermissionIds(rolePayload.Permissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingOverrides = LoadChannelOverrides(rolePayload)
+            .Where(x => !string.Equals(x.ChannelId, _activeServerChannelSettingsId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var allow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var deny = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        UpdateOverridePermission(access.CanView, ServerPermissionViewChannel, basePermissions, allow, deny);
+        var actionPermission = access.IsVoice ? ServerPermissionJoinVoice : ServerPermissionSendMessages;
+        UpdateOverridePermission(access.CanAction, actionPermission, basePermissions, allow, deny);
+        UpdateOverridePermission(access.CanReadHistory, ServerPermissionReadHistory, basePermissions, allow, deny);
+        UpdateOverridePermission(access.CanAddReactions, ServerPermissionAddReactions, basePermissions, allow, deny);
+        UpdateOverridePermission(access.CanAttachFiles, ServerPermissionAttachFiles, basePermissions, allow, deny);
+        if (access.IsVoice)
+        {
+            UpdateOverridePermission(access.CanSpeak, ServerPermissionSpeak, basePermissions, allow, deny);
+            UpdateOverridePermission(access.CanStream, ServerPermissionStream, basePermissions, allow, deny);
+        }
+        existingOverrides.Add(new ServerChannelPermissionOverridePayload(
+            _activeServerChannelSettingsId,
+            JoinPermissionIds(allow),
+            JoinPermissionIds(deny)));
+
+        roles[roleIndex] = rolePayload with { ChannelOverridesJson = SaveChannelOverrides(existingOverrides) };
+        await SaveServerRolesAndBroadcastAsync(server, roles);
+        RefreshServerChannelsPanel();
+        ServerChannelSettingsStatusText.Text = "Role access saved.";
+    }
+
+    private void OpenServerInviteDialog(ContactViewModel server, ServerChannelViewModel? channel)
+    {
+        if (!HasServerPermission(server, ServerPermissionCreateInvite, channel?.Id ?? server.SelectedServerChannelId))
+        {
+            NetworkStatusText.Text = "You do not have permission to create invites.";
+            return;
+        }
+
+        EnsureServerMetadata(server);
+        _activeServerInviteContact = server;
+        _activeServerInviteChannel = channel
+                                     ?? _serverChannels.FirstOrDefault(x => string.Equals(x.Id, server.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase))
+                                     ?? _serverChannels.FirstOrDefault(x => !x.IsVoice)
+                                     ?? _serverChannels.FirstOrDefault();
+
+        var selectedChannel = _activeServerInviteChannel;
+        var channelId = selectedChannel?.Id ?? server.SelectedServerChannelId;
+        var days = GetServerInviteExpiryDays(server);
+        _activeServerInviteLink = $"fluxchat://server/{Uri.EscapeDataString(server.UserId)}/{Uri.EscapeDataString(channelId)}";
+        ServerInviteTitleText.Text = $"Invite friends to {server.DisplayName}";
+        ServerInviteDestinationText.Text = selectedChannel is null
+            ? "Members will join this server."
+            : $"Members will land in {(selectedChannel.IsVoice ? "voice" : "#")} {selectedChannel.DisplayName}.";
+        ServerInviteExpiryText.Text = $"Invite expires in {days} day(s).";
+        ServerInviteLinkTextBox.Text = _activeServerInviteLink;
+        ServerInviteStatusText.Text = "";
+        ServerInviteSearchInput.Text = "";
+        RefreshServerInviteFriends();
+
+        ServerInviteOverlay.Visibility = Visibility.Visible;
+        ServerInviteOverlay.Opacity = 0;
+        if (ServerInviteDialog.RenderTransform is ScaleTransform scale)
+        {
+            scale.ScaleX = _settings.ReducedMotionEnabled ? 1 : 0.98;
+            scale.ScaleY = _settings.ReducedMotionEnabled ? 1 : 0.98;
+            if (!_settings.ReducedMotionEnabled)
+            {
+                var scaleAnimation = new DoubleAnimation(1, TimeSpan.FromMilliseconds(150))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnimation);
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnimation);
+            }
+        }
+
+        ServerInviteOverlay.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(1, TimeSpan.FromMilliseconds(_settings.ReducedMotionEnabled ? 0 : 130))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+        ServerInviteSearchInput.Focus();
+    }
+
+    private int GetServerInviteExpiryDays(ContactViewModel server)
+    {
+        var moderation = LoadServerModeration(server);
+        return Math.Clamp(moderation.InviteExpiryDays <= 0 ? 7 : moderation.InviteExpiryDays, 1, 30);
+    }
+
+    private void RefreshServerInviteFriends()
+    {
+        _serverInviteFriends.Clear();
+        if (_activeServerInviteContact is not { IsGroup: true, IsServer: true } server || _profile is null)
+        {
+            return;
+        }
+
+        var query = (ServerInviteSearchInput.Text ?? "").Trim();
+        var memberIds = LoadGroupMembers(server).Select(x => x.UserId).ToHashSet(StringComparer.Ordinal);
+        foreach (var contact in _contacts
+                     .Where(x => !x.IsGroup && !string.Equals(x.UserId, _profile.UserId, StringComparison.Ordinal))
+                     .Where(x => string.IsNullOrWhiteSpace(query) ||
+                                 x.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                                 x.UserId.Contains(query, StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                     .Take(80))
+        {
+            _serverInviteFriends.Add(new ServerInviteFriendViewModel
+            {
+                UserId = contact.UserId,
+                DisplayName = contact.DisplayName,
+                ShortId = FormatShortUserId(contact.UserId),
+                StatusText = $"{contact.StatusText} • {FormatShortUserId(contact.UserId)}",
+                IsAlreadyMember = memberIds.Contains(contact.UserId)
+            });
+        }
+    }
+
+    private void ServerInviteCloseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerInviteOverlay.Visibility = Visibility.Collapsed;
+        ServerInviteOverlay.Opacity = 1;
+        _activeServerInviteContact = null;
+        _activeServerInviteChannel = null;
+        _activeServerInviteLink = "";
+    }
+
+    private void ServerInviteSearchInput_OnTextChanged(object sender, TextChangedEventArgs e)
+        => RefreshServerInviteFriends();
+
+    private async void ServerInviteFriendButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_activeServerInviteContact is not { IsGroup: true, IsServer: true } server ||
+            sender is not System.Windows.Controls.Button { DataContext: ServerInviteFriendViewModel friend } ||
+            _profile is null)
+        {
+            return;
+        }
+
+        var channel = _activeServerInviteChannel
+                      ?? _serverChannels.FirstOrDefault(x => string.Equals(x.Id, server.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase));
+        var channelId = channel?.Id ?? server.SelectedServerChannelId;
+        if (!HasServerPermission(server, ServerPermissionCreateInvite, channelId))
+        {
+            ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
+            ServerInviteStatusText.Text = "You do not have permission to invite members.";
+            return;
+        }
+
+        try
+        {
+            var relayServer = GetRelayServer(server);
+            var target = _contacts.FirstOrDefault(x => !x.IsGroup && string.Equals(x.UserId, friend.UserId, StringComparison.Ordinal))
+                         ?? new ContactViewModel
+                         {
+                             UserId = friend.UserId,
+                             DisplayName = friend.DisplayName,
+                             IpAddress = $"{RelayContactPrefix}{relayServer}",
+                             MessagePort = FluxChatPorts.Relay
+                         };
+            var members = LoadGroupMembers(server).ToList();
+            if (members.All(x => !string.Equals(x.UserId, friend.UserId, StringComparison.Ordinal)))
+            {
+                members.Add(new GroupMemberPayload(
+                    friend.UserId,
+                    friend.DisplayName,
+                    GetRelayServer(target),
+                    target.AvatarKind,
+                    "",
+                    target.AvatarPath,
+                    target.AvatarScale,
+                    target.AvatarOffsetX,
+                    target.AvatarOffsetY,
+                    target.AvatarVideoStartSeconds,
+                    target.AvatarVideoDurationSeconds,
+                    DateTimeOffset.UtcNow));
+                SaveGroupMembers(server, members);
+                server.GroupVersion++;
+                await _history.SaveContactAsync(server);
+                await SyncContactToServerAsync(server);
+                await BroadcastGroupSnapshotAsync(server);
+            }
+
+            var expiresAtUtc = DateTimeOffset.UtcNow.AddDays(GetServerInviteExpiryDays(server));
+            var payload = new ServerChannelInvitePayload(
+                server.UserId,
+                channelId,
+                channel?.DisplayName ?? channelId,
+                channel?.IsVoice == true ? "voice" : "text",
+                _profile.UserId,
+                _profile.DisplayName,
+                expiresAtUtc,
+                CreateGroupSnapshot(server));
+            var packet = CreateProfilePacket(friend.UserId, JsonSerializer.Serialize(payload), ServerChannelInviteIntent, GetRelayServer(target));
+            await SendOverRelayAsync(packet, target, log: false);
+            RefreshServerInviteFriends();
+            ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
+            ServerInviteStatusText.Text = $"Invite sent to {friend.DisplayName}. It expires {expiresAtUtc.ToLocalTime():g}.";
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            AppLog.Write(ex, $"Server invite failed: server={server.UserId}, target={friend.UserId}");
+            ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
+            ServerInviteStatusText.Text = $"Invite failed: {ex.Message}";
+        }
+    }
+
+    private void ServerInviteCopyButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_activeServerInviteLink))
+        {
+            return;
+        }
+
+    Clipboard.SetText(_activeServerInviteLink);
+    ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
+    ServerInviteStatusText.Text = "Invite link copied.";
+    }
+
+    private async Task HandleIncomingServerChannelInviteAsync(ChatPacket packet)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<ServerChannelInvitePayload>(packet.Body);
+            if (payload is null || payload.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+            {
+                return;
+            }
+
+            await ApplyGroupSnapshotAsync(payload.Snapshot, packet);
+            var server = _contacts.FirstOrDefault(x => x.IsGroup && x.IsServer && string.Equals(x.UserId, payload.ServerId, StringComparison.Ordinal));
+            if (server is not null)
+            {
+                server.SelectedServerChannelId = payload.ChannelId;
+                await _history.SaveContactAsync(server);
+                ContactsList.Items.Refresh();
+                if (_selectedContact is not null && string.Equals(_selectedContact.UserId, server.UserId, StringComparison.Ordinal))
+                {
+                    RefreshServerChannelsPanel();
+                }
+            }
+
+            NetworkStatusText.Text = $"{packet.FromDisplayName} invited you to {payload.ChannelName}.";
+        }
+        catch (JsonException ex)
+        {
+            AppLog.Write(ex, $"Server channel invite parse failed: from={packet.FromUserId}");
+        }
     }
 
     private MessageViewModel? CreateMessageFromArchivedPacket(ChatPacket packet)
@@ -1664,6 +3197,40 @@ public partial class MainWindow : Window
             packet = MessageE2eCrypto.Decrypt(packet, _profile);
         }
         var outgoing = string.Equals(packet.FromUserId, _profile.UserId, StringComparison.Ordinal);
+        if (packet.Intent == GroupMessageIntent)
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<GroupMessagePayload>(packet.Body);
+                if (payload is null || string.IsNullOrWhiteSpace(payload.GroupId))
+                {
+                    return null;
+                }
+
+                if (!ShouldShowGroupMessageInCurrentChannel(payload))
+                {
+                    return null;
+                }
+
+                return new MessageViewModel
+                {
+                    MessageId = packet.MessageId,
+                    PeerUserId = payload.GroupId,
+                    Body = payload.Text,
+                    Text = payload.Text,
+                    IsOutgoing = outgoing,
+                    SentAtUtc = packet.SentAtUtc,
+                    SenderUserId = packet.FromUserId,
+                    SenderDisplayName = packet.FromDisplayName
+                };
+            }
+            catch (JsonException ex)
+            {
+                AppLog.Write(ex, $"Archived group message parse failed: {packet.MessageId}");
+                return null;
+            }
+        }
+
         if (packet.Intent != ChatRichIntent)
         {
             return new MessageViewModel
@@ -1728,6 +3295,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool ShouldShowGroupMessageInCurrentChannel(GroupMessagePayload payload)
+    {
+        if (_selectedContact is not { IsGroup: true } group ||
+            !string.Equals(group.UserId, payload.GroupId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var messageChannelId = string.IsNullOrWhiteSpace(payload.ChannelId)
+            ? "general"
+            : payload.ChannelId;
+        var selectedChannelId = string.IsNullOrWhiteSpace(group.SelectedServerChannelId)
+            ? "general"
+            : group.SelectedServerChannelId;
+
+        return string.Equals(messageChannelId, selectedChannelId, StringComparison.OrdinalIgnoreCase);
+    }
+
     private Task RefreshEmojiOpenButtonAsync()
     {
         var emojis = AllEmojis();
@@ -1770,27 +3355,35 @@ public partial class MainWindow : Window
         return Task.CompletedTask;
     }
 
-    private async void StartCallButton_OnClick(object sender, RoutedEventArgs e)
+    private async Task StartCallForContactAsync(ContactViewModel contact)
     {
-        if (_selectedContact is null)
+        if (_activeCallContact?.UserId == contact.UserId && CallPanel.Visibility == Visibility.Visible)
         {
+            if (contact.IsServer)
+            {
+                SetSelfGroupVoiceParticipant(contact, joined: true, GetSelectedServerVoiceChannelId(contact));
+                _peerInCall = HasRemoteGroupVoiceParticipants(contact);
+                _activeCallState = "connected";
+                BeginConnectedCallSession();
+                ShowCallPanel(contact, BuildGroupVoiceStatus(contact), showIncomingActions: false);
+                StartAudioCall(contact);
+                await SendCallSignalAsync(contact, CallJoinIntent);
+                RefreshServerChannelsPanel();
+            }
+
             return;
         }
 
-        if (_activeCallContact?.UserId == _selectedContact.UserId && CallPanel.Visibility == Visibility.Visible)
-        {
-            return;
-        }
-
-        _activeCallContact = _selectedContact;
-        _activeCallPeerContact = _selectedContact.IsGroup ? null : _selectedContact;
+        _activeCallContact = contact;
+        _activeCallPeerContact = contact.IsGroup ? null : contact;
         _selfInCall = true;
-        if (_selectedContact.IsGroup)
+        if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(_selectedContact, joined: true);
-            _peerInCall = HasRemoteGroupVoiceParticipants(_selectedContact);
+            SetSelfGroupVoiceParticipant(contact, joined: true, contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "");
+            _peerInCall = HasRemoteGroupVoiceParticipants(contact);
             _activeCallState = "connected";
-            ShowCallPanel(_activeCallContact, BuildGroupVoiceStatus(_selectedContact), showIncomingActions: false);
+            BeginConnectedCallSession();
+            ShowCallPanel(_activeCallContact, BuildGroupVoiceStatus(contact), showIncomingActions: false);
             StartAudioCall(_activeCallContact);
             await SendCallSignalAsync(_activeCallContact, CallInviteIntent);
             return;
@@ -1798,9 +3391,20 @@ public partial class MainWindow : Window
 
         _activeCallState = "connected";
         _peerInCall = false;
+        BeginConnectedCallSession();
         ShowCallPanel(_activeCallContact, BuildDirectVoiceStatus(_activeCallContact), showIncomingActions: false);
         StartAudioCall(_activeCallContact);
         await SendCallSignalAsync(_activeCallContact, CallInviteIntent);
+    }
+
+    private async void StartCallButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is null)
+        {
+            return;
+        }
+
+        await StartCallForContactAsync(_selectedContact);
     }
 
     private async void AcceptCallButton_OnClick(object sender, RoutedEventArgs e)
@@ -1815,6 +3419,7 @@ public partial class MainWindow : Window
 
     private async Task AcceptCallAsync(ContactViewModel contact)
     {
+        CloseIncomingCallMiniWindow(contact);
         StopCallRingtone();
         _activeCallState = "connected";
         _selfInCall = true;
@@ -1822,10 +3427,11 @@ public partial class MainWindow : Window
         _activeCallContact = contact;
         if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(contact, joined: true);
+            SetSelfGroupVoiceParticipant(contact, joined: true, contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "");
             _peerInCall = HasRemoteGroupVoiceParticipants(contact);
         }
 
+        BeginConnectedCallSession();
         ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
         await OpenContactAsync(contact);
         await SendCallSignalAsync(contact, CallAcceptIntent);
@@ -1842,6 +3448,7 @@ public partial class MainWindow : Window
 
         var contact = _activeCallContact;
         StopCallRingtone();
+        CloseIncomingCallMiniWindow(contact);
         if (contact.IsGroup)
         {
             _selfInCall = false;
@@ -1904,7 +3511,7 @@ public partial class MainWindow : Window
         var contact = _activeCallContact;
         if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(contact, joined: false);
+            SetSelfGroupVoiceParticipant(contact, joined: false, contact.IsServer && _selfServerVoiceChannels.TryGetValue(contact.UserId, out var voiceChannelId) ? voiceChannelId : "");
             StopAudioCall();
             await SendCallSignalAsync(contact, CallLeaveIntent);
             _selfInCall = false;
@@ -1972,10 +3579,11 @@ public partial class MainWindow : Window
         _activeCallState = "connected";
         if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(contact, joined: true);
+            SetSelfGroupVoiceParticipant(contact, joined: true, contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "");
             _peerInCall = HasRemoteGroupVoiceParticipants(contact);
         }
 
+        BeginConnectedCallSession();
         ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
         await SendCallSignalAsync(contact, CallJoinIntent);
         StartAudioCall(contact);
@@ -2151,13 +3759,14 @@ public partial class MainWindow : Window
             Focusable = false
         };
 
-    private static ContextMenu CreateAudioControlMenu(FrameworkElement placementTarget)
+    private ContextMenu CreateAudioControlMenu(FrameworkElement placementTarget)
         => new()
         {
             PlacementTarget = placementTarget,
             Placement = PlacementMode.MousePoint,
             HasDropShadow = true,
-            StaysOpen = false
+            StaysOpen = false,
+            Style = (Style)FindResource("FluxContextMenuStyle")
         };
 
     private FrameworkElement CreateVolumeControl(
@@ -2801,6 +4410,7 @@ public partial class MainWindow : Window
 
     private void AddFriendPanelButton_OnClick(object sender, RoutedEventArgs e)
     {
+        CloseMiniProfile();
         _ = PrimeScreenShareMiniPlayerPreviewAsync();
         _selectedContact = null;
         ContactsList.SelectedItem = null;
@@ -2816,6 +4426,7 @@ public partial class MainWindow : Window
         ChatSearchInput.Clear();
         GroupMembersButton.Visibility = Visibility.Collapsed;
         SetGroupMembersPanelVisible(false);
+        SetServerChannelsPanelVisible(false);
         ChatTitle.Text = "Add Friend";
         ChatSubtitle.Text = "Add a friend by User ID";
         UpdateScreenShareStageVisibility();
@@ -2832,19 +4443,43 @@ public partial class MainWindow : Window
         SetScreenSharePickerStageSuppression(false);
         _draftGroupContact = null;
         _selectedGroupMemberIds.Clear();
+        GroupNameInput.Text = "";
+        GroupTemplateInput.SelectedIndex = 0;
         GroupSearchInput.Clear();
         RefreshGroupCandidates();
         GroupCreateStatusText.Text = "Можно добавить до 10 друзей.";
-        CreateGroupOverlay.Visibility = Visibility.Visible;
-        GroupSearchInput.Focus();
+        ShowModalOverlayAnimated(CreateGroupOverlay);
+        GroupNameInput.Focus();
     }
 
     private void CreateGroupCloseButton_OnClick(object sender, RoutedEventArgs e)
     {
-        CreateGroupOverlay.Visibility = Visibility.Collapsed;
-        _draftGroupContact = null;
-        _selectedGroupMemberIds.Clear();
-        _groupCandidates.Clear();
+        HideCreateGroupOverlayAnimated();
+    }
+
+    private void HideCreateGroupOverlayAnimated()
+    {
+        HideModalOverlayAnimated(CreateGroupOverlay, () =>
+        {
+            _draftGroupContact = null;
+            _selectedGroupMemberIds.Clear();
+            _groupCandidates.Clear();
+        });
+    }
+
+    private bool CanCurrentUserSeeActivity(RelayPresencePacket presence)
+    {
+        if (_profile is null)
+        {
+            return false;
+        }
+
+        return presence.ActivityVisibility switch
+        {
+            "Everyone" => true,
+            "Selected" => presence.ActivitySelectedFriendIds?.Contains(_profile.UserId, StringComparer.Ordinal) == true,
+            _ => _contacts.Any(contact => !contact.IsGroup && string.Equals(contact.UserId, presence.UserId, StringComparison.Ordinal))
+        };
     }
 
     private void GroupSearchInput_OnTextChanged(object sender, TextChangedEventArgs e)
@@ -2881,7 +4516,9 @@ public partial class MainWindow : Window
         }
 
         SaveGroupMembers(group, members);
-        group.DisplayName = BuildGroupDisplayName(group.GroupMemberIdsList);
+        var requestedName = GroupNameInput.Text.Trim();
+        group.DisplayName = string.IsNullOrWhiteSpace(requestedName) ? BuildGroupDisplayName(group.GroupMemberIdsList) : requestedName;
+        EnsureServerMetadata(group, GetSelectedServerTemplateId());
         group.Status = UserPresenceStatus.Online;
         group.LastSeenUtc = DateTimeOffset.UtcNow;
         group.GroupVersion++;
@@ -2896,11 +4533,43 @@ public partial class MainWindow : Window
         RefreshGroupCandidates();
     }
 
+    private async void CreateServerNowButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var group = _draftGroupContact ?? CreateLocalGroupContact();
+        _draftGroupContact = group;
+        var members = LoadGroupMembers(group);
+        if (members.All(x => _profile is null || !string.Equals(x.UserId, _profile.UserId, StringComparison.Ordinal)))
+        {
+            members.Insert(0, CreateSelfGroupMember());
+        }
+
+        SaveGroupMembers(group, members);
+        var requestedName = GroupNameInput.Text.Trim();
+        group.DisplayName = string.IsNullOrWhiteSpace(requestedName) ? BuildGroupDisplayName(group.GroupMemberIdsList) : requestedName;
+        EnsureServerMetadata(group, GetSelectedServerTemplateId());
+        group.Status = UserPresenceStatus.Online;
+        group.LastSeenUtc = DateTimeOffset.UtcNow;
+        group.GroupVersion++;
+
+        AddOrUpdateContact(group);
+        await _history.SaveContactAsync(group);
+        await BroadcastGroupSnapshotAsync(group);
+        await SyncContactToServerAsync(group);
+        CreateGroupOverlay.Visibility = Visibility.Collapsed;
+        _draftGroupContact = null;
+        _selectedGroupMemberIds.Clear();
+        _groupCandidates.Clear();
+        ContactsList.SelectedItem = group;
+        await OpenContactAsync(group);
+    }
+
     private ContactViewModel CreateLocalGroupContact()
-        => new()
+    {
+        var templateId = GetSelectedServerTemplateId();
+        var group = new ContactViewModel
         {
             UserId = $"group:{Guid.NewGuid():N}",
-            DisplayName = "Group",
+            DisplayName = string.IsNullOrWhiteSpace(GroupNameInput.Text) ? "Server" : GroupNameInput.Text.Trim(),
             IpAddress = "GROUP",
             MessagePort = 0,
             Status = UserPresenceStatus.Online,
@@ -2908,8 +4577,15 @@ public partial class MainWindow : Window
             IsGroup = true,
             AvatarKind = "color",
             GroupOwnerUserId = _profile?.UserId ?? "",
-            GroupVersion = 1
+            GroupVersion = 1,
+            ServerTemplate = templateId
         };
+        EnsureServerMetadata(group, templateId);
+        return group;
+    }
+
+    private string GetSelectedServerTemplateId()
+        => (GroupTemplateInput.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "empty";
 
     private string BuildGroupDisplayName(IReadOnlyList<string> memberIds)
     {
@@ -2923,6 +4599,508 @@ public partial class MainWindow : Window
         return names.Length == 0
             ? "Group"
             : string.Join(", ", names);
+    }
+
+    private const string ServerPermissionViewChannel = "view_channel";
+    private const string ServerPermissionReadHistory = "read_history";
+    private const string ServerPermissionSendMessages = "send_messages";
+    private const string ServerPermissionAddReactions = "add_reactions";
+    private const string ServerPermissionAttachFiles = "attach_files";
+    private const string ServerPermissionJoinVoice = "join_voice";
+    private const string ServerPermissionSpeak = "speak";
+    private const string ServerPermissionStream = "stream";
+    private const string ServerPermissionCreateInvite = "create_invite";
+    private const string ServerPermissionManageChannels = "manage_channels";
+    private const string ServerPermissionManageRoles = "manage_roles";
+    private const string ServerPermissionManageMembers = "manage_members";
+    private const string ServerPermissionDeleteMessages = "delete_messages";
+    private const string ServerPermissionManageServer = "manage_server";
+
+    private static readonly ServerPermissionInfo[] ServerPermissionCatalog =
+    [
+        new(ServerPermissionViewChannel, "View channels", "See text and voice channels."),
+        new(ServerPermissionReadHistory, "Read history", "Load previous messages."),
+        new(ServerPermissionSendMessages, "Send messages", "Write in text channels."),
+        new(ServerPermissionAddReactions, "Add reactions", "React to messages."),
+        new(ServerPermissionAttachFiles, "Attach files", "Send images, GIFs and files."),
+        new(ServerPermissionJoinVoice, "Join voice", "Join voice channels."),
+        new(ServerPermissionSpeak, "Speak", "Use microphone in voice channels."),
+        new(ServerPermissionStream, "Stream", "Start screen sharing."),
+        new(ServerPermissionCreateInvite, "Create invites", "Create server invite codes."),
+        new(ServerPermissionManageChannels, "Manage channels", "Create, rename and delete channels."),
+        new(ServerPermissionManageRoles, "Manage roles", "Create roles and assign permissions."),
+        new(ServerPermissionManageMembers, "Manage members", "Kick or mute members."),
+        new(ServerPermissionDeleteMessages, "Delete messages", "Delete other users' messages."),
+        new(ServerPermissionManageServer, "Manage server", "Edit server settings.")
+    ];
+
+    private static IReadOnlyList<ServerChannelPayload> BuildServerChannels(string templateId)
+    {
+        var normalized = string.IsNullOrWhiteSpace(templateId) ? "empty" : templateId.Trim().ToLowerInvariant();
+        static ServerChannelPayload Text(string id, string name, int position) => new(id, name, "text", "TEXT CHANNELS", position);
+        static ServerChannelPayload Voice(string id, string name, int position) => new(id, name, "voice", "VOICE CHANNELS", position);
+
+        return normalized switch
+        {
+            "friends" => [Text("general", "general", 0), Text("memes", "memes", 1), Voice("lobby", "Lobby", 100)],
+            "gaming" => [Text("general", "general", 0), Text("clips", "clips", 1), Text("looking-for-game", "looking-for-game", 2), Voice("squad", "Squad", 100)],
+            "community" => [Text("rules", "rules", 0), Text("general", "general", 1), Text("announcements", "announcements", 2), Voice("stage", "Stage", 100)],
+            "study" => [Text("homework", "homework", 0), Text("notes", "notes", 1), Text("questions", "questions", 2), Voice("study-room", "Study room", 100)],
+            "work" => [Text("general", "general", 0), Text("tasks", "tasks", 1), Text("files", "files", 2), Voice("meeting", "Meeting", 100)],
+            _ => [Text("general", "general", 0), Voice("general-voice", "General", 100)]
+        };
+    }
+
+    private static IReadOnlyList<ServerRolePayload> BuildDefaultServerRoles()
+        =>
+        [
+            new("owner", "Owner", "#FBBF24", "all", 0, true, ShowSeparately: true),
+            new("admin", "Admin", "#60A5FA", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_server,manage_channels,manage_roles,manage_members,delete_messages", 1, false, ShowSeparately: true),
+            new("moderator", "Moderator", "#34D399", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_members,delete_messages", 2, false, ShowSeparately: true),
+            new("member", "Member", "#9CA3AF", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak", 100, false)
+        ];
+
+    private void EnsureServerMetadata(ContactViewModel group, string templateId = "")
+    {
+        if (!group.IsGroup)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(group.ServerTemplate))
+        {
+            group.ServerTemplate = string.IsNullOrWhiteSpace(templateId) ? "empty" : templateId;
+        }
+
+        if (string.IsNullOrWhiteSpace(group.ServerChannelsJson))
+        {
+            group.ServerChannelsJson = JsonSerializer.Serialize(BuildServerChannels(group.ServerTemplate));
+        }
+
+        if (string.IsNullOrWhiteSpace(group.ServerRolesJson))
+        {
+            group.ServerRolesJson = JsonSerializer.Serialize(BuildDefaultServerRoles());
+        }
+
+        var channels = LoadServerChannels(group);
+        if (channels.All(x => !string.Equals(x.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase)))
+        {
+            group.SelectedServerChannelId = channels.FirstOrDefault(x => string.Equals(x.Type, "text", StringComparison.OrdinalIgnoreCase))?.Id ?? "general";
+        }
+    }
+
+    private static IReadOnlyList<ServerChannelPayload> LoadServerChannels(ContactViewModel group)
+    {
+        if (!string.IsNullOrWhiteSpace(group.ServerChannelsJson))
+        {
+            try
+            {
+                var channels = JsonSerializer.Deserialize<List<ServerChannelPayload>>(group.ServerChannelsJson);
+                if (channels is { Count: > 0 })
+                {
+                    return channels
+                        .Where(x => !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Name))
+                        .OrderBy(x => x.Position)
+                        .ToArray();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return BuildServerChannels("empty");
+    }
+
+    private static void SaveServerChannels(ContactViewModel group, IReadOnlyList<ServerChannelPayload> channels)
+    {
+        var compact = channels
+            .Where(x => !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Name))
+            .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .OrderBy(x => x.Position)
+            .ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+        group.ServerChannelsJson = JsonSerializer.Serialize(compact);
+    }
+
+    private IReadOnlyList<ServerRolePayload> LoadServerRoles(ContactViewModel group)
+    {
+        var roles = new List<ServerRolePayload>();
+        if (!string.IsNullOrWhiteSpace(group.ServerRolesJson))
+        {
+            try
+            {
+                roles = JsonSerializer.Deserialize<List<ServerRolePayload>>(group.ServerRolesJson)?
+                            .Where(x => !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Name))
+                            .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+                            .Select(x => x.First())
+                            .ToList()
+                        ?? [];
+            }
+            catch (JsonException ex)
+            {
+                AppLog.Write(ex, $"Server roles parse failed: server={group.UserId}");
+            }
+        }
+
+        roles = roles.Select(NormalizeServerRolePermissions).ToList();
+
+        foreach (var role in BuildDefaultServerRoles())
+        {
+            if (roles.All(x => !string.Equals(x.Id, role.Id, StringComparison.OrdinalIgnoreCase)))
+            {
+                roles.Add(role);
+            }
+        }
+
+        return roles
+            .OrderBy(x => x.Position)
+            .ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+    }
+
+    private static ServerRolePayload NormalizeServerRolePermissions(ServerRolePayload role)
+    {
+        if (string.Equals(role.Permissions, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return role;
+        }
+
+        var permissions = SplitPermissionIds(role.Permissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (permissions.Contains("manage_invites"))
+        {
+            permissions.Add(ServerPermissionCreateInvite);
+        }
+
+        if (permissions.Contains("kick_members") || permissions.Contains("mute_members"))
+        {
+            permissions.Add(ServerPermissionManageMembers);
+        }
+
+        if (permissions.Contains(ServerPermissionManageServer) ||
+            permissions.Contains(ServerPermissionManageChannels) ||
+            permissions.Contains(ServerPermissionManageRoles) ||
+            permissions.Contains(ServerPermissionManageMembers) ||
+            permissions.Contains(ServerPermissionSendMessages) ||
+            permissions.Contains(ServerPermissionJoinVoice))
+        {
+            permissions.Add(ServerPermissionViewChannel);
+            permissions.Add(ServerPermissionReadHistory);
+        }
+
+        if (permissions.Contains(ServerPermissionSendMessages))
+        {
+            permissions.Add(ServerPermissionAddReactions);
+        }
+
+        if (permissions.Contains(ServerPermissionJoinVoice))
+        {
+            permissions.Add(ServerPermissionSpeak);
+        }
+
+        return role with { Permissions = JoinPermissionIds(permissions) };
+    }
+
+    private void SaveServerRoles(ContactViewModel group, IReadOnlyList<ServerRolePayload> roles)
+    {
+        var uniqueRoles = roles
+            .Where(x => !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Name))
+            .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .OrderBy(x => x.Position)
+            .ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+        group.ServerRolesJson = JsonSerializer.Serialize(uniqueRoles);
+    }
+
+    private ServerModerationPayload LoadServerModeration(ContactViewModel server)
+    {
+        if (!string.IsNullOrWhiteSpace(server.ServerModerationJson))
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<ServerModerationPayload>(server.ServerModerationJson);
+                if (payload is not null)
+                {
+                    return payload with
+                    {
+                        AuditRetentionDays = Math.Clamp(payload.AuditRetentionDays <= 0 ? 20 : payload.AuditRetentionDays, 1, 3650),
+                        InviteExpiryDays = Math.Clamp(payload.InviteExpiryDays <= 0 ? 7 : payload.InviteExpiryDays, 1, 30),
+                        Bans = payload.Bans ?? [],
+                        AuditLog = payload.AuditLog ?? []
+                    };
+                }
+            }
+            catch (JsonException ex)
+            {
+                AppLog.Write(ex, $"Server moderation parse failed: server={server.UserId}");
+            }
+        }
+
+        return new ServerModerationPayload(Bans: [], AuditLog: []);
+    }
+
+    private void SaveServerModeration(ContactViewModel server, ServerModerationPayload moderation)
+    {
+        var retentionDays = Math.Clamp(moderation.AuditRetentionDays <= 0 ? 20 : moderation.AuditRetentionDays, 1, 3650);
+        var auditLog = moderation.AuditLog ?? [];
+        if (moderation.AuditAutoCleanup)
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
+            auditLog = auditLog.Where(x => x.CreatedAtUtc >= cutoff).ToArray();
+        }
+
+        server.ServerModerationJson = JsonSerializer.Serialize(moderation with
+        {
+            AuditRetentionDays = retentionDays,
+            InviteExpiryDays = Math.Clamp(moderation.InviteExpiryDays <= 0 ? 7 : moderation.InviteExpiryDays, 1, 30),
+            Bans = moderation.Bans ?? [],
+            AuditLog = auditLog
+        });
+    }
+
+    private ServerModerationPayload AddServerAuditEntry(
+        ContactViewModel server,
+        ServerModerationPayload moderation,
+        string action,
+        string target)
+    {
+        if (!moderation.AuditEnabled)
+        {
+            return moderation;
+        }
+
+        var roles = LoadServerRoles(server);
+        var actorRole = _profile is null
+            ? "Unknown"
+            : BuildRoleSummary(roles, new GroupMemberPayload(_profile.UserId, _profile.DisplayName, "", "", "", "", 1, 0, 0, 0, 10, DateTimeOffset.UtcNow), string.Equals(server.GroupOwnerUserId, _profile.UserId, StringComparison.Ordinal));
+        if (string.IsNullOrWhiteSpace(actorRole))
+        {
+            actorRole = "Member";
+        }
+
+        var entries = (moderation.AuditLog ?? []).ToList();
+        entries.Insert(0, new ServerAuditEntryPayload(
+            Guid.NewGuid().ToString("N"),
+            _profile?.UserId ?? "",
+            _profile?.DisplayName ?? "Unknown",
+            actorRole,
+            action,
+            target,
+            DateTimeOffset.UtcNow));
+
+        return moderation with { AuditLog = entries.Take(500).ToArray() };
+    }
+
+    private static string NormalizeRoleId(string value)
+    {
+        var chars = value
+            .Trim()
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+        var normalized = new string(chars).Trim('-');
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return string.IsNullOrWhiteSpace(normalized)
+            ? ($"role-{Guid.NewGuid():N}")[..13]
+            : normalized;
+    }
+
+    private static string NormalizeServerRoleColor(string value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
+        if (normalized.Length == 3 || normalized.Length == 6 || normalized.Length == 8)
+        {
+            normalized = $"#{normalized}";
+        }
+
+        var hex = normalized.StartsWith('#') ? normalized[1..] : normalized;
+        return normalized.StartsWith('#') &&
+               hex.Length is 3 or 6 or 8 &&
+               hex.All(Uri.IsHexDigit)
+            ? normalized
+            : "#5865f2";
+    }
+
+    private static IReadOnlyList<string> SplitRoleIds(string roleIds)
+        => string.IsNullOrWhiteSpace(roleIds)
+            ? []
+            : roleIds.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+    private static string JoinRoleIds(IEnumerable<string> roleIds)
+        => string.Join('|', roleIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<string> SplitPermissionIds(string permissions)
+        => string.IsNullOrWhiteSpace(permissions)
+            ? []
+            : permissions.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+    private static string JoinPermissionIds(IEnumerable<string> permissions)
+        => string.Join(',', permissions
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<ServerChannelPermissionOverridePayload> LoadChannelOverrides(ServerRolePayload role)
+    {
+        if (string.IsNullOrWhiteSpace(role.ChannelOverridesJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<ServerChannelPermissionOverridePayload>>(role.ChannelOverridesJson)?
+                       .Where(x => !string.IsNullOrWhiteSpace(x.ChannelId))
+                       .ToArray()
+                   ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static string SaveChannelOverrides(IEnumerable<ServerChannelPermissionOverridePayload> overrides)
+    {
+        var compact = overrides
+            .Where(x => !string.IsNullOrWhiteSpace(x.ChannelId))
+            .GroupBy(x => x.ChannelId, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .Where(x => !string.IsNullOrWhiteSpace(x.Allow) || !string.IsNullOrWhiteSpace(x.Deny))
+            .ToArray();
+        return compact.Length == 0 ? "" : JsonSerializer.Serialize(compact);
+    }
+
+    private IReadOnlyList<string> GetCurrentUserServerRoleIds(ContactViewModel server, IReadOnlyList<ServerRolePayload> roles)
+    {
+        if (_profile is null)
+        {
+            return [];
+        }
+
+        var roleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "member" };
+        if (string.Equals(server.GroupOwnerUserId, _profile.UserId, StringComparison.Ordinal))
+        {
+            roleIds.Add("owner");
+        }
+
+        var member = LoadGroupMembers(server).FirstOrDefault(x => string.Equals(x.UserId, _profile.UserId, StringComparison.Ordinal));
+        if (member is not null)
+        {
+            foreach (var roleId in SplitRoleIds(member.RoleIds))
+            {
+                roleIds.Add(roleId);
+            }
+        }
+
+        foreach (var role in roles)
+        {
+            if (SplitRoleIds(role.MemberIds).Contains(_profile.UserId, StringComparer.Ordinal))
+            {
+                roleIds.Add(role.Id);
+            }
+        }
+
+        return roleIds.ToArray();
+    }
+
+    private bool HasServerPermission(ContactViewModel server, string permission, string channelId = "")
+    {
+        if (_profile is null || !server.IsServer)
+        {
+            return true;
+        }
+
+        if (string.Equals(server.GroupOwnerUserId, _profile.UserId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var roles = LoadServerRoles(server);
+        var roleIds = GetCurrentUserServerRoleIds(server, roles).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var effective = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var role in roles.Where(x => roleIds.Contains(x.Id)))
+        {
+            if (string.Equals(role.Permissions, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            foreach (var id in SplitPermissionIds(role.Permissions))
+            {
+                effective.Add(id);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(channelId))
+        {
+            var allow = false;
+            var deny = false;
+            foreach (var role in roles.Where(x => roleIds.Contains(x.Id)).OrderBy(x => x.Position))
+            {
+                var channelOverride = LoadChannelOverrides(role)
+                    .FirstOrDefault(x => string.Equals(x.ChannelId, channelId, StringComparison.OrdinalIgnoreCase));
+                if (channelOverride is null)
+                {
+                    continue;
+                }
+
+                var allowIds = SplitPermissionIds(channelOverride.Allow);
+                var denyIds = SplitPermissionIds(channelOverride.Deny);
+                allow |= allowIds.Contains(permission, StringComparer.OrdinalIgnoreCase);
+                deny |= denyIds.Contains(permission, StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (deny)
+            {
+                return false;
+            }
+
+            if (allow)
+            {
+                return true;
+            }
+        }
+
+        return effective.Contains(permission);
+    }
+
+    private static string BuildRoleSummary(IReadOnlyList<ServerRolePayload> roles, GroupMemberPayload member, bool isOwner)
+    {
+        var roleIds = SplitRoleIds(member.RoleIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var role in roles)
+        {
+            if (SplitRoleIds(role.MemberIds).Contains(member.UserId, StringComparer.Ordinal))
+            {
+                roleIds.Add(role.Id);
+            }
+        }
+
+        if (isOwner)
+        {
+            roleIds.Add("owner");
+        }
+
+        return string.Join(", ", roles
+            .Where(x => roleIds.Contains(x.Id) && !string.Equals(x.Id, "member", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.Position)
+            .Select(x => x.Name)
+            .Take(3));
     }
 
     private void EnsureGroupMetadata(ContactViewModel group)
@@ -2967,6 +5145,7 @@ public partial class MainWindow : Window
         }
 
         SaveGroupMembers(group, members);
+        EnsureServerMetadata(group);
         if (group.GroupVersion <= 0)
         {
             group.GroupVersion = 1;
@@ -3078,7 +5257,12 @@ public partial class MainWindow : Window
             group.AvatarOffsetY,
             group.AvatarVideoStartSeconds,
             group.AvatarVideoDurationSeconds,
-            LoadGroupMembers(group));
+            LoadGroupMembers(group),
+            group.ServerTemplate,
+            group.ServerChannelsJson,
+            group.ServerRolesJson,
+            group.ServerModerationJson,
+            group.SelectedServerChannelId);
     }
 
     private static string EncodeFileToBase64(string path)
@@ -3244,12 +5428,18 @@ public partial class MainWindow : Window
         group.AvatarOffsetY = snapshot.AvatarOffsetY;
         group.AvatarVideoStartSeconds = snapshot.AvatarVideoStartSeconds;
         group.AvatarVideoDurationSeconds = snapshot.AvatarVideoDurationSeconds;
+        group.ServerTemplate = snapshot.ServerTemplate;
+        group.ServerChannelsJson = snapshot.ServerChannelsJson;
+        group.ServerRolesJson = snapshot.ServerRolesJson;
+        group.ServerModerationJson = snapshot.ServerModerationJson;
+        group.SelectedServerChannelId = snapshot.SelectedServerChannelId;
         if (!string.IsNullOrWhiteSpace(snapshot.AvatarMediaBase64))
         {
             group.AvatarPath = SaveContactAvatar(snapshot.GroupId, snapshot.AvatarExtension, snapshot.AvatarMediaBase64);
         }
 
         SaveGroupMembers(group, snapshot.Members);
+        EnsureServerMetadata(group, snapshot.ServerTemplate);
         if (group.GroupIsDeleted)
         {
             await _history.SaveContactAsync(group);
@@ -3266,7 +5456,7 @@ public partial class MainWindow : Window
         if (_selectedContact?.UserId == group.UserId)
         {
             ChatTitle.Text = group.DisplayName;
-            ChatSubtitle.Text = $"{group.GroupMemberCount} participants";
+            RefreshServerChannelsPanel();
             RefreshGroupMembersPanel();
         }
 
@@ -3304,17 +5494,43 @@ public partial class MainWindow : Window
             PrepareMessageForUi(message);
             await _history.SaveAsync(message);
 
-            if (_selectedContact?.UserId == payload.GroupId)
+            if (_selectedContact?.UserId == payload.GroupId && ShouldShowGroupMessageInCurrentChannel(payload))
             {
                 _messages.Add(message);
                 ScrollMessagesToEnd();
+                if (!IsOwnPacket(packet))
+                {
+                    if (group.IsServer)
+                    {
+                        MarkServerChannelRead(group, payload.ChannelId);
+                    }
+                    else
+                    {
+                        MarkContactRead(group);
+                    }
+                }
+
                 NetworkStatusText.Text = statusText;
             }
             else
             {
+                if (!IsOwnPacket(packet))
+                {
+                    if (group.IsServer)
+                    {
+                        IncrementServerChannelUnread(group, payload.ChannelId);
+                    }
+                    else
+                    {
+                        IncrementUnread(group);
+                    }
+                }
+
                 ShowIncomingNotificationIfNeeded(group.DisplayName, packet);
                 NetworkStatusText.Text = $"Group message in {group.DisplayName}";
             }
+
+            TouchContactActivity(group);
         }
         catch (Exception ex) when (ex is JsonException or IOException or InvalidOperationException)
         {
@@ -3343,6 +5559,7 @@ public partial class MainWindow : Window
 
     private async void SettingsButton_OnClick(object sender, RoutedEventArgs e)
     {
+        CloseMiniProfile();
         if (_profile is not null)
         {
             SettingsDisplayNameInput.Text = _profile.DisplayName;
@@ -3357,11 +5574,12 @@ public partial class MainWindow : Window
         SettingsKeepScreenShareMiniPlayerCheck.IsChecked = _settings.KeepScreenShareMiniPlayerVisible;
         _isInitializingAudioFeatureControls = false;
         RefreshDataSettingsUi();
+        RefreshLanguageSettingsUi();
         RefreshAudioDeviceSelectors();
         ShowSettingsTab("account");
         ProfileFlyout.Visibility = Visibility.Collapsed;
         await PrimeScreenShareMiniPlayerPreviewAsync();
-        SettingsOverlay.Visibility = Visibility.Visible;
+        ShowModalOverlayAnimated(SettingsOverlay);
         UpdateScreenShareStageVisibility();
         SettingsServerAddressInput.Focus();
     }
@@ -3414,8 +5632,84 @@ public partial class MainWindow : Window
 
     private void SettingsCloseButton_OnClick(object sender, RoutedEventArgs e)
     {
-        SettingsOverlay.Visibility = Visibility.Collapsed;
-        UpdateScreenShareStageVisibility();
+        HideSettingsOverlayAnimated();
+    }
+
+    private void HideSettingsOverlayAnimated()
+    {
+        HideModalOverlayAnimated(SettingsOverlay, UpdateScreenShareStageVisibility);
+    }
+
+    private void ModalBackdrop_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(sender, CreateGroupOverlay))
+        {
+            HideCreateGroupOverlayAnimated();
+            e.Handled = true;
+            return;
+        }
+
+        if (ReferenceEquals(sender, SettingsOverlay))
+        {
+            HideSettingsOverlayAnimated();
+            e.Handled = true;
+        }
+    }
+
+    private void ModalDialog_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+    }
+
+    private void ShowModalOverlayAnimated(UIElement overlay)
+    {
+        overlay.BeginAnimation(OpacityProperty, null);
+        overlay.Visibility = Visibility.Visible;
+
+        if (_settings.ReducedMotionEnabled)
+        {
+            overlay.Opacity = 1;
+            return;
+        }
+
+        overlay.Opacity = 0;
+        overlay.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(1, TimeSpan.FromMilliseconds(140))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    private void HideModalOverlayAnimated(UIElement overlay, Action? afterHidden = null)
+    {
+        if (overlay.Visibility != Visibility.Visible)
+        {
+            afterHidden?.Invoke();
+            return;
+        }
+
+        overlay.BeginAnimation(OpacityProperty, null);
+
+        if (_settings.ReducedMotionEnabled)
+        {
+            overlay.Visibility = Visibility.Collapsed;
+            overlay.Opacity = 1;
+            afterHidden?.Invoke();
+            return;
+        }
+
+        var animation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(120))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+        };
+        animation.Completed += (_, _) =>
+        {
+            overlay.Visibility = Visibility.Collapsed;
+            overlay.Opacity = 1;
+            afterHidden?.Invoke();
+        };
+        overlay.BeginAnimation(OpacityProperty, animation);
     }
 
     private Task<bool> ShowAppConfirmDialogAsync(
@@ -3482,6 +5776,30 @@ public partial class MainWindow : Window
         ShowSettingsTab("voice");
     }
 
+    private void SettingsLanguageTabButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshLanguageSettingsUi();
+        ShowSettingsTab("language");
+    }
+
+    private void SettingsPrivacyTabButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshPrivacySettingsUi();
+        ShowSettingsTab("privacy");
+    }
+
+    private void SettingsActivityTabButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshActivitySettingsUi();
+        ShowSettingsTab("activity");
+    }
+
+    private void SettingsNotificationsTabButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshNotificationSettingsUi();
+        ShowSettingsTab("notifications");
+    }
+
     private void SettingsDataTabButton_OnClick(object sender, RoutedEventArgs e)
     {
         RefreshDataSettingsUi();
@@ -3497,6 +5815,139 @@ public partial class MainWindow : Window
         ShowSettingsTab("customization");
     }
 
+    private static string L(string key) => AppLanguage.Text(key);
+
+    private void ApplyLocalization()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        DirectMessagesHeaderText.Text = L("sidebar.directMessages");
+        EmptyContactsHint.Text = L("sidebar.emptyContacts");
+        AddFriendTitleText.Text = L("addFriend.title");
+        AddFriendSubtitleText.Text = L("addFriend.subtitle");
+        IncomingFriendRequestsTitleText.Text = L("addFriend.requests");
+        AddFriendSubmitButton.Content = L("common.add");
+        SendButton.Content = L("common.send");
+        CreateServerNowButton.Content = L("createServer.button");
+
+        SettingsPanelTitleText.Text = L("settings.title");
+        SettingsSearchInput.ToolTip = L("settings.search");
+        SettingsAccountTabText.Text = L("settings.account");
+        SettingsVoiceTabText.Text = L("settings.voice");
+        SettingsLanguageTabText.Text = L("settings.language");
+        SettingsPrivacyTabText.Text = L("settings.privacy");
+        SettingsActivityTabText.Text = L("settings.activity");
+        SettingsNotificationsTabText.Text = L("settings.notifications");
+        SettingsSignOutTabText.Text = L("settings.signout");
+        SettingsCustomizationTabText.Text = L("settings.customization");
+        SettingsCloseSidebarButton.Content = L("settings.close");
+
+        SettingsAccountTitleText.Text = L("settings.account");
+        SettingsAccountSubtitleText.Text = L("settings.account.subtitle");
+        SettingsVoiceTitleText.Text = L("settings.voice");
+        SettingsVoiceSubtitleText.Text = L("settings.voice.subtitle");
+        SettingsLanguageTitleText.Text = L("settings.language");
+        SettingsLanguageSubtitleText.Text = L("settings.language.subtitle");
+        SettingsLanguageCardTitleText.Text = L("settings.language.card.title").ToUpper(CultureInfo.CurrentCulture);
+        SettingsLanguageCardBodyText.Text = L("settings.language.card.body");
+        SettingsPrivacyTitleText.Text = L("settings.privacy");
+        SettingsPrivacySubtitleText.Text = L("settings.privacy.subtitle");
+        SettingsActivityTitleText.Text = L("settings.activity");
+        SettingsActivitySubtitleText.Text = L("settings.activity.subtitle");
+        SettingsNotificationsTitleText.Text = L("settings.notifications");
+        SettingsNotificationsSubtitleText.Text = L("settings.notifications.subtitle");
+        PrivacyContactPermissionsTitleText.Text = L("privacy.contactPermissions").ToUpper(CultureInfo.CurrentCulture);
+        PrivacyMessagesLabelText.Text = L("privacy.messages");
+        PrivacyCallsLabelText.Text = L("privacy.calls");
+        PrivacyFriendRequestsLabelText.Text = L("privacy.friendRequests");
+        PrivacyProfileVisibilityTitleText.Text = L("privacy.profileVisibility").ToUpper(CultureInfo.CurrentCulture);
+        PrivacyStatusLabelText.Text = L("privacy.status");
+        PrivacyAvatarLabelText.Text = L("privacy.avatar");
+        PrivacyPreviewFriendButton.Content = L("privacy.preview.friendButton");
+        PrivacyPreviewStrangerButton.Content = L("privacy.preview.strangerButton");
+        ActivityProfileTitleText.Text = L("activity.profile").ToUpper(CultureInfo.CurrentCulture);
+        ActivityProfileBodyText.Text = L("activity.profile.body");
+        ActivityGamesCheck.Content = L("activity.games");
+        ActivityCallsCheck.Content = L("activity.calls");
+        ActivityScreenShareCheck.Content = L("activity.screenShare.label");
+        ActivityVisibilityTitleText.Text = L("activity.visibility").ToUpper(CultureInfo.CurrentCulture);
+        ActivityFriendSearchInput.ToolTip = L("activity.searchFriends");
+        AutoDndTitleText.Text = L("activity.dnd.title").ToUpper(CultureInfo.CurrentCulture);
+        AutoDndBodyText.Text = L("activity.dnd.body");
+        NotificationsDesktopTitleText.Text = L("notifications.desktop.title").ToUpper(CultureInfo.CurrentCulture);
+        DesktopNotificationsCheck.Content = L("notifications.desktop");
+        TaskbarFlashCheck.Content = L("notifications.taskbarFlash");
+        FriendRequestNotificationsCheck.Content = L("notifications.friendRequests");
+        LocalizePrivacyCombo(PrivacyMessagesCombo);
+        LocalizePrivacyCombo(PrivacyCallsCombo);
+        LocalizePrivacyCombo(PrivacyFriendRequestsCombo);
+        LocalizePrivacyCombo(PrivacyStatusCombo);
+        LocalizePrivacyCombo(PrivacyAvatarCombo);
+        LocalizeActivityVisibilityCombo();
+        SettingsSignOutTitleText.Text = L("settings.signout");
+        SettingsSignOutSubtitleText.Text = L("settings.signout.subtitle");
+        SettingsCustomizationTitleText.Text = L("settings.customization");
+        SettingsCustomizationSubtitleText.Text = L("settings.customization.subtitle");
+        SettingsProfileSectionTitleText.Text = L("settings.profile").ToUpper(CultureInfo.CurrentCulture);
+        SettingsDisplayNameInput.ToolTip = L("settings.nickname");
+        SettingsChooseAvatarImageButton.Content = L("settings.image");
+        SettingsChooseAvatarVideoButton.Content = L("settings.video");
+        SettingsSaveProfileButton.Content = L("settings.saveProfile");
+        SettingsAvatarVideoHint.Text = L("settings.animatedAvatars");
+        SettingsAvatarZoomLabelText.Text = L("settings.avatar.zoom");
+        SettingsAvatarHorizontalLabelText.Text = L("settings.avatar.horizontal");
+        SettingsAvatarVerticalLabelText.Text = L("settings.avatar.vertical");
+        SettingsAvatarStartLabelText.Text = L("settings.avatar.start");
+        SettingsAvatarLengthLabelText.Text = L("settings.avatar.length");
+        SettingsScreenShareMiniPlayerTitleText.Text = L("settings.screenShareMiniPlayer").ToUpper(CultureInfo.CurrentCulture);
+        SettingsScreenShareMiniPlayerBodyText.Text = L("settings.screenShareMiniPlayer.body");
+        SettingsDiagnosticLoggingTitleText.Text = L("settings.diagnosticLogging").ToUpper(CultureInfo.CurrentCulture);
+        SettingsDiagnosticLoggingBodyText.Text = L("settings.diagnosticLogging.body");
+        SettingsVpsServerTitleText.Text = L("settings.vpsServer").ToUpper(CultureInfo.CurrentCulture);
+        SettingsServerAddressInput.ToolTip = "host:port";
+        SettingsServerAccessKeyInput.ToolTip = L("account.inviteCode");
+        SettingsLinkServerButton.Content = L("settings.link");
+        SettingsVpsHelpButton.Content = L("settings.vpsHelp");
+        SettingsSecurityTitleText.Text = L("settings.security").ToUpper(CultureInfo.CurrentCulture);
+        SettingsSecurityBodyText.Text = L("settings.security.body");
+        SettingsSecurityRefreshButton.Content = L("settings.refresh");
+        SettingsChangePasswordTitleText.Text = L("settings.changePassword");
+        SettingsCurrentPasswordInput.ToolTip = L("settings.currentPassword");
+        SettingsNewPasswordInput.ToolTip = L("settings.newPassword");
+        SettingsRepeatNewPasswordInput.ToolTip = L("settings.repeatNewPassword");
+        SettingsChangePasswordButton.Content = L("settings.changePassword");
+        SettingsSignOutAllDevicesButton.Content = L("settings.signOutAllDevices");
+        SettingsVoiceSectionTitleText.Text = L("settings.voice.section").ToUpper(CultureInfo.CurrentCulture);
+        SettingsVoiceInputLabelText.Text = L("settings.voice.input");
+        SettingsVoiceOutputLabelText.Text = L("settings.voice.output");
+        VoiceTestButton.Content = L("settings.voice.check");
+        if (string.Equals(VoiceTestStatusText.Text, "Speak to hear yourself.", StringComparison.Ordinal) ||
+            string.Equals(VoiceTestStatusText.Text, "Говорите, чтобы услышать себя.", StringComparison.Ordinal))
+        {
+            VoiceTestStatusText.Text = L("settings.voice.testHint");
+        }
+        SettingsNoiseSuppressionTitleText.Text = L("settings.voice.noiseSuppression");
+        SettingsNoiseSuppressionBodyText.Text = L("settings.voice.noiseSuppression.body");
+
+        ProfileStatusOnlineText.Text = L("profile.status.online");
+        ProfileStatusIdleText.Text = L("profile.status.idle");
+        ProfileStatusDndText.Text = L("profile.status.dnd");
+        ProfileStatusOfflineText.Text = L("profile.status.offline");
+        ProfileCustomStatusLabelText.Text = L("profile.customStatus");
+        ProfileCustomStatusApplyButton.Content = L("profile.set");
+        ProfileCopyUserIdButton.Content = L("profile.copyUserId");
+
+        MiniProfileWriteMessagePlaceholder.Text = L("miniProfile.writeMessage");
+        MiniProfileSelfText.Text = L("miniProfile.self");
+        UpdateProfileStatusVisuals();
+
+        RefreshLanguageSettingsUi();
+        RefreshCustomizationSettingsUi();
+    }
+
     private void InitializeSettingsTabs()
     {
         _settingsTabs["account"] = new SettingsTabInfo(
@@ -3507,6 +5958,22 @@ public partial class MainWindow : Window
             "voice",
             SettingsVoiceTabButton,
             "voice microphone headphones noise suppression audio soundboard push to talk ptt keybind");
+        _settingsTabs["language"] = new SettingsTabInfo(
+            "language",
+            SettingsLanguageTabButton,
+            "language ui interface locale culture russian english язык русский английский");
+        _settingsTabs["privacy"] = new SettingsTabInfo(
+            "privacy",
+            SettingsPrivacyTabButton,
+            "privacy permissions who can message call add friend status avatar preview requests");
+        _settingsTabs["activity"] = new SettingsTabInfo(
+            "activity",
+            SettingsActivityTabButton,
+            "activity status roblox music calls screen share custom do not disturb dnd schedule night study work game");
+        _settingsTabs["notifications"] = new SettingsTabInfo(
+            "notifications",
+            SettingsNotificationsTabButton,
+            "notifications per chat mentions muted all sounds popups");
         _settingsTabs["customization"] = new SettingsTabInfo(
             "customization",
             SettingsCustomizationTabButton,
@@ -3544,12 +6011,20 @@ public partial class MainWindow : Window
     private void ShowSettingsTab(string tab)
     {
         var isVoice = string.Equals(tab, "voice", StringComparison.OrdinalIgnoreCase);
+        var isLanguage = string.Equals(tab, "language", StringComparison.OrdinalIgnoreCase);
+        var isPrivacy = string.Equals(tab, "privacy", StringComparison.OrdinalIgnoreCase);
+        var isActivity = string.Equals(tab, "activity", StringComparison.OrdinalIgnoreCase);
+        var isNotifications = string.Equals(tab, "notifications", StringComparison.OrdinalIgnoreCase);
         var isData = string.Equals(tab, "data", StringComparison.OrdinalIgnoreCase);
         var isSignOut = string.Equals(tab, "signout", StringComparison.OrdinalIgnoreCase);
         var isCustomization = string.Equals(tab, "customization", StringComparison.OrdinalIgnoreCase);
-        var isAccount = !isVoice && !isData && !isSignOut && !isCustomization;
+        var isAccount = !isVoice && !isLanguage && !isPrivacy && !isActivity && !isNotifications && !isData && !isSignOut && !isCustomization;
         _currentSettingsTab = isAccount ? "account" :
             isVoice ? "voice" :
+            isLanguage ? "language" :
+            isPrivacy ? "privacy" :
+            isActivity ? "activity" :
+            isNotifications ? "notifications" :
             isData ? "data" :
             isCustomization ? "customization" :
             "signout";
@@ -3557,6 +6032,14 @@ public partial class MainWindow : Window
         SettingsAccountContent.Visibility = isAccount ? Visibility.Visible : Visibility.Collapsed;
         SettingsVoiceHeader.Visibility = isVoice ? Visibility.Visible : Visibility.Collapsed;
         SettingsVoiceContent.Visibility = isVoice ? Visibility.Visible : Visibility.Collapsed;
+        SettingsLanguageHeader.Visibility = isLanguage ? Visibility.Visible : Visibility.Collapsed;
+        SettingsLanguageContent.Visibility = isLanguage ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPrivacyHeader.Visibility = isPrivacy ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPrivacyContent.Visibility = isPrivacy ? Visibility.Visible : Visibility.Collapsed;
+        SettingsActivityHeader.Visibility = isActivity ? Visibility.Visible : Visibility.Collapsed;
+        SettingsActivityContent.Visibility = isActivity ? Visibility.Visible : Visibility.Collapsed;
+        SettingsNotificationsHeader.Visibility = isNotifications ? Visibility.Visible : Visibility.Collapsed;
+        SettingsNotificationsContent.Visibility = isNotifications ? Visibility.Visible : Visibility.Collapsed;
         SettingsDataHeader.Visibility = isData ? Visibility.Visible : Visibility.Collapsed;
         SettingsDataContent.Visibility = isData ? Visibility.Visible : Visibility.Collapsed;
         SettingsCustomizationHeader.Visibility = isCustomization ? Visibility.Visible : Visibility.Collapsed;
@@ -3565,6 +6048,10 @@ public partial class MainWindow : Window
         SettingsSignOutContent.Visibility = isSignOut ? Visibility.Visible : Visibility.Collapsed;
         SettingsAccountTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isAccount ? "#404249" : "#00000000"));
         SettingsVoiceTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isVoice ? "#404249" : "#00000000"));
+        SettingsLanguageTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isLanguage ? "#404249" : "#00000000"));
+        SettingsPrivacyTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isPrivacy ? "#404249" : "#00000000"));
+        SettingsActivityTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isActivity ? "#404249" : "#00000000"));
+        SettingsNotificationsTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isNotifications ? "#404249" : "#00000000"));
         SettingsDataTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isData ? "#404249" : "#00000000"));
         SettingsCustomizationTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isCustomization ? "#404249" : "#00000000"));
         SettingsSignOutTabButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(isSignOut ? "#404249" : "#00000000"));
@@ -3578,6 +6065,728 @@ public partial class MainWindow : Window
         {
             RefreshCustomizationSettingsUi();
         }
+
+        if (isLanguage)
+        {
+            RefreshLanguageSettingsUi();
+        }
+
+        if (isPrivacy)
+        {
+            RefreshPrivacySettingsUi();
+        }
+
+        if (isActivity)
+        {
+            RefreshActivitySettingsUi();
+        }
+
+        if (isNotifications)
+        {
+            RefreshNotificationSettingsUi();
+        }
+    }
+
+    private void RefreshLanguageSettingsUi()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        _isInitializingLanguageSettings = true;
+        try
+        {
+            var languageCode = AppLanguage.Normalize(_settings.UiLanguage);
+            PopulateLanguageCombo(languageCode);
+            foreach (var item in SettingsLanguageCombo.Items.OfType<ComboBoxItem>())
+            {
+                if (string.Equals(item.Tag?.ToString(), languageCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    SettingsLanguageCombo.SelectedItem = item;
+                    break;
+                }
+            }
+
+            SettingsLanguageStatusText.Text = string.Equals(languageCode, AppLanguage.SystemLanguageCode, StringComparison.OrdinalIgnoreCase)
+                ? L("settings.language.system")
+                : L("settings.language.saved");
+        }
+        finally
+        {
+            _isInitializingLanguageSettings = false;
+        }
+    }
+
+    private void PopulateLanguageCombo(string selectedCode)
+    {
+        var selectedItem = SettingsLanguageCombo.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), selectedCode, StringComparison.OrdinalIgnoreCase));
+        if (selectedItem is not null && SettingsLanguageCombo.Items.Count == AppLanguage.Supported.Count)
+        {
+            return;
+        }
+
+        SettingsLanguageCombo.Items.Clear();
+        foreach (var (code, displayName) in AppLanguage.Supported)
+        {
+            SettingsLanguageCombo.Items.Add(new ComboBoxItem
+            {
+                Tag = code,
+                Content = GetLanguageDisplayName(code, displayName)
+            });
+        }
+    }
+
+    private static string GetLanguageDisplayName(string code, string fallback)
+        => code switch
+        {
+            AppLanguage.SystemLanguageCode => "System default",
+            "ru" => "Русский",
+            "uk" => "Українська",
+            "es" => "Español",
+            "fr" => "Français",
+            "pt-BR" => "Português",
+            "tr" => "Türkçe",
+            "zh-CN" => "中文",
+            "ja" => "日本語",
+            "ko" => "한국어",
+            _ => fallback
+        };
+
+    private async void SettingsLanguageCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingLanguageSettings ||
+            SettingsLanguageCombo.SelectedItem is not ComboBoxItem item)
+        {
+            return;
+        }
+
+        var languageCode = AppLanguage.Normalize(item.Tag?.ToString());
+        _settings.UiLanguage = languageCode;
+        AppLanguage.Apply(languageCode);
+        ApplyLocalization();
+        SettingsLanguageStatusText.Text = L("settings.language.saved");
+
+        try
+        {
+            await AppSettingsStore.SaveAsync(_settings);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            AppLog.Write(ex, "Language setting could not be saved");
+            SettingsLanguageStatusText.Text = L("settings.language.saveFailed");
+        }
+    }
+
+    private void RefreshPrivacySettingsUi()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        _isInitializingModernSettings = true;
+        try
+        {
+            SelectComboByTag(PrivacyMessagesCombo, _settings.PrivacyMessages);
+            SelectComboByTag(PrivacyCallsCombo, _settings.PrivacyCalls);
+            SelectComboByTag(PrivacyFriendRequestsCombo, _settings.PrivacyFriendRequests);
+            SelectComboByTag(PrivacyStatusCombo, _settings.PrivacyStatus);
+            SelectComboByTag(PrivacyAvatarCombo, _settings.PrivacyAvatar);
+            RefreshPrivacyPreview(isFriend: true);
+        }
+        finally
+        {
+            _isInitializingModernSettings = false;
+        }
+    }
+
+    private static void LocalizePrivacyCombo(System.Windows.Controls.ComboBox combo)
+    {
+        foreach (var item in combo.Items.OfType<ComboBoxItem>())
+        {
+            item.Content = item.Tag?.ToString() switch
+            {
+                "Everyone" => L("privacy.everyone"),
+                "Friends" => L("privacy.friendsOnly"),
+                _ => L("privacy.noOne")
+            };
+        }
+    }
+
+    private void LocalizeActivityVisibilityCombo()
+    {
+        foreach (var item in ActivityVisibilityCombo.Items.OfType<ComboBoxItem>())
+        {
+            item.Content = item.Tag?.ToString() switch
+            {
+                "Everyone" => L("activity.visibility.everyone"),
+                "Selected" => L("activity.visibility.selected"),
+                _ => L("activity.visibility.friends")
+            };
+        }
+    }
+
+    private void RefreshActivitySettingsUi()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        _isInitializingModernSettings = true;
+        try
+        {
+            ActivityEnabledCheck.IsChecked = _settings.ActivityEnabled;
+            ActivityGamesCheck.IsChecked = _settings.ActivityShowRoblox;
+            ActivityCallsCheck.IsChecked = _settings.ActivityShowCalls;
+            ActivityScreenShareCheck.IsChecked = _settings.ActivityShowScreenShare;
+            SelectComboByTag(ActivityVisibilityCombo, _settings.ActivityVisibility);
+            ActivitySelectedFriendsPanel.Visibility = string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            RefreshActivityAudienceFriends();
+            AutoDndEnabledCheck.IsChecked = _settings.AutoDndEnabled;
+            SelectComboByTag(AutoDndPresetCombo, _settings.AutoDndPreset);
+            AutoDndStartInput.Text = _settings.AutoDndStart;
+            AutoDndEndInput.Text = _settings.AutoDndEnd;
+            var activity = BuildActivityText();
+            ActivityPreviewText.Text = string.Format(
+                CultureInfo.CurrentCulture,
+                L("activity.preview"),
+                string.IsNullOrWhiteSpace(activity) ? L("activity.none") : activity);
+            AutoDndStatusText.Text = IsAutoDndActiveNow()
+                ? L("activity.dnd.active")
+                : L("activity.dnd.inactive");
+        }
+        finally
+        {
+            _isInitializingModernSettings = false;
+        }
+    }
+
+    private void RefreshNotificationSettingsUi()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        _isInitializingModernSettings = true;
+        try
+        {
+            DesktopNotificationsCheck.IsChecked = _settings.DesktopNotificationsEnabled;
+            TaskbarFlashCheck.IsChecked = _settings.TaskbarFlashEnabled;
+            FriendRequestNotificationsCheck.IsChecked = _settings.FriendRequestNotificationsEnabled;
+        }
+        finally
+        {
+            _isInitializingModernSettings = false;
+        }
+    }
+
+    private static void SelectComboByTag(System.Windows.Controls.ComboBox combo, string tag)
+    {
+        foreach (var item in combo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    private async Task SaveModernSettingsAsync()
+    {
+        ApplyContactLocalPreferences();
+        SortContactsForDisplay();
+        await AppSettingsStore.SaveAsync(_settings);
+        _ = PublishPresenceAsync();
+    }
+
+    private async void PrivacyCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.PrivacyMessages = GetComboTag(PrivacyMessagesCombo, _settings.PrivacyMessages);
+        _settings.PrivacyCalls = GetComboTag(PrivacyCallsCombo, _settings.PrivacyCalls);
+        _settings.PrivacyFriendRequests = GetComboTag(PrivacyFriendRequestsCombo, _settings.PrivacyFriendRequests);
+        _settings.PrivacyStatus = GetComboTag(PrivacyStatusCombo, _settings.PrivacyStatus);
+        _settings.PrivacyAvatar = GetComboTag(PrivacyAvatarCombo, _settings.PrivacyAvatar);
+        await SaveModernSettingsAsync();
+    }
+
+    private async void ActivityCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.ActivityEnabled = ActivityEnabledCheck.IsChecked == true;
+        _settings.ActivityShowRoblox = ActivityGamesCheck.IsChecked == true;
+        _settings.ActivityShowCalls = ActivityCallsCheck.IsChecked == true;
+        _settings.ActivityShowScreenShare = ActivityScreenShareCheck.IsChecked == true;
+        var activity = BuildActivityText();
+        ActivityPreviewText.Text = string.Format(
+            CultureInfo.CurrentCulture,
+            L("activity.preview"),
+            string.IsNullOrWhiteSpace(activity) ? L("activity.none") : activity);
+        await SaveModernSettingsAsync();
+    }
+
+    private async void ActivityVisibilityCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.ActivityVisibility = GetComboTag(ActivityVisibilityCombo, _settings.ActivityVisibility);
+        ActivitySelectedFriendsPanel.Visibility = string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RefreshActivityAudienceFriends();
+        await SaveModernSettingsAsync();
+        await SaveAccountPreferencesAsync();
+    }
+
+    private void ActivityFriendSearchInput_OnTextChanged(object sender, TextChangedEventArgs e)
+        => RefreshActivityAudienceFriends();
+
+    private async void ActivityAudienceFriendCheck_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingModernSettings ||
+            (sender as FrameworkElement)?.DataContext is not ActivityAudienceFriendViewModel friend)
+        {
+            return;
+        }
+
+        _settings.ActivitySelectedFriendIds.RemoveAll(id => string.Equals(id, friend.UserId, StringComparison.Ordinal));
+        if (friend.IsSelected)
+        {
+            _settings.ActivitySelectedFriendIds.Add(friend.UserId);
+        }
+
+        await SaveModernSettingsAsync();
+        await SaveAccountPreferencesAsync();
+    }
+
+    private async void NotificationSettingsCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.DesktopNotificationsEnabled = DesktopNotificationsCheck.IsChecked == true;
+        _settings.TaskbarFlashEnabled = TaskbarFlashCheck.IsChecked == true;
+        _settings.FriendRequestNotificationsEnabled = FriendRequestNotificationsCheck.IsChecked == true;
+        await SaveModernSettingsAsync();
+    }
+
+    private async void AutoDndCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.AutoDndEnabled = AutoDndEnabledCheck.IsChecked == true;
+        RefreshActivitySettingsUi();
+        await SaveModernSettingsAsync();
+    }
+
+    private async void AutoDndPresetCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.AutoDndPreset = GetComboTag(AutoDndPresetCombo, _settings.AutoDndPreset);
+        ApplyAutoDndPreset(_settings.AutoDndPreset);
+        RefreshActivitySettingsUi();
+        await SaveModernSettingsAsync();
+    }
+
+    private async void AutoDndTimeInput_OnLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.AutoDndPreset = "Custom";
+        _settings.AutoDndStart = NormalizeSettingsTime(AutoDndStartInput.Text, _settings.AutoDndStart);
+        _settings.AutoDndEnd = NormalizeSettingsTime(AutoDndEndInput.Text, _settings.AutoDndEnd);
+        RefreshActivitySettingsUi();
+        await SaveModernSettingsAsync();
+    }
+
+    private async void NotificationRuleModeButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button ||
+            button.DataContext is not NotificationRuleViewModel rule)
+        {
+            return;
+        }
+
+        var mode = button.Tag?.ToString() ?? "All";
+        rule.Mode = mode;
+        _settings.ChatNotificationRules[rule.ContactId] = mode;
+        ApplyContactLocalPreferences();
+        await SaveModernSettingsAsync();
+        RefreshNotificationSettingsUi();
+    }
+
+    private async void PinContactMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as MenuItem)?.DataContext is not ContactViewModel contact)
+        {
+            return;
+        }
+
+        contact.IsPinned = !contact.IsPinned;
+        _settings.PinnedContactIds.RemoveAll(x => string.Equals(x, contact.UserId, StringComparison.Ordinal));
+        if (contact.IsPinned)
+        {
+            _settings.PinnedContactIds.Insert(0, contact.UserId);
+        }
+
+        await SaveModernSettingsAsync();
+    }
+
+    private async void ContactNotificationModeMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menuItem ||
+            menuItem.DataContext is not ContactViewModel contact)
+        {
+            return;
+        }
+
+        var mode = menuItem.Tag?.ToString() ?? "All";
+        _settings.ChatNotificationRules[contact.UserId] = mode;
+        contact.NotificationMode = mode;
+        await SaveModernSettingsAsync();
+        RefreshNotificationSettingsUi();
+    }
+
+    private void PrivacyPreviewFriendButton_OnClick(object sender, RoutedEventArgs e)
+        => RefreshPrivacyPreview(isFriend: true);
+
+    private void PrivacyPreviewStrangerButton_OnClick(object sender, RoutedEventArgs e)
+        => RefreshPrivacyPreview(isFriend: false);
+
+    private static string GetComboTag(System.Windows.Controls.ComboBox combo, string fallback)
+        => combo.SelectedItem is ComboBoxItem item && item.Tag is not null
+            ? item.Tag.ToString() ?? fallback
+            : fallback;
+
+    private static string NormalizeSettingsTime(string value, string fallback)
+        => TimeSpan.TryParseExact(value.Trim(), "hh\\:mm", CultureInfo.InvariantCulture, out var time)
+            ? time.ToString("hh\\:mm", CultureInfo.InvariantCulture)
+            : fallback;
+
+    private void ApplyAutoDndPreset(string preset)
+    {
+        switch (preset)
+        {
+            case "Study":
+                _settings.AutoDndStart = "18:00";
+                _settings.AutoDndEnd = "21:00";
+                break;
+            case "Work":
+                _settings.AutoDndStart = "09:00";
+                _settings.AutoDndEnd = "18:00";
+                break;
+            case "Game":
+                _settings.AutoDndStart = "20:00";
+                _settings.AutoDndEnd = "23:00";
+                break;
+            case "Night":
+                _settings.AutoDndStart = "23:00";
+                _settings.AutoDndEnd = "09:00";
+                break;
+        }
+    }
+
+    private void RefreshPrivacyPreview(bool isFriend)
+    {
+        if (!IsInitialized || _profile is null)
+        {
+            return;
+        }
+
+        var canSeeAvatar = AllowsPrivacyScope(_settings.PrivacyAvatar, isFriend);
+        var canSeeStatus = AllowsPrivacyScope(_settings.PrivacyStatus, isFriend);
+        var avatar = canSeeAvatar ? AvatarImageLoader.Load(_selectedAvatarPath) : null;
+
+        PrivacyPreviewModeText.Text = isFriend ? L("privacy.preview.friend") : L("privacy.preview.stranger");
+        PrivacyPreviewNameText.Text = _profile.DisplayName;
+        PrivacyPreviewIdText.Text = _profile.UserId.Length <= 8 ? _profile.UserId : _profile.UserId[..8];
+        PrivacyPreviewAvatarFallback.Text = GetInitials(_profile.DisplayName);
+        PrivacyPreviewAvatarImageBrush.ImageSource = avatar;
+        PrivacyPreviewAvatarFallback.Visibility = canSeeAvatar && avatar is null ? Visibility.Visible : Visibility.Collapsed;
+        PrivacyPreviewAvatarHidden.Visibility = canSeeAvatar ? Visibility.Collapsed : Visibility.Visible;
+        PrivacyPreviewStatusText.Text = canSeeStatus ? GetCurrentStatusText() : L("privacy.hidden");
+        PrivacyPreviewStatusText.Foreground = canSeeStatus
+            ? new SolidColorBrush(GetPrivacyPreviewStatusColor(GetCurrentStatus()))
+            : (System.Windows.Media.Brush)FindResource("MutedBrush");
+
+        PrivacyPreviewAccessText.Text = string.Format(
+            CultureInfo.CurrentCulture,
+            L("privacy.preview.access"),
+            PrivacyAccessLabel(AllowsPrivacyScope(_settings.PrivacyMessages, isFriend)),
+            PrivacyAccessLabel(AllowsPrivacyScope(_settings.PrivacyCalls, isFriend)),
+            PrivacyAccessLabel(AllowsPrivacyScope(_settings.PrivacyFriendRequests, isFriend)));
+    }
+
+    private static bool AllowsPrivacyScope(string scope, bool isFriend)
+        => scope switch
+        {
+            "Everyone" => true,
+            "Friends" => isFriend,
+            _ => false
+        };
+
+    private static string PrivacyAccessLabel(bool allowed)
+        => allowed ? L("privacy.allowed") : L("privacy.blocked");
+
+    private static System.Windows.Media.Color GetPrivacyPreviewStatusColor(UserPresenceStatus status)
+        => status switch
+        {
+            UserPresenceStatus.Online => System.Windows.Media.Color.FromRgb(0x23, 0xA5, 0x5A),
+            UserPresenceStatus.Idle => System.Windows.Media.Color.FromRgb(0xF0, 0xB2, 0x32),
+            UserPresenceStatus.DoNotDisturb => System.Windows.Media.Color.FromRgb(0xF2, 0x3F, 0x43),
+            _ => System.Windows.Media.Color.FromRgb(0x80, 0x85, 0x8F)
+        };
+
+    private void RefreshActivityAudienceFriends()
+    {
+        if (!IsInitialized || ActivityAudienceFriendsList is null)
+        {
+            return;
+        }
+
+        var selected = _settings.ActivitySelectedFriendIds.ToHashSet(StringComparer.Ordinal);
+        var query = ActivityFriendSearchInput?.Text?.Trim() ?? "";
+        _activityAudienceFriends.Clear();
+        foreach (var contact in _contacts
+                     .Where(contact => !contact.IsGroup &&
+                                       (string.IsNullOrWhiteSpace(query) ||
+                                        contact.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                                        contact.UserId.Contains(query, StringComparison.OrdinalIgnoreCase)))
+                     .OrderBy(contact => contact.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            _activityAudienceFriends.Add(new ActivityAudienceFriendViewModel
+            {
+                UserId = contact.UserId,
+                DisplayName = contact.DisplayName,
+                Initials = contact.Initials,
+                IsSelected = selected.Contains(contact.UserId)
+            });
+        }
+    }
+
+    private async Task LoadAccountPreferencesAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.AccountSessionToken) ||
+            string.IsNullOrWhiteSpace(_settings.AccountApiUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var result = await new AccountClient(_settings.AccountApiUrl)
+                .GetPreferencesAsync(_settings.AccountSessionToken, timeout.Token);
+            if (!result.Accepted || result.Preferences is null)
+            {
+                AppLog.Write($"Account preferences load rejected: {result.Message}");
+                return;
+            }
+
+            _settings.ActivityVisibility = result.Preferences.ActivityVisibility;
+            _settings.ActivitySelectedFriendIds = result.Preferences.ActivitySelectedFriendIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .Take(500)
+                .ToList();
+            await AppSettingsStore.SaveAsync(_settings);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, "Account preferences load failed");
+        }
+    }
+
+    private async Task SaveAccountPreferencesAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.AccountSessionToken) ||
+            string.IsNullOrWhiteSpace(_settings.AccountApiUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var request = new AccountPreferencesUpdateRequest(
+                _settings.ActivityVisibility,
+                _settings.ActivitySelectedFriendIds);
+            var result = await new AccountClient(_settings.AccountApiUrl)
+                .SavePreferencesAsync(_settings.AccountSessionToken, request, timeout.Token);
+            if (!result.Accepted)
+            {
+                AppLog.Write($"Account preferences save rejected: {result.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, "Account preferences save failed");
+        }
+    }
+
+    private bool IsKnownDirectContact(string userId)
+        => _contacts.Any(x => !x.IsGroup && string.Equals(x.UserId, userId, StringComparison.Ordinal));
+
+    private bool AllowsPrivacyForUser(string scope, string userId)
+    {
+        var isFriend = IsKnownDirectContact(userId);
+        return scope switch
+        {
+            "Everyone" => true,
+            "Friends" => isFriend,
+            _ => false
+        };
+    }
+
+    private bool IsAutoDndActiveNow()
+    {
+        if (!_settings.AutoDndEnabled)
+        {
+            return false;
+        }
+
+        if (!TimeSpan.TryParseExact(_settings.AutoDndStart, "hh\\:mm", CultureInfo.InvariantCulture, out var start) ||
+            !TimeSpan.TryParseExact(_settings.AutoDndEnd, "hh\\:mm", CultureInfo.InvariantCulture, out var end))
+        {
+            return false;
+        }
+
+        var now = DateTime.Now.TimeOfDay;
+        return start <= end
+            ? now >= start && now < end
+            : now >= start || now < end;
+    }
+
+    private string GetNotificationModeForContact(string userId)
+        => _settings.ChatNotificationRules.TryGetValue(userId, out var mode) && !string.IsNullOrWhiteSpace(mode)
+            ? mode
+            : _settings.DefaultNotificationMode;
+
+    private bool ShouldSuppressMessageNotification(ChatPacket packet)
+    {
+        if (IsAutoDndActiveNow())
+        {
+            return true;
+        }
+
+        var mode = GetNotificationModeForContact(GetNotificationScopeId(packet));
+        if (string.Equals(mode, "Muted", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return string.Equals(mode, "Mentions", StringComparison.OrdinalIgnoreCase) &&
+               !PacketMentionsCurrentUser(packet);
+    }
+
+    private bool PacketMentionsCurrentUser(ChatPacket packet)
+    {
+        if (_profile is null)
+        {
+            return false;
+        }
+
+        return packet.Body.Contains(_profile.DisplayName, StringComparison.OrdinalIgnoreCase) ||
+               packet.Body.Contains(_profile.UserId, StringComparison.OrdinalIgnoreCase) ||
+               packet.Body.Contains("@everyone", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetNotificationScopeId(ChatPacket packet)
+    {
+        if (packet.Intent == GroupMessageIntent &&
+            TryGetGroupPayload(packet, out var groupPayload) &&
+            groupPayload is not null &&
+            !string.IsNullOrWhiteSpace(groupPayload.GroupId))
+        {
+            return groupPayload.GroupId;
+        }
+
+        return packet.FromUserId;
+    }
+
+    private void ApplyContactLocalPreferences()
+    {
+        foreach (var contact in _contacts)
+        {
+            ApplyContactLocalPreferences(contact);
+        }
+    }
+
+    private void ApplyContactLocalPreferences(ContactViewModel contact)
+    {
+        contact.IsPinned = _settings.PinnedContactIds.Any(x => string.Equals(x, contact.UserId, StringComparison.Ordinal));
+        contact.NotificationMode = GetNotificationModeForContact(contact.UserId);
+        if (_settings.ContactLastActivityTicks.TryGetValue(contact.UserId, out var ticks) && ticks > 0)
+        {
+            contact.LastActivityAtUtc = new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
+    }
+
+    private void TouchContactActivity(ContactViewModel? contact)
+    {
+        if (contact is null || IsOwnContact(contact))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        contact.LastActivityAtUtc = now;
+        _settings.ContactLastActivityTicks[contact.UserId] = now.Ticks;
+        SortContactsForDisplay();
+        _ = AppSettingsStore.SaveAsync(_settings);
+    }
+
+    private void SortContactsForDisplay()
+    {
+        var ordered = _contacts
+            .OrderByDescending(x => x.IsPinned)
+            .ThenByDescending(x => x.LastActivityAtUtc)
+            .ThenBy(x => x.IsServer ? 1 : 0)
+            .ThenBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var currentIndex = _contacts.IndexOf(ordered[i]);
+            if (currentIndex >= 0 && currentIndex != i)
+            {
+                _contacts.Move(currentIndex, i);
+            }
+        }
+
+        EmptyContactsHint.Visibility = _contacts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateContactSectionHeaders();
     }
 
     private void RefreshCustomizationSettingsUi()
@@ -3594,8 +6803,8 @@ public partial class MainWindow : Window
         RefreshWallpaperRow("ContactsSidebar", CustomizationContactsSidebarModeCombo, CustomizationContactsSidebarPathText);
         RefreshWallpaperRow("Settings", CustomizationSettingsModeCombo, CustomizationSettingsPathText);
         CustomizationSoundsEnabledCheck.IsChecked = _settings.NotificationSoundsEnabled;
-        CustomizationCallSoundPathText.Text = FormatLocalFileLabel(_settings.IncomingCallSoundPath, "System sound");
-        CustomizationMessageSoundPathText.Text = FormatLocalFileLabel(_settings.IncomingMessageSoundPath, "System sound");
+        CustomizationCallSoundPathText.Text = FormatLocalFileLabel(_settings.IncomingCallSoundPath, L("common.systemSound"));
+        CustomizationMessageSoundPathText.Text = FormatLocalFileLabel(_settings.IncomingMessageSoundPath, L("common.systemSound"));
         _isInitializingCustomizationSettings = false;
     }
 
@@ -3605,7 +6814,7 @@ public partial class MainWindow : Window
             string.IsNullOrWhiteSpace(wallpaper.Path) ||
             !File.Exists(wallpaper.Path))
         {
-            pathText.Text = "Default background";
+            pathText.Text = L("common.defaultBackground");
             SelectComboTag(modeCombo, "Fill");
             return;
         }
@@ -3907,9 +7116,46 @@ public partial class MainWindow : Window
             return;
         }
 
-        ApplyWallpaper("ContactsSidebar", SidebarPanel, (System.Windows.Media.Brush)FindResource("SidebarBrush"));
-        var chatSection = _selectedContact?.IsGroup == true ? "GroupChats" : "DirectChats";
+        var sidebarSection = "ContactsSidebar";
+        if (!string.IsNullOrWhiteSpace(_activeSidebarWallpaperSection) &&
+            !string.Equals(_activeSidebarWallpaperSection, sidebarSection, StringComparison.OrdinalIgnoreCase))
+        {
+            RemoveVideoWallpaper(_activeSidebarWallpaperSection);
+        }
+
+        _activeSidebarWallpaperSection = sidebarSection;
+        ApplyWallpaper(sidebarSection, SidebarPanel, (System.Windows.Media.Brush)FindResource("SidebarBrush"));
+        var chatSection = _selectedContact?.IsGroup == true
+            ? "GroupChats"
+            : "DirectChats";
+        if (!string.IsNullOrWhiteSpace(_activeConversationWallpaperSection) &&
+            !string.Equals(_activeConversationWallpaperSection, chatSection, StringComparison.OrdinalIgnoreCase))
+        {
+            RemoveVideoWallpaper(_activeConversationWallpaperSection);
+        }
+
+        _activeConversationWallpaperSection = chatSection;
         ApplyWallpaper(chatSection, ConversationPanel, (System.Windows.Media.Brush)FindResource("PanelBrush"));
+
+        var serverSection = _selectedContact?.IsServer == true
+            ? GetServerWallpaperSectionId(_selectedContact)
+            : "";
+        if (!string.IsNullOrWhiteSpace(_activeServerWallpaperSection) &&
+            !string.Equals(_activeServerWallpaperSection, serverSection, StringComparison.OrdinalIgnoreCase))
+        {
+            RemoveVideoWallpaper(_activeServerWallpaperSection);
+        }
+
+        _activeServerWallpaperSection = serverSection;
+        if (!string.IsNullOrWhiteSpace(serverSection))
+        {
+            ApplyWallpaper(serverSection, ServerChannelsPanel, (System.Windows.Media.Brush)FindResource("SidebarBrush"));
+        }
+        else
+        {
+            ServerChannelsPanel.Background = (System.Windows.Media.Brush)FindResource("SidebarBrush");
+        }
+
         ApplyWallpaper("AddFriend", AddFriendPanel, new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#2b2d31")));
         ApplyWallpaper("Settings", SettingsOverlayFrame, new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#2b2d31")));
     }
@@ -4137,11 +7383,11 @@ public partial class MainWindow : Window
         SettingsDeviceSessionsList.ItemsSource = _accountDeviceSessions;
         _accountDeviceSessions.Clear();
         SettingsSecurityStatusText.Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#b5bac1"));
-        SettingsSecurityStatusText.Text = "Loading devices...";
+        SettingsSecurityStatusText.Text = L("settings.security.loadingDevices");
 
         if (string.IsNullOrWhiteSpace(_settings.AccountSessionToken))
         {
-            SettingsSecurityStatusText.Text = "Sign in to view active devices.";
+            SettingsSecurityStatusText.Text = L("settings.security.signInToViewDevices");
             return;
         }
 
@@ -4157,20 +7403,43 @@ public partial class MainWindow : Window
                 return;
             }
 
-            foreach (var session in result.Sessions ?? [])
+            foreach (var session in DeduplicateDeviceSessions(result.Sessions ?? []))
             {
                 _accountDeviceSessions.Add(new AccountDeviceSessionViewModel(session));
             }
 
             SettingsSecurityStatusText.Text = _accountDeviceSessions.Count == 0
-                ? "No device sessions were returned by the server."
-                : $"{_accountDeviceSessions.Count} device session(s).";
+                ? L("settings.device.none")
+                : string.Format(CultureInfo.CurrentCulture, L("settings.device.count"), _accountDeviceSessions.Count);
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
         {
             SettingsSecurityStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsSecurityStatusText.Text = $"Could not load devices: {ex.Message}";
+            SettingsSecurityStatusText.Text = string.Format(CultureInfo.CurrentCulture, L("settings.security.loadDevicesFailed"), ex.Message);
         }
+    }
+
+    private static IReadOnlyList<AccountDeviceSession> DeduplicateDeviceSessions(IReadOnlyList<AccountDeviceSession> sessions)
+        => sessions
+            .GroupBy(session => NormalizeDeviceSessionName(session.DeviceName), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(session => session.IsCurrent)
+                .ThenByDescending(session => session.IsActive)
+                .ThenByDescending(session => session.LastSeenAtUtc)
+                .First())
+            .OrderByDescending(session => session.IsCurrent)
+            .ThenByDescending(session => session.IsActive)
+            .ThenByDescending(session => session.LastSeenAtUtc)
+            .ToArray();
+
+    private static string NormalizeDeviceSessionName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "fluxchat-device";
+        }
+
+        return value.Trim();
     }
 
     private async void SettingsDeviceKickButton_OnClick(object sender, RoutedEventArgs e)
@@ -4182,13 +7451,13 @@ public partial class MainWindow : Window
         }
 
         var message = session.IsCurrent
-            ? "Sign out this device now?"
-            : $"Sign out {session.DeviceName}?";
+            ? L("settings.security.signOutThisDeviceConfirm")
+            : string.Format(CultureInfo.CurrentCulture, L("settings.security.signOutDeviceConfirm"), session.DeviceName);
         if (!await ShowAppConfirmDialogAsync(
-                "Sign out device",
+                L("settings.security.signOutDeviceTitle"),
                 message,
-                "Sign out",
-                "Cancel",
+                L("settings.security.signOutAction"),
+                L("settings.security.cancelAction"),
                 danger: session.IsCurrent))
         {
             return;
@@ -4219,7 +7488,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException or IOException or System.ComponentModel.Win32Exception)
         {
             SettingsSecurityStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsSecurityStatusText.Text = $"Could not sign out device: {ex.Message}";
+            SettingsSecurityStatusText.Text = string.Format(CultureInfo.CurrentCulture, L("settings.security.signOutDeviceFailed"), ex.Message);
         }
     }
 
@@ -4227,15 +7496,15 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(_settings.AccountSessionToken))
         {
-            SettingsSecurityStatusText.Text = "No active account session.";
+            SettingsSecurityStatusText.Text = L("settings.security.noActiveSession");
             return;
         }
 
         if (!await ShowAppConfirmDialogAsync(
-                "Sign out everywhere",
-                "Sign out this account on all devices?",
-                "Sign out all",
-                "Cancel",
+                L("settings.security.signOutEverywhereTitle"),
+                L("settings.security.signOutEverywhereConfirm"),
+                L("settings.security.signOutAllAction"),
+                L("settings.security.cancelAction"),
                 danger: true))
         {
             return;
@@ -4261,7 +7530,7 @@ public partial class MainWindow : Window
         {
             SettingsSignOutAllDevicesButton.IsEnabled = true;
             SettingsSecurityStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsSecurityStatusText.Text = $"Could not sign out devices: {ex.Message}";
+            SettingsSecurityStatusText.Text = string.Format(CultureInfo.CurrentCulture, L("settings.security.signOutDevicesFailed"), ex.Message);
         }
     }
 
@@ -4273,34 +7542,34 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_settings.AccountSessionToken))
         {
             SettingsPasswordStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsPasswordStatusText.Text = "Sign in before changing password.";
+            SettingsPasswordStatusText.Text = L("settings.changePassword.signInFirst");
             return;
         }
 
         if (string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword))
         {
             SettingsPasswordStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsPasswordStatusText.Text = "Enter current and new password.";
+            SettingsPasswordStatusText.Text = L("settings.changePassword.enterPasswords");
             return;
         }
 
         if (newPassword.Length < 10)
         {
             SettingsPasswordStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsPasswordStatusText.Text = "New password must be at least 10 characters.";
+            SettingsPasswordStatusText.Text = L("settings.changePassword.tooShort");
             return;
         }
 
         if (!string.Equals(newPassword, repeatPassword, StringComparison.Ordinal))
         {
             SettingsPasswordStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsPasswordStatusText.Text = "New passwords do not match.";
+            SettingsPasswordStatusText.Text = L("settings.changePassword.mismatch");
             return;
         }
 
         SettingsChangePasswordButton.IsEnabled = false;
         SettingsPasswordStatusText.Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#b5bac1"));
-        SettingsPasswordStatusText.Text = "Updating password...";
+        SettingsPasswordStatusText.Text = L("settings.changePassword.updating");
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -4324,7 +7593,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException or IOException)
         {
             SettingsPasswordStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
-            SettingsPasswordStatusText.Text = $"Could not change password: {ex.Message}";
+            SettingsPasswordStatusText.Text = string.Format(CultureInfo.CurrentCulture, L("settings.changePassword.failed"), ex.Message);
         }
         finally
         {
@@ -5432,7 +8701,7 @@ public partial class MainWindow : Window
         }
 
         _pendingAvatarVideoStartSeconds = AvatarEditorVideoStartSlider.Value;
-        _pendingAvatarVideoDurationSeconds = Math.Min(10, Math.Max(1, AvatarEditorVideoDurationSlider.Value));
+        _pendingAvatarVideoDurationSeconds = Math.Min(_avatarEditorMaxVideoDurationSeconds, Math.Max(1, AvatarEditorVideoDurationSlider.Value));
         RestartEditorVideo();
     }
 
@@ -5470,10 +8739,10 @@ public partial class MainWindow : Window
         _pendingAvatarOffsetX = 0;
         _pendingAvatarOffsetY = 0;
         _pendingAvatarVideoStartSeconds = 0;
-        _pendingAvatarVideoDurationSeconds = 10;
+        _pendingAvatarVideoDurationSeconds = _avatarEditorMaxVideoDurationSeconds;
         AvatarEditorZoomSlider.Value = 1;
         AvatarEditorVideoStartSlider.Value = 0;
-        AvatarEditorVideoDurationSlider.Value = Math.Min(10, AvatarEditorVideoDurationSlider.Maximum);
+        AvatarEditorVideoDurationSlider.Value = Math.Min(_avatarEditorMaxVideoDurationSeconds, AvatarEditorVideoDurationSlider.Maximum);
         ApplyAvatarEditorTransform();
         RestartEditorVideo();
     }
@@ -5488,6 +8757,22 @@ public partial class MainWindow : Window
 
     private async void AvatarEditorApplyButton_OnClick(object sender, RoutedEventArgs e)
     {
+        if (_avatarEditorTarget == AvatarEditorTarget.ServerProfile)
+        {
+            var previousServerAvatarPath = _serverProfileAvatarPath;
+            _serverProfileAvatarKind = _pendingAvatarKind;
+            _serverProfileAvatarPath = _pendingAvatarPath;
+            _serverProfileAvatarVideoStartSeconds = _pendingAvatarVideoStartSeconds;
+            _serverProfileAvatarVideoDurationSeconds = Math.Min(5, Math.Max(1, _pendingAvatarVideoDurationSeconds));
+            AvatarEditorVideo.Stop();
+            AvatarEditorOverlay.Visibility = Visibility.Collapsed;
+            RefreshServerProfileAvatarPreview();
+            DeleteAvatarFileIfOwned(previousServerAvatarPath, _serverProfileAvatarPath);
+            _pendingAvatarPath = "";
+            ServerRolesStatusText.Text = "Video avatar segment selected. Save server profile to apply it.";
+            return;
+        }
+
         var previousAvatarPath = _selectedAvatarPath;
         _selectedAvatarKind = _pendingAvatarKind;
         _selectedAvatarPath = _pendingAvatarPath;
@@ -5649,6 +8934,14 @@ public partial class MainWindow : Window
                     var storedContact = _contacts.FirstOrDefault(x => string.Equals(x.UserId, contact.UserId, StringComparison.Ordinal)) ?? contact;
                     await _history.SaveContactAsync(storedContact);
                     _ = DownloadServerAvatarForContactAsync(storedContact);
+                    if (storedContact.IsServer && !string.IsNullOrWhiteSpace(snapshot.ServerBackgroundPath))
+                    {
+                        _ = DownloadServerBackgroundForContactAsync(storedContact, snapshot.ServerBackgroundPath);
+                    }
+                    else if (storedContact.IsServer)
+                    {
+                        RemoveSyncedServerBackground(storedContact);
+                    }
                 }
             }
             finally
@@ -5678,7 +8971,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await _serverHistory.UpsertContactAsync(CreateSyncedContactSnapshot(contact), _stop.Token);
+            await _serverHistory.UpsertContactAsync(await CreateSyncedContactSnapshotAsync(contact), _stop.Token);
         }
         catch (Exception ex) when (!_stop.IsCancellationRequested && ex is HttpRequestException or IOException or TaskCanceledException or InvalidOperationException)
         {
@@ -5703,13 +8996,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private AccountSyncedContact CreateSyncedContactSnapshot(ContactViewModel contact)
-        => new(
+    private async Task<AccountSyncedContact> CreateSyncedContactSnapshotAsync(ContactViewModel contact)
+    {
+        var syncedAvatarPath = contact.IsServer
+            ? await PrepareSyncedMediaRefAsync(contact.AvatarPath, contact.AvatarKind == "video" ? "server-avatar-video" : "server-avatar")
+            : "";
+        var serverBackgroundPath = "";
+        if (contact.IsServer &&
+            _settings.SectionWallpapers.TryGetValue(GetServerWallpaperSectionId(contact), out var wallpaper) &&
+            !string.IsNullOrWhiteSpace(wallpaper.Path))
+        {
+            serverBackgroundPath = await PrepareSyncedMediaRefAsync(wallpaper.Path, IsVideoFile(wallpaper.Path) ? "server-background-video" : "server-background");
+        }
+
+        return new AccountSyncedContact(
             contact.UserId,
             contact.DisplayName,
             GetRelayServer(contact),
             contact.AvatarKind,
-            "",
+            syncedAvatarPath,
             contact.AvatarScale,
             contact.AvatarOffsetX,
             contact.AvatarOffsetY,
@@ -5723,7 +9028,14 @@ public partial class MainWindow : Window
             contact.GroupMembersJson,
             contact.IdentityPublicKey,
             DateTimeOffset.UtcNow,
-            contact.CustomStatus);
+            contact.CustomStatus,
+            contact.ServerTemplate,
+            contact.ServerChannelsJson,
+            contact.ServerRolesJson,
+            contact.SelectedServerChannelId,
+            contact.ServerModerationJson,
+            serverBackgroundPath);
+    }
 
     private ContactViewModel CreateContactFromSyncedSnapshot(AccountSyncedContact snapshot)
         => new()
@@ -5735,7 +9047,7 @@ public partial class MainWindow : Window
             Status = UserPresenceStatus.Offline,
             LastSeenUtc = snapshot.UpdatedAtUtc == default ? DateTimeOffset.UtcNow : snapshot.UpdatedAtUtc,
             AvatarKind = string.IsNullOrWhiteSpace(snapshot.AvatarKind) ? "color" : snapshot.AvatarKind,
-            AvatarPath = "",
+            AvatarPath = snapshot.AvatarPath ?? "",
             AvatarScale = snapshot.AvatarScale <= 0 ? 1 : snapshot.AvatarScale,
             AvatarOffsetX = snapshot.AvatarOffsetX,
             AvatarOffsetY = snapshot.AvatarOffsetY,
@@ -5747,9 +9059,128 @@ public partial class MainWindow : Window
             GroupVersion = snapshot.GroupVersion,
             GroupIsDeleted = snapshot.GroupIsDeleted,
             GroupMembersJson = snapshot.GroupMembersJson,
+            ServerTemplate = snapshot.ServerTemplate,
+            ServerChannelsJson = snapshot.ServerChannelsJson,
+            ServerRolesJson = snapshot.ServerRolesJson,
+            SelectedServerChannelId = snapshot.SelectedServerChannelId,
+            ServerModerationJson = snapshot.ServerModerationJson,
             IdentityPublicKey = snapshot.IdentityPublicKey,
             CustomStatus = NormalizeCustomStatus(snapshot.CustomStatus)
         };
+
+    private async Task<string> PrepareSyncedMediaRefAsync(string path, string kind)
+    {
+        if (_serverHistory is null || string.IsNullOrWhiteSpace(path))
+        {
+            return "";
+        }
+
+        if (TryParseMediaRef(path, out _, out _))
+        {
+            return path;
+        }
+
+        if (!File.Exists(path))
+        {
+            return "";
+        }
+
+        if (_syncedMediaRefs.TryGetValue(path, out var cachedRef))
+        {
+            return cachedRef;
+        }
+
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(path, _stop.Token);
+            var upload = await _serverHistory.UploadMediaAsync(
+                kind,
+                Path.GetFileName(path),
+                GuessMimeType(path, IsVideoFile(path) ? MessageKinds.File : MessageKinds.Image),
+                bytes,
+                _stop.Token);
+            if (upload.Accepted && !string.IsNullOrWhiteSpace(upload.MediaId))
+            {
+                var mediaRef = CreateMediaRef(upload.MediaId, Path.GetExtension(path));
+                _syncedMediaRefs[path] = mediaRef;
+                return mediaRef;
+            }
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested && ex is IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            AppLog.Write(ex, $"Synced media upload failed: kind={kind}, path={path}");
+        }
+
+        return "";
+    }
+
+    private static string CreateMediaRef(string mediaId, string extension)
+        => $"media:{mediaId}:{NormalizeMediaRefExtension(extension)}";
+
+    private static bool TryParseMediaRef(string value, out string mediaId, out string extension)
+    {
+        mediaId = "";
+        extension = ".bin";
+        if (string.IsNullOrWhiteSpace(value) || !value.StartsWith("media:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parts = value.Split(':', 3, StringSplitOptions.TrimEntries);
+        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            return false;
+        }
+
+        mediaId = parts[1];
+        extension = parts.Length >= 3 ? NormalizeMediaRefExtension(parts[2]) : ".bin";
+        return true;
+    }
+
+    private static bool TryParseCachedMediaPath(string value, out string mediaId, out string extension)
+    {
+        mediaId = "";
+        extension = ".bin";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        try
+        {
+            var mediaCacheDirectory = Path.GetFullPath(AppPaths.MediaCacheDirectory);
+            var fullPath = Path.GetFullPath(value);
+            if (!fullPath.StartsWith(mediaCacheDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var fileName = Path.GetFileNameWithoutExtension(fullPath);
+            if (!Guid.TryParse(fileName, out var parsedMediaId))
+            {
+                return false;
+            }
+
+            mediaId = parsedMediaId.ToString("D");
+            extension = NormalizeMediaRefExtension(Path.GetExtension(fullPath));
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeMediaRefExtension(string extension)
+    {
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return ".bin";
+        }
+
+        extension = extension.Trim();
+        return extension.StartsWith(".", StringComparison.Ordinal) ? extension : "." + extension;
+    }
 
     private async void FirstRunLinkButton_OnClick(object sender, RoutedEventArgs e)
     {
@@ -5850,6 +9281,7 @@ public partial class MainWindow : Window
             }
 
             ConfigureScreenShareWebRtc();
+            await ReannounceActiveCallAfterRelayReconnectAsync();
         }
         catch (Exception ex) when (!_stop.IsCancellationRequested)
         {
@@ -5858,6 +9290,25 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
+        }
+    }
+
+    private async Task ReannounceActiveCallAfterRelayReconnectAsync()
+    {
+        if (_activeCallContact is null || !_selfInCall || _activeCallState != "connected")
+        {
+            return;
+        }
+
+        try
+        {
+            await SendCallSignalAsync(_activeCallContact, CallJoinIntent);
+            await SendCallAudioStateAsync();
+            AppLog.Write($"Call rejoin announced after relay reconnect: contact={_activeCallContact.UserId}");
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            AppLog.Write(ex, $"Call rejoin announce failed: contact={_activeCallContact?.UserId}");
         }
     }
 
@@ -5902,18 +9353,32 @@ public partial class MainWindow : Window
 
     private async Task PublishPresenceAsync(bool force = false)
     {
-        if (_profile is null || _relayClient is null || !_relayClient.IsConnected)
+        if (_profile is null)
         {
             return;
         }
 
         var status = GetPublishedStatus();
         var customStatus = GetPublishedCustomStatus();
+        var displayChanged = force ||
+                             status != _lastDisplayedPresenceStatus ||
+                             !string.Equals(customStatus, _lastDisplayedCustomStatus, StringComparison.Ordinal);
+        if (displayChanged)
+        {
+            _lastDisplayedPresenceStatus = status;
+            _lastDisplayedCustomStatus = customStatus;
+            await Dispatcher.InvokeAsync(UpdateProfileStatusVisuals);
+        }
+
+        if (_relayClient is null || !_relayClient.IsConnected)
+        {
+            return;
+        }
+
         var statusChanged = force ||
                             status != _lastPublishedStatus ||
                             !string.Equals(customStatus, _lastPublishedCustomStatus, StringComparison.Ordinal);
-        _lastPublishedStatus = status;
-        _lastPublishedCustomStatus = customStatus;
+
         try
         {
             (string kind, string? mediaBase64, string? extension) avatarPayload = (_profile.AvatarKind, null, null);
@@ -5928,12 +9393,20 @@ public partial class MainWindow : Window
                 _profile.AvatarOffsetY,
                 _profile.AvatarVideoStartSeconds,
                 _profile.AvatarVideoDurationSeconds,
-                customStatus);
+                customStatus,
+                _settings.ActivityVisibility,
+                _settings.ActivitySelectedFriendIds);
         }
         catch (Exception ex) when (!_stop.IsCancellationRequested)
         {
             AppLog.Write(ex, "Presence heartbeat failed");
             return;
+        }
+
+        if (statusChanged)
+        {
+            _lastPublishedStatus = status;
+            _lastPublishedCustomStatus = customStatus;
         }
 
         if (!statusChanged)
@@ -6043,78 +9516,419 @@ public partial class MainWindow : Window
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
     }
 
-    private async void MessageAvatar_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    private void MessageAvatar_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: MessageViewModel message } ||
+        if (sender is not FrameworkElement { DataContext: MessageViewModel message } anchor ||
             string.IsNullOrWhiteSpace(message.SenderUserId))
         {
             return;
         }
 
         e.Handled = true;
-        var contact = _contacts.FirstOrDefault(x => !x.IsGroup && string.Equals(x.UserId, message.SenderUserId, StringComparison.Ordinal));
+        ShowMiniProfile(message, anchor);
+    }
+
+    private void ShowMiniProfile(MessageViewModel message, FrameworkElement anchor)
+    {
+        var contact = FindDirectContact(message.SenderUserId);
         var isSelf = _profile is not null && string.Equals(message.SenderUserId, _profile.UserId, StringComparison.Ordinal);
+        var groupMember = FindGroupMemberForUser(message.SenderUserId);
         var displayName = isSelf
             ? _profile?.DisplayName ?? "You"
-            : contact?.DisplayName ?? message.SenderDisplayName;
+            : contact?.DisplayName ?? groupMember?.DisplayName ?? message.SenderDisplayName;
         if (string.IsNullOrWhiteSpace(displayName))
         {
             displayName = message.SenderUserId;
         }
 
-        var commonGroups = _contacts
+        var commonGroupsCount = _contacts
             .Where(x => x.IsGroup && x.GroupMemberIdsList.Contains(message.SenderUserId, StringComparer.Ordinal))
-            .Select(x => x.DisplayName)
-            .Take(3)
-            .ToArray();
+            .Count();
 
-        var menu = new System.Windows.Controls.ContextMenu
+        var avatarKind = isSelf
+            ? _profile?.AvatarKind ?? "color"
+            : contact?.AvatarKind ?? groupMember?.AvatarKind ?? message.SenderAvatarKind;
+        var avatarPath = isSelf
+            ? _profile?.AvatarPath ?? ""
+            : contact?.AvatarPath ?? groupMember?.AvatarPath ?? message.SenderAvatarPath;
+        var status = isSelf ? _selectedStatus : contact?.Status ?? UserPresenceStatus.Offline;
+        var customStatus = isSelf ? _customStatusText : contact?.CustomStatus ?? "";
+
+        _activeMiniProfileMessage = message;
+        _activeMiniProfile = new MiniProfileViewModel
         {
-            PlacementTarget = sender as UIElement,
-            DataContext = message
+            UserId = message.SenderUserId,
+            DisplayName = displayName,
+            AvatarKind = string.IsNullOrWhiteSpace(avatarKind) ? "color" : avatarKind,
+            AvatarPath = avatarPath ?? "",
+            Status = status,
+            CustomStatus = customStatus,
+            CommonGroupsCount = commonGroupsCount,
+            IsSelf = isSelf,
+            IsKnownContact = contact is not null,
+            SelectedEmoji = MiniProfileEmojiChoices[Random.Shared.Next(MiniProfileEmojiChoices.Length)]
         };
-        menu.Loaded += ContextMenu_OnLoaded;
-        menu.Items.Add(new System.Windows.Controls.MenuItem
-        {
-            Header = $"{displayName}  |  {FormatShortUserId(message.SenderUserId)}",
-            IsEnabled = false
-        });
-        menu.Items.Add(new System.Windows.Controls.MenuItem
-        {
-            Header = commonGroups.Length == 0 ? "No common groups" : $"Common groups: {string.Join(", ", commonGroups)}",
-            IsEnabled = false
-        });
 
-        if (contact is not null && !isSelf)
+        MiniProfileCard.DataContext = _activeMiniProfile;
+        MiniProfileMessageInput.Clear();
+        MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        RefreshMiniProfileEmojiButton(_activeMiniProfile.SelectedEmoji);
+        PositionMiniProfile(anchor);
+        MiniProfileLayer.Visibility = Visibility.Visible;
+        AnimateMiniProfileOpen();
+        if (!isSelf)
         {
-            menu.Items.Add(new Separator());
-            var write = new System.Windows.Controls.MenuItem { Header = "Write message" };
-            write.Click += async (_, _) => await OpenContactAsync(contact);
-            menu.Items.Add(write);
-
-            var call = new System.Windows.Controls.MenuItem { Header = "Call" };
-            call.Click += async (_, _) =>
-            {
-                await OpenContactAsync(contact);
-                StartCallButton_OnClick(StartCallButton, new RoutedEventArgs());
-            };
-            menu.Items.Add(call);
+            MiniProfileMessageInput.Focus();
         }
-        else if (!isSelf)
+    }
+
+    private ContactViewModel? FindDirectContact(string userId)
+        => _contacts.FirstOrDefault(x => !x.IsGroup && string.Equals(x.UserId, userId, StringComparison.Ordinal));
+
+    private GroupMemberPayload? FindGroupMemberForUser(string userId)
+    {
+        if (_selectedContact is { IsGroup: true } selected)
         {
-            menu.Items.Add(new Separator());
-            var add = new System.Windows.Controls.MenuItem { Header = "Add friend" };
-            add.Click += (_, _) =>
+            var member = LoadGroupMembers(selected).FirstOrDefault(x => string.Equals(x.UserId, userId, StringComparison.Ordinal));
+            if (member is not null)
             {
-                AddFriendPanelButton_OnClick(this, new RoutedEventArgs());
-                AddFriendInput.Text = message.SenderUserId;
-                AddFriendInput.Focus();
-            };
-            menu.Items.Add(add);
+                return member;
+            }
         }
 
-        menu.IsOpen = true;
-        await Task.CompletedTask;
+        foreach (var group in _contacts.Where(x => x.IsGroup && x.GroupMemberIdsList.Contains(userId, StringComparer.Ordinal)))
+        {
+            var member = LoadGroupMembers(group).FirstOrDefault(x => string.Equals(x.UserId, userId, StringComparison.Ordinal));
+            if (member is not null)
+            {
+                return member;
+            }
+        }
+
+        return null;
+    }
+
+    private void PositionMiniProfile(FrameworkElement anchor)
+    {
+        const double cardWidth = 340;
+        const double cardHeight = 360;
+        const double margin = 12;
+        var rootWidth = RootGrid.ActualWidth <= 0 ? ActualWidth : RootGrid.ActualWidth;
+        var rootHeight = RootGrid.ActualHeight <= 0 ? ActualHeight : RootGrid.ActualHeight;
+
+        var point = new System.Windows.Point(ActualWidth / 2 - cardWidth / 2, ActualHeight / 2 - cardHeight / 2);
+        try
+        {
+            point = anchor.TransformToAncestor(RootGrid).Transform(new System.Windows.Point(0, 0));
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        var x = point.X + anchor.ActualWidth + 12;
+        if (x + cardWidth + margin > rootWidth)
+        {
+            x = point.X - cardWidth - 12;
+        }
+
+        var y = point.Y - 16;
+        x = Math.Clamp(x, margin, Math.Max(margin, rootWidth - cardWidth - margin));
+        y = Math.Clamp(y, margin, Math.Max(margin, rootHeight - cardHeight - margin));
+
+        Canvas.SetLeft(MiniProfileCard, x);
+        Canvas.SetTop(MiniProfileCard, y);
+    }
+
+    private void PositionMiniProfileEmojiPopup()
+    {
+        const double popupWidth = 292;
+        const double popupHeight = 250;
+        const double margin = 12;
+        var rootWidth = RootGrid.ActualWidth <= 0 ? ActualWidth : RootGrid.ActualWidth;
+        var rootHeight = RootGrid.ActualHeight <= 0 ? ActualHeight : RootGrid.ActualHeight;
+        var cardLeft = Canvas.GetLeft(MiniProfileCard);
+        var cardTop = Canvas.GetTop(MiniProfileCard);
+        if (double.IsNaN(cardLeft))
+        {
+            cardLeft = margin;
+        }
+
+        if (double.IsNaN(cardTop))
+        {
+            cardTop = margin;
+        }
+
+        var x = cardLeft + 48;
+        var y = cardTop + 222;
+        if (x + popupWidth + margin > rootWidth)
+        {
+            x = rootWidth - popupWidth - margin;
+        }
+
+        if (y + popupHeight + margin > rootHeight)
+        {
+            y = Math.Max(margin, cardTop + 118 - popupHeight);
+        }
+
+        Canvas.SetLeft(MiniProfileEmojiPopup, Math.Clamp(x, margin, Math.Max(margin, rootWidth - popupWidth - margin)));
+        Canvas.SetTop(MiniProfileEmojiPopup, Math.Clamp(y, margin, Math.Max(margin, rootHeight - popupHeight - margin)));
+    }
+
+    private void AnimateMiniProfileOpen()
+    {
+        MiniProfileCard.Opacity = 0;
+        MiniProfileCard.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(140))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        });
+
+        if (MiniProfileCard.RenderTransform is TransformGroup group)
+        {
+            if (group.Children.OfType<ScaleTransform>().FirstOrDefault() is { } scale)
+            {
+                scale.ScaleX = 0.96;
+                scale.ScaleY = 0.96;
+                var scaleAnimation = new DoubleAnimation(0.96, 1, TimeSpan.FromMilliseconds(160))
+                {
+                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                };
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnimation);
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnimation);
+            }
+
+            if (group.Children.OfType<TranslateTransform>().FirstOrDefault() is { } translate)
+            {
+                translate.Y = 8;
+                translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(8, 0, TimeSpan.FromMilliseconds(160))
+                {
+                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                });
+            }
+        }
+    }
+
+    private void CloseMiniProfile()
+    {
+        if (MiniProfileLayer.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        MiniProfileLayer.Visibility = Visibility.Collapsed;
+        MiniProfileCard.DataContext = null;
+        MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        _activeMiniProfile = null;
+        _activeMiniProfileMessage = null;
+        _miniProfileEmojiTargetActive = false;
+        SetPickerPanelVisible(EmojiPanel, false);
+    }
+
+    private void MiniProfileLayer_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        CloseMiniProfile();
+        e.Handled = true;
+    }
+
+    private void MiniProfileCard_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+    }
+
+    private async void MiniProfileMessageInput_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await SendMiniProfileDraftAsync();
+    }
+
+    private void MiniProfileEmojiButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _miniProfileEmojiTargetActive = true;
+        _reactionTarget = null;
+        SetPickerPanelVisible(EmojiPanel, false);
+        EnsureMiniProfileEmojiPicker();
+        MiniProfileEmojiPopup.Visibility = MiniProfileEmojiPopup.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        if (MiniProfileEmojiPopup.Visibility != Visibility.Visible)
+        {
+            _miniProfileEmojiTargetActive = false;
+        }
+
+        if (MiniProfileEmojiPopup.Visibility == Visibility.Visible)
+        {
+            PositionMiniProfileEmojiPopup();
+            MiniProfileEmojiPopup.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        MiniProfileMessageInput.Focus();
+        e.Handled = true;
+    }
+
+    private void MiniProfileInlineEmojiButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_activeMiniProfile is null || sender is not System.Windows.Controls.Button { Tag: string emoji })
+        {
+            return;
+        }
+
+        _activeMiniProfile.SelectedEmoji = emoji;
+        RefreshMiniProfileEmojiButton(emoji);
+        InsertTextIntoTextBox(MiniProfileMessageInput, emoji);
+        MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        _miniProfileEmojiTargetActive = false;
+        MiniProfileMessageInput.Focus();
+        e.Handled = true;
+    }
+
+    private void EnsureMiniProfileEmojiPicker()
+    {
+        if (MiniProfileEmojiGrid.Children.Count > 0)
+        {
+            return;
+        }
+
+        foreach (var emoji in MiniProfileEmojiChoices)
+        {
+            var button = new System.Windows.Controls.Button
+            {
+                Tag = emoji,
+                Content = CreateMiniProfileEmojiContent(emoji, 24, fallbackFontSize: 21)
+            };
+            button.Click += MiniProfileInlineEmojiButton_OnClick;
+            MiniProfileEmojiGrid.Children.Add(button);
+        }
+    }
+
+    private void RefreshMiniProfileEmojiButton(string emoji)
+        => MiniProfileEmojiButton.Content = CreateMiniProfileEmojiContent(emoji, 25, fallbackFontSize: 23);
+
+    private static FrameworkElement CreateMiniProfileEmojiContent(string emoji, double imageSize, double fallbackFontSize)
+    {
+        var grid = new Grid
+        {
+            Width = Math.Max(28, imageSize),
+            Height = Math.Max(28, imageSize)
+        };
+
+        var fallback = new TextBlock
+        {
+            Text = emoji,
+            FontFamily = new System.Windows.Media.FontFamily("Segoe UI Emoji"),
+            FontSize = fallbackFontSize,
+            Foreground = System.Windows.Media.Brushes.White,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = System.Windows.VerticalAlignment.Center
+        };
+        TextOptions.SetTextFormattingMode(fallback, TextFormattingMode.Display);
+
+        var url = TryBuildTwemojiPngUrl(emoji);
+        if (url is null)
+        {
+            grid.Children.Add(fallback);
+            return grid;
+        }
+
+        var image = new System.Windows.Controls.Image
+        {
+            Width = imageSize,
+            Height = imageSize,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = System.Windows.VerticalAlignment.Center,
+            Source = CreateTwemojiBitmap(url)
+        };
+        image.ImageFailed += (_, _) =>
+        {
+            image.Visibility = Visibility.Collapsed;
+            fallback.Visibility = Visibility.Visible;
+        };
+
+        fallback.Visibility = image.Source is null ? Visibility.Visible : Visibility.Collapsed;
+        grid.Children.Add(image);
+        grid.Children.Add(fallback);
+        return grid;
+    }
+
+    private static BitmapImage? CreateTwemojiBitmap(Uri uri)
+    {
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.UriSource = uri;
+            image.CacheOption = BitmapCacheOption.OnDemand;
+            image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+            image.EndInit();
+            return image;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task SendMiniProfileDraftAsync()
+    {
+        if (_activeMiniProfile is null ||
+            _activeMiniProfileMessage is null ||
+            _activeMiniProfile.IsSelf)
+        {
+            return;
+        }
+
+        var body = _activeMiniProfile.DraftText.Trim();
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return;
+        }
+
+        var contact = await EnsureMiniProfileContactAsync(_activeMiniProfileMessage);
+        if (contact is null)
+        {
+            return;
+        }
+
+        CloseMiniProfile();
+        await OpenContactAsync(contact);
+        MessageInput.Text = body;
+        MessageInput.CaretIndex = MessageInput.Text.Length;
+        await TrySendCurrentMessageAsync();
+    }
+
+    private async Task<ContactViewModel?> EnsureMiniProfileContactAsync(MessageViewModel message)
+    {
+        var existing = FindDirectContact(message.SenderUserId);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var member = FindGroupMemberForUser(message.SenderUserId);
+        var contact = member is not null
+            ? CreateContactFromGroupMember(member)
+            : new ContactViewModel
+            {
+                UserId = message.SenderUserId,
+                DisplayName = string.IsNullOrWhiteSpace(message.SenderDisplayName) ? FormatShortUserId(message.SenderUserId) : message.SenderDisplayName,
+                IpAddress = $"{RelayContactPrefix}{NormalizeRelayServer(_settings.RelayServer)}",
+                MessagePort = FluxChatPorts.Relay,
+                Status = UserPresenceStatus.Offline,
+                LastSeenUtc = DateTimeOffset.UtcNow,
+                AvatarKind = string.IsNullOrWhiteSpace(message.SenderAvatarKind) ? "color" : message.SenderAvatarKind,
+                AvatarPath = message.SenderAvatarPath
+            };
+
+        AddOrUpdateContact(contact);
+        await _history.SaveContactAsync(contact);
+        return FindDirectContact(message.SenderUserId) ?? contact;
     }
 
     private static string FormatShortUserId(string userId)
@@ -6200,7 +10014,7 @@ public partial class MainWindow : Window
             ChatTitle.Text = group.DisplayName;
         }
 
-        NetworkStatusText.Text = $"Group renamed to {group.DisplayName}";
+        NetworkStatusText.Text = $"{GroupKindTitle(group)} renamed to {group.DisplayName}";
     }
 
     private async void EditGroupPictureMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -6226,7 +10040,7 @@ public partial class MainWindow : Window
         await _history.SaveContactAsync(group);
         await SyncContactToServerAsync(group);
         await BroadcastGroupSnapshotAsync(group);
-        NetworkStatusText.Text = "Group picture updated";
+        NetworkStatusText.Text = $"{GroupKindTitle(group)} picture updated";
     }
 
     private async void DeleteGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -6237,8 +10051,8 @@ public partial class MainWindow : Window
         }
 
         var result = await ShowAppConfirmDialogAsync(
-            "Delete group",
-            $"Delete group {group.DisplayName} for all participants?",
+            $"Delete {GroupKindName(group)}",
+            $"Delete {GroupKindName(group)} {group.DisplayName} for all participants?",
             "Delete",
             "Cancel",
             danger: true);
@@ -6251,6 +10065,7 @@ public partial class MainWindow : Window
         group.GroupVersion++;
         await _history.SaveContactAsync(group);
         await DeleteContactFromServerAsync(group.UserId);
+        await DeleteDeletedGroupLocalDataAsync(group);
         var snapshot = CreateGroupSnapshot(group);
         var action = new GroupActionPayload(group.UserId, group.GroupVersion, _profile?.UserId ?? "", "");
         foreach (var member in snapshot.Members.Where(x => _profile is null || !string.Equals(x.UserId, _profile.UserId, StringComparison.Ordinal)))
@@ -6259,13 +10074,59 @@ public partial class MainWindow : Window
         }
 
         RemoveContactFromUi(group);
-        NetworkStatusText.Text = "Group deleted";
+        NetworkStatusText.Text = $"{GroupKindTitle(group)} deleted";
+    }
+
+    private async Task DeleteDeletedGroupLocalDataAsync(ContactViewModel group)
+    {
+        await _history.DeleteConversationAsync(group.UserId);
+        await DeleteConversationFromServerAsync(group.UserId);
+
+        if (group.IsServer)
+        {
+            var wallpaperKey = GetServerWallpaperSectionId(group);
+            _settings.SectionWallpapers.TryGetValue(wallpaperKey, out var wallpaper);
+            _settings.SectionWallpapers.Remove(wallpaperKey);
+            await AppSettingsStore.SaveAsync(_settings);
+
+            await DeleteSyncedMediaIfReplacedAsync(GetKnownSyncedMediaRef(group.AvatarPath), "");
+            await DeleteSyncedMediaIfReplacedAsync(GetKnownSyncedMediaRef(wallpaper?.Path), "");
+            DeleteCustomizationFileIfOwned(wallpaper?.Path);
+        }
+
+        DeleteAvatarFileIfOwned(group.AvatarPath);
+    }
+
+    private async Task DeleteConversationFromServerAsync(string peerUserId)
+    {
+        if (_serverHistory is null || string.IsNullOrWhiteSpace(peerUserId))
+        {
+            return;
+        }
+
+        try
+        {
+            await _serverHistory.DeleteConversationAsync(peerUserId, _stop.Token);
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested && ex is HttpRequestException or IOException or TaskCanceledException or InvalidOperationException)
+        {
+            AppLog.Write(ex, $"Server conversation delete failed: peer={peerUserId}");
+        }
     }
 
     private async void LeaveGroupMenuItem_OnClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not System.Windows.Controls.MenuItem { DataContext: ContactViewModel { CanLeaveGroup: true } group } ||
-            _profile is null)
+        if (sender is not System.Windows.Controls.MenuItem { DataContext: ContactViewModel { CanLeaveGroup: true } group })
+        {
+            return;
+        }
+
+        await LeaveGroupAsync(group, notifyOwner: true);
+    }
+
+    private async Task LeaveGroupAsync(ContactViewModel group, bool notifyOwner)
+    {
+        if (_profile is null)
         {
             return;
         }
@@ -6273,7 +10134,7 @@ public partial class MainWindow : Window
         var members = LoadGroupMembers(group);
         var owner = members.FirstOrDefault(x => string.Equals(x.UserId, group.GroupOwnerUserId, StringComparison.Ordinal));
         var action = new GroupActionPayload(group.UserId, group.GroupVersion + 1, _profile.UserId, _profile.UserId);
-        if (owner is not null)
+        if (notifyOwner && owner is not null)
         {
             await SendGroupActionAsync(GroupLeaveIntent, action, owner);
         }
@@ -6283,8 +10144,14 @@ public partial class MainWindow : Window
         await _history.SaveContactAsync(group);
         await DeleteContactFromServerAsync(group.UserId);
         RemoveContactFromUi(group);
-        NetworkStatusText.Text = "Left group";
+        NetworkStatusText.Text = $"Left {GroupKindName(group)}";
     }
+
+    private static string GroupKindName(ContactViewModel group)
+        => group.IsServer ? "server" : "group";
+
+    private static string GroupKindTitle(ContactViewModel group)
+        => group.IsServer ? "Server" : "Group";
 
     private async Task RemoveContactFromFriendsAsync(ContactViewModel contact, bool notifyPeer)
     {
@@ -6313,6 +10180,7 @@ public partial class MainWindow : Window
     private void RemoveContactFromUi(ContactViewModel contact)
     {
         _contacts.Remove(contact);
+        UpdateContactSectionHeaders();
         if (_contacts.Count == 0)
         {
             EmptyContactsHint.Visibility = Visibility.Visible;
@@ -6331,6 +10199,7 @@ public partial class MainWindow : Window
             ChatSearchInput.Clear();
             GroupMembersButton.Visibility = Visibility.Collapsed;
             SetGroupMembersPanelVisible(false);
+            SetServerChannelsPanelVisible(false);
             EmptyChatHint.Visibility = Visibility.Visible;
         }
     }
@@ -6346,6 +10215,1213 @@ public partial class MainWindow : Window
         _ = RemoveContactFromFriendsAsync(contact, notifyPeer: false);
     }
 
+    private void ServerRolesMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem { DataContext: ContactViewModel { CanEditGroup: true, IsServer: true } server })
+        {
+            return;
+        }
+
+        ShowServerRolesOverlay(server);
+    }
+
+    private void ShowServerRolesOverlay(ContactViewModel server)
+    {
+        _selectedContact = server;
+        EnsureGroupMetadata(server);
+        RefreshServerRolesOverlay(server);
+        SetServerSettingsTab(ServerSettingsTab.Profile);
+        ServerRolesOverlay.Visibility = Visibility.Visible;
+        ServerRolesOverlay.Opacity = 0;
+        UpdateScreenShareStageVisibility();
+        if (ServerRolesDialog.RenderTransform is ScaleTransform scale)
+        {
+            scale.ScaleX = _settings.ReducedMotionEnabled ? 1 : 0.97;
+            scale.ScaleY = _settings.ReducedMotionEnabled ? 1 : 0.97;
+            if (!_settings.ReducedMotionEnabled)
+            {
+                var scaleAnimation = new DoubleAnimation(1, TimeSpan.FromMilliseconds(160))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnimation);
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnimation);
+            }
+        }
+
+        ServerRolesOverlay.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(1, TimeSpan.FromMilliseconds(_settings.ReducedMotionEnabled ? 0 : 140))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    private void ServerRolesCloseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ServerRolesOverlay.Visibility = Visibility.Collapsed;
+        ServerRolesOverlay.Opacity = 1;
+        ServerRolesStatusText.Text = "";
+        UpdateScreenShareStageVisibility();
+    }
+
+    private void ServerSettingsProfileNavButton_OnClick(object sender, RoutedEventArgs e)
+        => SetServerSettingsTab(ServerSettingsTab.Profile);
+
+    private void ServerSettingsRolesNavButton_OnClick(object sender, RoutedEventArgs e)
+        => SetServerSettingsTab(ServerSettingsTab.Roles);
+
+    private void ServerSettingsBansNavButton_OnClick(object sender, RoutedEventArgs e)
+        => SetServerSettingsTab(ServerSettingsTab.Bans);
+
+    private void ServerSettingsAuditNavButton_OnClick(object sender, RoutedEventArgs e)
+        => SetServerSettingsTab(ServerSettingsTab.Audit);
+
+    private void SetServerSettingsTab(ServerSettingsTab tab)
+    {
+        _serverSettingsTab = tab;
+        var rolesVisibility = tab == ServerSettingsTab.Roles ? Visibility.Visible : Visibility.Collapsed;
+        ServerProfileSectionAnchor.Visibility = tab == ServerSettingsTab.Profile ? Visibility.Visible : Visibility.Collapsed;
+        ServerRolesCreatePanel.Visibility = rolesVisibility;
+        ServerRolesSelectedPanel.Visibility = rolesVisibility;
+        ServerRolesScrollPanel.Visibility = rolesVisibility;
+        ServerBansPanel.Visibility = tab == ServerSettingsTab.Bans ? Visibility.Visible : Visibility.Collapsed;
+        ServerAuditPanel.Visibility = tab == ServerSettingsTab.Audit ? Visibility.Visible : Visibility.Collapsed;
+
+        if (tab == ServerSettingsTab.Roles && ServerRolesList.SelectedIndex < 0 && _serverRoles.Count > 0)
+        {
+            ServerRolesList.SelectedIndex = 0;
+        }
+
+        ServerSettingsContentScroll.ScrollToTop();
+    }
+
+    private static string GetServerWallpaperSectionId(ContactViewModel server)
+        => $"Server:{server.UserId}";
+
+    private void RefreshServerProfileSection(ContactViewModel server)
+    {
+        ServerProfileNameInput.Text = server.DisplayName;
+        _serverProfileAvatarKind = string.IsNullOrWhiteSpace(server.AvatarKind) ? "color" : server.AvatarKind;
+        _serverProfileAvatarPath = server.AvatarPath ?? "";
+        _serverProfileAvatarVideoStartSeconds = Math.Max(0, server.AvatarVideoStartSeconds);
+        _serverProfileAvatarVideoDurationSeconds = Math.Clamp(server.AvatarVideoDurationSeconds <= 0 ? 5 : server.AvatarVideoDurationSeconds, 1, 5);
+        _serverProfileBackgroundPath = _settings.SectionWallpapers.TryGetValue(GetServerWallpaperSectionId(server), out var wallpaper)
+            ? wallpaper.Path
+            : "";
+        ServerProfileBackgroundText.Text = FormatLocalFileLabel(_serverProfileBackgroundPath, "Default server background");
+        RefreshServerProfileAvatarPreview();
+    }
+
+    private void RefreshServerProfileAvatarPreview()
+    {
+        ServerProfileAvatarImage.Visibility = Visibility.Collapsed;
+        ServerProfileAvatarVideo.Visibility = Visibility.Collapsed;
+        ServerProfileAvatarFallback.Visibility = Visibility.Visible;
+        ServerProfileAvatarImage.Source = null;
+        ServerProfileAvatarVideo.Stop();
+        ServerProfileAvatarVideo.Source = null;
+
+        var mediaExists = !string.IsNullOrWhiteSpace(_serverProfileAvatarPath) && File.Exists(_serverProfileAvatarPath);
+        if (string.Equals(_serverProfileAvatarKind, "image", StringComparison.OrdinalIgnoreCase) && mediaExists)
+        {
+            try
+            {
+                ServerProfileAvatarImage.Source = LoadBitmap(_serverProfileAvatarPath);
+                ServerProfileAvatarImage.Visibility = Visibility.Visible;
+                ServerProfileAvatarFallback.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex) when (ex is IOException or NotSupportedException or InvalidOperationException)
+            {
+                AppLog.Write(ex, "Server profile avatar image preview failed");
+            }
+
+            return;
+        }
+
+        if (string.Equals(_serverProfileAvatarKind, "video", StringComparison.OrdinalIgnoreCase) && mediaExists)
+        {
+            try
+            {
+                ServerProfileAvatarVideo.Source = new Uri(_serverProfileAvatarPath, UriKind.Absolute);
+                ServerProfileAvatarVideo.Volume = 0;
+                ServerProfileAvatarVideo.IsMuted = true;
+                ServerProfileAvatarVideo.Position = TimeSpan.FromSeconds(_serverProfileAvatarVideoStartSeconds);
+                ServerProfileAvatarVideo.Visibility = Visibility.Visible;
+                ServerProfileAvatarFallback.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex) when (ex is IOException or NotSupportedException or InvalidOperationException or UriFormatException)
+            {
+                AppLog.Write(ex, "Server profile avatar video preview failed");
+            }
+        }
+    }
+
+    private void ServerProfileAvatarPreview_OnMouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!string.Equals(_serverProfileAvatarKind, "video", StringComparison.OrdinalIgnoreCase) ||
+            ServerProfileAvatarVideo.Source is null)
+        {
+            return;
+        }
+
+        try
+        {
+            ServerProfileAvatarVideo.Volume = 0;
+            ServerProfileAvatarVideo.IsMuted = true;
+            ServerProfileAvatarVideo.Position = TimeSpan.FromSeconds(_serverProfileAvatarVideoStartSeconds);
+            ServerProfileAvatarVideo.Play();
+            _avatarVideoLoopTimer.Start();
+        }
+        catch (InvalidOperationException ex)
+        {
+            AppLog.Write(ex, "Server profile avatar video play failed");
+        }
+    }
+
+    private void ServerProfileAvatarPreview_OnMouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        try
+        {
+            ServerProfileAvatarVideo.Stop();
+            ServerProfileAvatarVideo.Position = TimeSpan.FromSeconds(_serverProfileAvatarVideoStartSeconds);
+        }
+        catch (InvalidOperationException ex)
+        {
+            AppLog.Write(ex, "Server profile avatar video stop failed");
+        }
+    }
+
+    private void ServerProfileAvatarVideo_OnMediaEnded(object sender, RoutedEventArgs e)
+    {
+        if (ServerProfileAvatarVideo.IsMouseOver)
+        {
+            ServerProfileAvatarVideo.Position = TimeSpan.FromSeconds(_serverProfileAvatarVideoStartSeconds);
+            ServerProfileAvatarVideo.Play();
+        }
+    }
+
+    private void ServerProfileAvatarVideo_OnMediaOpened(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var start = TimeSpan.FromSeconds(_serverProfileAvatarVideoStartSeconds);
+            ServerProfileAvatarVideo.Volume = 0;
+            ServerProfileAvatarVideo.IsMuted = true;
+            ServerProfileAvatarVideo.Position = start;
+            ServerProfileAvatarVideo.Play();
+            if (!ServerProfileAvatarVideo.IsMouseOver)
+            {
+                ServerProfileAvatarVideo.Pause();
+                ServerProfileAvatarVideo.Position = start;
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            AppLog.Write(ex, "Server profile avatar first frame failed");
+        }
+    }
+
+    private void ServerProfileChooseImageAvatarButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.gif|All files|*.*"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            _serverProfileAvatarKind = "image";
+            _serverProfileAvatarPath = CopyAvatarFile(dialog.FileName);
+            _serverProfileAvatarVideoStartSeconds = 0;
+            _serverProfileAvatarVideoDurationSeconds = 5;
+            RefreshServerProfileAvatarPreview();
+            ServerRolesStatusText.Text = "Image avatar selected. Save server profile to apply it.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            ServerRolesStatusText.Text = "Could not load image avatar.";
+            AppLog.Write(ex, "Server image avatar copy failed");
+        }
+    }
+
+    private void ServerProfileChooseVideoAvatarButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Videos|*.mp4;*.webm;*.mov;*.mkv;*.avi|All files|*.*"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            ShowAvatarEditor("video", CopyAvatarFile(dialog.FileName), AvatarEditorTarget.ServerProfile, 5);
+            ServerRolesStatusText.Text = "Trim a 5-second server avatar segment.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            ServerRolesStatusText.Text = "Could not load video avatar.";
+            AppLog.Write(ex, "Server video avatar copy failed");
+        }
+    }
+
+    private void ServerProfileChooseBackgroundButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Server backgrounds|*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.gif;*.mp4;*.webm|Images|*.jpg;*.jpeg;*.png;*.bmp;*.webp;*.gif|Videos|*.mp4;*.webm|All files|*.*"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            AppPaths.EnsureCustomizationDirectoryCreated();
+            var extension = Path.GetExtension(dialog.FileName);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension = ".wallpaper";
+            }
+
+            var destination = Path.Combine(AppPaths.CustomizationDirectory, $"server-bg-{Guid.NewGuid():N}{extension.ToLowerInvariant()}");
+            File.Copy(dialog.FileName, destination, overwrite: false);
+            _serverProfileBackgroundPath = destination;
+            ServerProfileBackgroundText.Text = FormatLocalFileLabel(_serverProfileBackgroundPath, "Default server background");
+            ServerRolesStatusText.Text = "Server background selected. Save server profile to apply it.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            ServerRolesStatusText.Text = "Could not load server background.";
+            AppLog.Write(ex, "Server background copy failed");
+        }
+    }
+
+    private void ServerProfileResetBackgroundButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        _serverProfileBackgroundPath = "";
+        ServerProfileBackgroundText.Text = "Default server background";
+        ServerRolesStatusText.Text = "Server background will be reset after saving.";
+    }
+
+    private async void ServerProfileSaveButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server)
+        {
+            ServerRolesStatusText.Text = "You do not have permission to edit this server.";
+            return;
+        }
+
+        var name = ServerProfileNameInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            ServerRolesStatusText.Text = "Enter a server name.";
+            return;
+        }
+
+        var previousAvatarPath = server.AvatarPath;
+        var wallpaperKey = GetServerWallpaperSectionId(server);
+        _settings.SectionWallpapers.TryGetValue(wallpaperKey, out var previousWallpaper);
+        var previousBackgroundPath = previousWallpaper?.Path;
+
+        server.DisplayName = name;
+        server.AvatarKind = _serverProfileAvatarKind;
+        server.AvatarPath = _serverProfileAvatarPath;
+        server.AvatarVideoStartSeconds = _serverProfileAvatarVideoStartSeconds;
+        server.AvatarVideoDurationSeconds = Math.Clamp(_serverProfileAvatarVideoDurationSeconds, 1, 5);
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Updated server profile", name);
+        SaveServerModeration(server, moderation);
+        server.GroupVersion++;
+
+        if (string.IsNullOrWhiteSpace(_serverProfileBackgroundPath))
+        {
+            _settings.SectionWallpapers.Remove(wallpaperKey);
+        }
+        else
+        {
+            _settings.SectionWallpapers[wallpaperKey] = new SectionWallpaperSettings
+            {
+                Path = _serverProfileBackgroundPath,
+                Mode = "Fill",
+                IsVideo = IsVideoFile(_serverProfileBackgroundPath)
+            };
+        }
+
+        await AppSettingsStore.SaveAsync(_settings);
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        var newAvatarRef = GetKnownSyncedMediaRef(server.AvatarPath);
+        var newBackgroundRef = GetKnownSyncedMediaRef(_serverProfileBackgroundPath);
+        await DeleteSyncedMediaIfReplacedAsync(GetKnownSyncedMediaRef(previousAvatarPath), newAvatarRef);
+        await DeleteSyncedMediaIfReplacedAsync(GetKnownSyncedMediaRef(previousBackgroundPath), newBackgroundRef);
+        await BroadcastGroupSnapshotAsync(server);
+        ChatTitle.Text = name;
+        ServerChannelsServerNameText.Text = name;
+        ApplyCustomization();
+        RefreshServerRolesOverlay(server);
+        RefreshServerChannelsPanel();
+        RefreshGroupMembersPanel();
+        DeleteAvatarFileIfOwned(previousAvatarPath, server.AvatarPath);
+        DeleteCustomizationFileIfOwned(previousBackgroundPath, _serverProfileBackgroundPath);
+        ServerRolesStatusText.Text = "Server profile saved.";
+    }
+
+    private string GetKnownSyncedMediaRef(string? pathOrRef)
+    {
+        if (string.IsNullOrWhiteSpace(pathOrRef))
+        {
+            return "";
+        }
+
+        if (TryParseMediaRef(pathOrRef, out _, out _))
+        {
+            return pathOrRef;
+        }
+
+        return _syncedMediaRefs.TryGetValue(pathOrRef, out var mediaRef) ? mediaRef : "";
+    }
+
+    private async Task DeleteSyncedMediaIfReplacedAsync(string oldRef, string newRef)
+    {
+        if (_serverHistory is null ||
+            string.IsNullOrWhiteSpace(oldRef) ||
+            string.Equals(oldRef, newRef, StringComparison.OrdinalIgnoreCase) ||
+            !TryParseMediaRef(oldRef, out var mediaId, out _))
+        {
+            return;
+        }
+
+        try
+        {
+            await _serverHistory.DeleteMediaAsync(mediaId, _stop.Token);
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested && ex is HttpRequestException or IOException or TaskCanceledException or InvalidOperationException)
+        {
+            AppLog.Write(ex, $"Synced server media delete failed: media={mediaId}");
+        }
+    }
+
+    private void RefreshServerRolesOverlay(ContactViewModel server)
+    {
+        _serverRoles.Clear();
+        _serverRoleMembers.Clear();
+        _serverRolePermissions.Clear();
+        _serverRoleChannelPermissions.Clear();
+        _serverBans.Clear();
+        _serverAuditEntries.Clear();
+        ServerRolesTitleText.Text = $"{server.DisplayName} settings";
+        RefreshServerProfileSection(server);
+        var loadedRoles = LoadServerRoles(server).ToArray();
+        foreach (var role in loadedRoles)
+        {
+            _serverRoles.Add(new ServerRoleEditorViewModel
+            {
+                Id = role.Id,
+                Name = role.Name,
+                Color = string.IsNullOrWhiteSpace(role.Color) ? "#5865f2" : role.Color,
+                IsSystem = role.IsSystem,
+                Position = role.Position,
+                ShowSeparately = role.ShowSeparately
+            });
+        }
+
+        UpdateServerRoleMoveFlags();
+        RefreshServerModerationOverlay(server);
+        ServerRolesList.SelectedIndex = _serverRoles.Count > 0 ? 0 : -1;
+        RefreshServerRoleMembers();
+    }
+
+    private void UpdateServerRoleMoveFlags()
+    {
+        for (var i = 0; i < _serverRoles.Count; i++)
+        {
+            _serverRoles[i].CanMoveUp = i > 0;
+            _serverRoles[i].CanMoveDown = i < _serverRoles.Count - 1;
+        }
+    }
+
+    private void RefreshServerModerationOverlay(ContactViewModel server)
+    {
+        _isRefreshingServerModeration = true;
+        try
+        {
+            _serverBans.Clear();
+            _serverAuditEntries.Clear();
+            var moderation = LoadServerModeration(server);
+            ServerAuditEnabledCheckBox.IsChecked = moderation.AuditEnabled;
+            ServerAuditAutoCleanupCheckBox.IsChecked = moderation.AuditAutoCleanup;
+            ServerAuditRetentionDaysInput.Text = Math.Clamp(moderation.AuditRetentionDays <= 0 ? 20 : moderation.AuditRetentionDays, 1, 3650).ToString(CultureInfo.InvariantCulture);
+            ServerInviteExpiryDaysInput.Text = Math.Clamp(moderation.InviteExpiryDays <= 0 ? 7 : moderation.InviteExpiryDays, 1, 30).ToString(CultureInfo.InvariantCulture);
+
+            foreach (var ban in (moderation.Bans ?? []).OrderByDescending(x => x.BannedAtUtc))
+            {
+                _serverBans.Add(new ServerBanViewModel
+                {
+                    UserId = ban.UserId,
+                    DisplayName = string.IsNullOrWhiteSpace(ban.DisplayName) ? ban.UserId : ban.DisplayName,
+                    Type = string.IsNullOrWhiteSpace(ban.Type) ? "account" : ban.Type,
+                    Reason = ban.Reason
+                });
+            }
+
+            foreach (var entry in (moderation.AuditLog ?? []).OrderByDescending(x => x.CreatedAtUtc).Take(80))
+            {
+                _serverAuditEntries.Add(new ServerAuditEntryViewModel
+                {
+                    Title = $"{entry.ActorDisplayName} ({entry.ActorRole})",
+                    Details = $"{entry.Action}: {entry.Target}",
+                    TimeText = entry.CreatedAtUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture)
+                });
+            }
+        }
+        finally
+        {
+            _isRefreshingServerModeration = false;
+        }
+    }
+
+    private void ServerRolesList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+        => RefreshServerRoleMembers();
+
+    private void RefreshServerRoleMembers()
+    {
+        _isRefreshingServerRoleMembers = true;
+        try
+        {
+            _serverRoleMembers.Clear();
+            _serverRolePermissions.Clear();
+            _serverRoleChannelPermissions.Clear();
+            if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+                ServerRolesList.SelectedItem is not ServerRoleEditorViewModel role)
+            {
+                SelectedServerRoleText.Text = "Select a role to assign members.";
+                SelectedServerRoleNameInput.Text = "";
+                SelectedServerRoleColorInput.Text = "";
+                SelectedServerRoleNameInput.IsEnabled = false;
+                SelectedServerRoleColorInput.IsEnabled = false;
+                SaveServerRoleButton.IsEnabled = false;
+                MoveServerRoleButton.IsEnabled = false;
+                DeleteServerRoleButton.IsEnabled = false;
+                SelectedServerRoleShowSeparatelyCheckBox.IsEnabled = false;
+                SelectedServerRoleShowSeparatelyCheckBox.IsChecked = false;
+                return;
+            }
+
+            SelectedServerRoleText.Text = $"Assign {role.DisplayName} to server members.";
+            SelectedServerRoleNameInput.IsEnabled = true;
+            SelectedServerRoleColorInput.IsEnabled = true;
+            SaveServerRoleButton.IsEnabled = true;
+            MoveServerRoleButton.IsEnabled = role.CanMoveDown || role.CanMoveUp;
+            DeleteServerRoleButton.IsEnabled = role.CanDelete;
+            SelectedServerRoleShowSeparatelyCheckBox.IsEnabled = true;
+            SelectedServerRoleShowSeparatelyCheckBox.IsChecked = role.ShowSeparately;
+            SelectedServerRoleNameInput.Text = role.DisplayName;
+            SelectedServerRoleColorInput.Text = NormalizeServerRoleColor(role.Color);
+            var roles = LoadServerRoles(server);
+            var rolePayload = roles.FirstOrDefault(x => string.Equals(x.Id, role.Id, StringComparison.OrdinalIgnoreCase));
+            var basePermissions = SplitPermissionIds(rolePayload?.Permissions ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var permission in ServerPermissionCatalog)
+            {
+                _serverRolePermissions.Add(new ServerPermissionToggleViewModel
+                {
+                    Id = permission.Id,
+                    DisplayName = permission.DisplayName,
+                    Description = permission.Description,
+                    IsEnabled = string.Equals(rolePayload?.Permissions, "all", StringComparison.OrdinalIgnoreCase) ||
+                                basePermissions.Contains(permission.Id)
+                });
+            }
+
+            var overrides = rolePayload is null
+                ? Array.Empty<ServerChannelPermissionOverridePayload>()
+                : LoadChannelOverrides(rolePayload);
+            foreach (var channel in LoadServerChannels(server))
+            {
+                var channelOverride = overrides.FirstOrDefault(x => string.Equals(x.ChannelId, channel.Id, StringComparison.OrdinalIgnoreCase));
+                var allow = SplitPermissionIds(channelOverride?.Allow ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var deny = SplitPermissionIds(channelOverride?.Deny ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var permissions = string.Equals(rolePayload?.Permissions, "all", StringComparison.OrdinalIgnoreCase)
+                    ? ServerPermissionCatalog.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    : basePermissions;
+                _serverRoleChannelPermissions.Add(new ServerChannelAccessViewModel
+                {
+                    ChannelId = channel.Id,
+                    DisplayName = string.Equals(channel.Type, "voice", StringComparison.OrdinalIgnoreCase)
+                        ? $"♪ {channel.Name}"
+                        : $"# {channel.Name}",
+                    Type = channel.Type,
+                    CanView = allow.Contains(ServerPermissionViewChannel) ||
+                              (!deny.Contains(ServerPermissionViewChannel) && permissions.Contains(ServerPermissionViewChannel)),
+                    CanSend = allow.Contains(ServerPermissionSendMessages) ||
+                              (!deny.Contains(ServerPermissionSendMessages) && permissions.Contains(ServerPermissionSendMessages)),
+                    CanJoinVoice = allow.Contains(ServerPermissionJoinVoice) ||
+                                   (!deny.Contains(ServerPermissionJoinVoice) && permissions.Contains(ServerPermissionJoinVoice))
+                });
+            }
+
+            var assignedMemberIds = SplitRoleIds(rolePayload?.MemberIds ?? "").ToHashSet(StringComparer.Ordinal);
+            foreach (var member in LoadGroupMembers(server)
+                         .OrderByDescending(x => string.Equals(x.UserId, server.GroupOwnerUserId, StringComparison.Ordinal))
+                         .ThenBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+            {
+                var memberRoleIds = SplitRoleIds(member.RoleIds);
+                _serverRoleMembers.Add(new ServerMemberRoleAssignmentViewModel
+                {
+                    UserId = member.UserId,
+                    DisplayName = string.IsNullOrWhiteSpace(member.DisplayName) ? member.UserId : member.DisplayName,
+                    HasRole = assignedMemberIds.Contains(member.UserId) ||
+                              memberRoleIds.Contains(role.Id, StringComparer.OrdinalIgnoreCase)
+                });
+            }
+        }
+        finally
+        {
+            _isRefreshingServerRoleMembers = false;
+        }
+    }
+
+    private async void CreateServerRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server)
+        {
+            return;
+        }
+
+        var roleName = ServerRoleNameInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(roleName))
+        {
+            ServerRolesStatusText.Text = "Enter a role name.";
+            return;
+        }
+
+        var roleColor = NormalizeServerRoleColor(ServerRoleColorInput.Text);
+
+        var roles = LoadServerRoles(server).ToList();
+        var baseId = NormalizeRoleId(roleName);
+        var roleId = baseId;
+        var suffix = 2;
+        while (roles.Any(x => string.Equals(x.Id, roleId, StringComparison.OrdinalIgnoreCase)))
+        {
+            roleId = $"{baseId}-{suffix++}";
+        }
+
+        var position = roles.Where(x => !x.IsSystem).Select(x => x.Position).DefaultIfEmpty(10).Max() + 1;
+        roles.Add(new ServerRolePayload(roleId, roleName, roleColor, "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak", position, false));
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Created role", roleName);
+        SaveServerModeration(server, moderation);
+        SaveServerRoles(server, roles);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        ServerRoleNameInput.Clear();
+        RefreshServerRolesOverlay(server);
+        ServerRolesList.SelectedItem = _serverRoles.FirstOrDefault(x => string.Equals(x.Id, roleId, StringComparison.OrdinalIgnoreCase));
+        RefreshGroupMembersPanel();
+        ServerRolesStatusText.Text = $"Created role {roleName}.";
+    }
+
+    private void CreateServerRoleColorSwatch_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button { Tag: string color })
+        {
+            ServerRoleColorInput.Text = NormalizeServerRoleColor(color);
+        }
+    }
+
+    private void ServerRoleColorSwatch_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button { Tag: string color })
+        {
+            SelectedServerRoleColorInput.Text = NormalizeServerRoleColor(color);
+        }
+    }
+
+    private async void SaveServerRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server ||
+            ServerRolesList.SelectedItem is not ServerRoleEditorViewModel selectedRole)
+        {
+            return;
+        }
+
+        var roleName = SelectedServerRoleNameInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(roleName))
+        {
+            ServerRolesStatusText.Text = "Enter a role name.";
+            return;
+        }
+
+        var roleColor = NormalizeServerRoleColor(SelectedServerRoleColorInput.Text);
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, selectedRole.Id, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0)
+        {
+            ServerRolesStatusText.Text = "Role was not found.";
+            return;
+        }
+
+        roles[roleIndex] = roles[roleIndex] with
+        {
+            Name = roleName,
+            Color = roleColor
+        };
+
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Updated role", roleName);
+        SaveServerModeration(server, moderation);
+        await SaveServerRolesAndBroadcastAsync(server, roles);
+        RefreshServerRolesOverlay(server);
+        ServerRolesList.SelectedItem = _serverRoles.FirstOrDefault(x =>
+            string.Equals(x.Id, selectedRole.Id, StringComparison.OrdinalIgnoreCase));
+        RefreshServerChannelsPanel();
+        ServerRolesStatusText.Text = $"Saved role {roleName}.";
+    }
+
+    private async void DeleteServerRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (ServerRolesList.SelectedItem is not ServerRoleEditorViewModel selectedRole)
+        {
+            return;
+        }
+
+        await DeleteServerRoleAsync(selectedRole);
+    }
+
+    private async void DeleteServerRoleContextMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem { DataContext: ServerRoleEditorViewModel selectedRole })
+        {
+            return;
+        }
+
+        ServerRolesList.SelectedItem = selectedRole;
+        await DeleteServerRoleAsync(selectedRole);
+    }
+
+    private async Task DeleteServerRoleAsync(ServerRoleEditorViewModel selectedRole)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server ||
+            !selectedRole.CanDelete)
+        {
+            return;
+        }
+
+        if (!await ShowAppConfirmDialogAsync(
+                "Delete role",
+                $"Delete role {selectedRole.DisplayName}? Members will lose this role.",
+                "Delete",
+                "Cancel",
+                danger: true))
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).Where(x => !string.Equals(x.Id, selectedRole.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+        var members = LoadGroupMembers(server)
+            .Select(x =>
+            {
+                var roleIds = SplitRoleIds(x.RoleIds).Where(id => !string.Equals(id, selectedRole.Id, StringComparison.OrdinalIgnoreCase));
+                return x with { RoleIds = JoinRoleIds(roleIds) };
+            })
+            .ToList();
+        SaveGroupMembers(server, members);
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Deleted role", selectedRole.DisplayName);
+        SaveServerModeration(server, moderation);
+        await SaveServerRolesAndBroadcastAsync(server, ReindexServerRoles(roles));
+        RefreshServerRolesOverlay(server);
+        RefreshServerChannelsPanel();
+        ServerRolesStatusText.Text = $"Deleted role {selectedRole.DisplayName}.";
+    }
+
+    private async void MoveServerRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (ServerRolesList.SelectedItem is not ServerRoleEditorViewModel role)
+        {
+            return;
+        }
+
+        await MoveServerRoleAsync(role.Id, Math.Min(ServerRolesList.SelectedIndex + 1, _serverRoles.Count - 1));
+    }
+
+    private async void SelectedServerRoleShowSeparatelyCheckBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerRoleMembers ||
+            _selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server ||
+            ServerRolesList.SelectedItem is not ServerRoleEditorViewModel selectedRole)
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, selectedRole.Id, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0)
+        {
+            return;
+        }
+
+        var showSeparately = SelectedServerRoleShowSeparatelyCheckBox.IsChecked == true;
+        roles[roleIndex] = roles[roleIndex] with { ShowSeparately = showSeparately };
+        var moderation = AddServerAuditEntry(
+            server,
+            LoadServerModeration(server),
+            showSeparately ? "Enabled role grouping" : "Disabled role grouping",
+            roles[roleIndex].Name);
+        SaveServerModeration(server, moderation);
+        await SaveServerRolesAndBroadcastAsync(server, roles);
+        RefreshServerRolesOverlay(server);
+        ServerRolesList.SelectedItem = _serverRoles.FirstOrDefault(x => string.Equals(x.Id, selectedRole.Id, StringComparison.OrdinalIgnoreCase));
+        ServerRolesStatusText.Text = "Role display setting saved.";
+    }
+
+    private void ServerRolesList_OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var item = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
+        if (item?.DataContext is not ServerRoleEditorViewModel role)
+        {
+            ResetServerRoleDrag();
+            return;
+        }
+
+        _serverRoleDragStartPoint = e.GetPosition(null);
+        _serverRoleDragRoleId = role.Id;
+        _serverRoleLiveDragActive = false;
+        _serverRoleReorderDirty = false;
+    }
+
+    private void ServerRolesList_OnPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed ||
+            string.IsNullOrWhiteSpace(_serverRoleDragRoleId))
+        {
+            ResetServerRoleDrag();
+            return;
+        }
+
+        var position = e.GetPosition(null);
+        if (!_serverRoleLiveDragActive &&
+            Math.Abs(position.X - _serverRoleDragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(position.Y - _serverRoleDragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        _serverRoleLiveDragActive = true;
+        var targetItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
+        if (targetItem?.DataContext is not ServerRoleEditorViewModel targetRole ||
+            string.Equals(targetRole.Id, _serverRoleDragRoleId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var fromIndex = _serverRoles
+            .Select((role, index) => new { role, index })
+            .FirstOrDefault(x => string.Equals(x.role.Id, _serverRoleDragRoleId, StringComparison.OrdinalIgnoreCase))
+            ?.index ?? -1;
+        var targetIndex = _serverRoles.IndexOf(targetRole);
+        if (fromIndex < 0 || targetIndex < 0 || fromIndex == targetIndex)
+        {
+            return;
+        }
+
+        var movingRole = _serverRoles[fromIndex];
+        _serverRoles.Move(fromIndex, targetIndex);
+        UpdateServerRoleMoveFlags();
+        ServerRolesList.SelectedItem = movingRole;
+        _serverRoleReorderDirty = true;
+        e.Handled = true;
+    }
+
+    private async void ServerRolesList_OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        var roleId = _serverRoleDragRoleId;
+        var shouldSave = _serverRoleReorderDirty && !string.IsNullOrWhiteSpace(roleId);
+        ResetServerRoleDrag();
+        if (shouldSave)
+        {
+            await PersistServerRoleOrderAsync(roleId!);
+        }
+    }
+
+    private void ServerRolesList_OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        => ResetServerRoleDrag();
+
+    private void ResetServerRoleDrag()
+    {
+        _serverRoleDragRoleId = null;
+        _serverRoleLiveDragActive = false;
+        _serverRoleReorderDirty = false;
+    }
+
+    private async void ServerRolesList_OnDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (_serverRoleLiveDragActive)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (!e.Data.GetDataPresent(typeof(string)) ||
+            e.Data.GetData(typeof(string)) is not string roleId)
+        {
+            return;
+        }
+
+        var dropTarget = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
+        var targetIndex = dropTarget is null
+            ? _serverRoles.Count - 1
+            : ServerRolesList.ItemContainerGenerator.IndexFromContainer(dropTarget);
+        await MoveServerRoleAsync(roleId, targetIndex);
+    }
+
+    private async Task PersistServerRoleOrderAsync(string selectedRoleId)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server)
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var byId = roles.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
+        var ordered = new List<ServerRolePayload>();
+        foreach (var visibleRole in _serverRoles)
+        {
+            if (byId.Remove(visibleRole.Id, out var payload))
+            {
+                ordered.Add(payload);
+            }
+        }
+
+        ordered.AddRange(byId.Values.OrderBy(x => x.Position));
+        ordered = ReindexServerRoles(ordered);
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Reordered roles", server.DisplayName);
+        SaveServerModeration(server, moderation);
+        await SaveServerRolesAndBroadcastAsync(server, ordered);
+        RefreshServerRolesOverlay(server);
+        ServerRolesList.SelectedItem = _serverRoles.FirstOrDefault(x => string.Equals(x.Id, selectedRoleId, StringComparison.OrdinalIgnoreCase));
+        ServerRolesStatusText.Text = "Role order saved.";
+    }
+
+    private async Task MoveServerRoleAsync(string roleId, int targetIndex)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server)
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var role = roles.FirstOrDefault(x => string.Equals(x.Id, roleId, StringComparison.OrdinalIgnoreCase));
+        if (role is null)
+        {
+            return;
+        }
+
+        roles.Remove(role);
+        targetIndex = Math.Clamp(targetIndex, 0, roles.Count);
+        roles.Insert(targetIndex, role);
+        roles = ReindexServerRoles(roles);
+        var moderation = AddServerAuditEntry(server, LoadServerModeration(server), "Moved role", role.Name);
+        SaveServerModeration(server, moderation);
+        await SaveServerRolesAndBroadcastAsync(server, roles);
+        RefreshServerRolesOverlay(server);
+        ServerRolesList.SelectedItem = _serverRoles.FirstOrDefault(x => string.Equals(x.Id, roleId, StringComparison.OrdinalIgnoreCase));
+        ServerRolesStatusText.Text = $"Moved role {role.Name}.";
+    }
+
+    private static List<ServerRolePayload> ReindexServerRoles(IEnumerable<ServerRolePayload> roles)
+        => roles
+            .Select((role, index) => role with { Position = index })
+            .ToList();
+
+    private static T? FindAncestor<T>(DependencyObject? current)
+        where T : DependencyObject
+    {
+        while (current is not null)
+        {
+            if (current is T target)
+            {
+                return target;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
+    }
+
+    private async void ServerRoleMemberCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerRoleMembers ||
+            _selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server ||
+            ServerRolesList.SelectedItem is not ServerRoleEditorViewModel role ||
+            sender is not System.Windows.Controls.CheckBox { DataContext: ServerMemberRoleAssignmentViewModel assignment })
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, role.Id, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0)
+        {
+            return;
+        }
+
+        var members = LoadGroupMembers(server);
+        var memberIndex = members.FindIndex(x => string.Equals(x.UserId, assignment.UserId, StringComparison.Ordinal));
+        if (memberIndex < 0)
+        {
+            return;
+        }
+
+        var roleMemberIds = SplitRoleIds(roles[roleIndex].MemberIds).ToHashSet(StringComparer.Ordinal);
+        var memberRoleIds = SplitRoleIds(members[memberIndex].RoleIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (assignment.HasRole)
+        {
+            roleMemberIds.Add(assignment.UserId);
+            memberRoleIds.Add(role.Id);
+        }
+        else
+        {
+            roleMemberIds.Remove(assignment.UserId);
+            memberRoleIds.Remove(role.Id);
+        }
+
+        roles[roleIndex] = roles[roleIndex] with { MemberIds = JoinRoleIds(roleMemberIds) };
+        members[memberIndex] = members[memberIndex] with { RoleIds = JoinRoleIds(memberRoleIds) };
+        SaveServerRoles(server, roles);
+        SaveGroupMembers(server, members);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshGroupMembersPanel();
+        ServerRolesStatusText.Text = "Role assignments saved.";
+    }
+
+    private async void ServerRolePermissionCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerRoleMembers ||
+            _selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server ||
+            ServerRolesList.SelectedItem is not ServerRoleEditorViewModel role ||
+            string.Equals(role.Id, "owner", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, role.Id, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0)
+        {
+            return;
+        }
+
+        var permissions = _serverRolePermissions
+            .Where(x => x.IsEnabled)
+            .Select(x => x.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        roles[roleIndex] = roles[roleIndex] with { Permissions = JoinPermissionIds(permissions) };
+        await SaveServerRolesAndBroadcastAsync(server, roles);
+        RefreshServerRoleMembers();
+        RefreshServerChannelsPanel();
+        ServerRolesStatusText.Text = "Role permissions saved.";
+    }
+
+    private async void ServerRoleChannelAccessCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerRoleMembers ||
+            _selectedContact is not { IsGroup: true, IsServer: true, CanEditGroup: true } server ||
+            ServerRolesList.SelectedItem is not ServerRoleEditorViewModel role ||
+            string.Equals(role.Id, "owner", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, role.Id, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0)
+        {
+            return;
+        }
+
+        var rolePayload = roles[roleIndex];
+        var overrides = new List<ServerChannelPermissionOverridePayload>();
+        var basePermissions = SplitPermissionIds(rolePayload.Permissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var channel in _serverRoleChannelPermissions)
+        {
+            var allow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var deny = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            UpdateOverridePermission(channel.CanView, ServerPermissionViewChannel, basePermissions, allow, deny);
+            if (channel.IsText)
+            {
+                UpdateOverridePermission(channel.CanSend, ServerPermissionSendMessages, basePermissions, allow, deny);
+            }
+
+            if (channel.IsVoice)
+            {
+                UpdateOverridePermission(channel.CanJoinVoice, ServerPermissionJoinVoice, basePermissions, allow, deny);
+            }
+
+            overrides.Add(new ServerChannelPermissionOverridePayload(
+                channel.ChannelId,
+                JoinPermissionIds(allow),
+                JoinPermissionIds(deny)));
+        }
+
+        roles[roleIndex] = rolePayload with { ChannelOverridesJson = SaveChannelOverrides(overrides) };
+        await SaveServerRolesAndBroadcastAsync(server, roles);
+        RefreshServerChannelsPanel();
+        ServerRolesStatusText.Text = "Channel access saved.";
+    }
+
+    private static void UpdateOverridePermission(
+        bool enabled,
+        string permission,
+        ISet<string> basePermissions,
+        ISet<string> allow,
+        ISet<string> deny)
+    {
+        if (enabled && !basePermissions.Contains(permission))
+        {
+            allow.Add(permission);
+        }
+        else if (!enabled && basePermissions.Contains(permission))
+        {
+            deny.Add(permission);
+        }
+    }
+
+    private async Task SaveServerRolesAndBroadcastAsync(ContactViewModel server, IReadOnlyList<ServerRolePayload> roles)
+    {
+        SaveServerRoles(server, roles);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshGroupMembersPanel();
+    }
+
+    private async Task SaveServerChannelsAndBroadcastAsync(ContactViewModel server)
+    {
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshGroupMembersPanel();
+    }
+
+    private async void ServerBanUnbanButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server ||
+            sender is not System.Windows.Controls.Button { DataContext: ServerBanViewModel ban } ||
+            !HasServerPermission(server, ServerPermissionManageMembers))
+        {
+            return;
+        }
+
+        var moderation = LoadServerModeration(server);
+        var bans = (moderation.Bans ?? [])
+            .Where(x => !string.Equals(x.UserId, ban.UserId, StringComparison.Ordinal))
+            .ToArray();
+        moderation = moderation with { Bans = bans };
+        moderation = AddServerAuditEntry(server, moderation, "Unbanned member", ban.DisplayName);
+        SaveServerModeration(server, moderation);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshServerModerationOverlay(server);
+        ServerRolesStatusText.Text = $"Unbanned {ban.DisplayName}.";
+    }
+
+    private async void ServerAuditEnabledCheckBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerModeration ||
+            _selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageServer))
+        {
+            return;
+        }
+
+        var moderation = LoadServerModeration(server) with
+        {
+            AuditEnabled = ServerAuditEnabledCheckBox.IsChecked == true
+        };
+        if (moderation.AuditEnabled)
+        {
+            moderation = AddServerAuditEntry(server, moderation, "Enabled audit log", server.DisplayName);
+        }
+
+        SaveServerModeration(server, moderation);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshServerModerationOverlay(server);
+        ServerRolesStatusText.Text = moderation.AuditEnabled ? "Audit log enabled." : "Audit log disabled.";
+    }
+
+    private async void ServerAuditSettings_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerModeration ||
+            _selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageServer))
+        {
+            return;
+        }
+
+        var retentionDays = int.TryParse(ServerAuditRetentionDaysInput.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Clamp(parsed, 1, 3650)
+            : 20;
+        ServerAuditRetentionDaysInput.Text = retentionDays.ToString(CultureInfo.InvariantCulture);
+        var moderation = LoadServerModeration(server) with
+        {
+            AuditAutoCleanup = ServerAuditAutoCleanupCheckBox.IsChecked == true,
+            AuditRetentionDays = retentionDays
+        };
+        moderation = AddServerAuditEntry(server, moderation, "Updated audit retention", $"{retentionDays} days");
+        SaveServerModeration(server, moderation);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshServerModerationOverlay(server);
+        ServerRolesStatusText.Text = "Audit cleanup setting saved.";
+    }
+
+    private async void ServerInviteExpiryDaysInput_OnLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingServerModeration ||
+            _selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageServer))
+        {
+            return;
+        }
+
+        var days = int.TryParse(ServerInviteExpiryDaysInput.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Clamp(parsed, 1, 30)
+            : 7;
+        ServerInviteExpiryDaysInput.Text = days.ToString(CultureInfo.InvariantCulture);
+        var moderation = LoadServerModeration(server) with { InviteExpiryDays = days };
+        moderation = AddServerAuditEntry(server, moderation, "Updated invite expiry", $"{days} day(s)");
+        SaveServerModeration(server, moderation);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshServerModerationOverlay(server);
+        ServerRolesStatusText.Text = $"Invite links now expire after {days} day(s).";
+    }
+
     private void GroupMembersButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_selectedContact is not { IsGroup: true })
@@ -6355,9 +11431,6 @@ public partial class MainWindow : Window
 
         SetGroupMembersPanelVisible(GroupMembersPanel.Visibility != Visibility.Visible);
     }
-
-    private void GroupMembersCloseButton_OnClick(object sender, RoutedEventArgs e)
-        => SetGroupMembersPanelVisible(false);
 
     private void SetGroupMembersPanelVisible(bool visible)
     {
@@ -6370,8 +11443,8 @@ public partial class MainWindow : Window
         {
             RefreshGroupMembersPanel();
             GroupMembersPanel.Visibility = Visibility.Visible;
-            GroupMembersGapColumn.Width = new GridLength(14);
-            GroupMembersColumn.Width = new GridLength(320);
+            GroupMembersGapColumn.Width = new GridLength(10);
+            GroupMembersColumn.Width = new GridLength(240);
             GroupMembersPanel.BeginAnimation(
                 OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(140))
@@ -6396,12 +11469,22 @@ public partial class MainWindow : Window
         }
 
         EnsureGroupMetadata(group);
-        var canManage = group.IsCurrentUserGroupOwner;
-        foreach (var member in LoadGroupMembers(group)
-                     .OrderByDescending(x => string.Equals(x.UserId, group.GroupOwnerUserId, StringComparison.Ordinal))
-                     .ThenBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        var canManage = group.IsCurrentUserGroupOwner ||
+                        (group.IsServer && HasServerPermission(group, ServerPermissionManageMembers));
+        var roles = LoadServerRoles(group);
+        var members = LoadGroupMembers(group);
+        var orderedMembers = group.IsServer
+            ? OrderServerMembersByDisplayedRole(group, members, roles)
+            : members
+                .OrderByDescending(x => string.Equals(x.UserId, group.GroupOwnerUserId, StringComparison.Ordinal))
+                .ThenBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .Select(x => (Member: x, Role: (ServerRolePayload?)null, ShowHeader: false));
+
+        foreach (var item in orderedMembers)
         {
+            var member = item.Member;
             var contact = _contacts.FirstOrDefault(x => x.UserId == member.UserId && !x.IsGroup);
+            var isOwner = string.Equals(member.UserId, group.GroupOwnerUserId, StringComparison.Ordinal);
             _groupMembers.Add(new GroupMemberViewModel
             {
                 UserId = member.UserId,
@@ -6418,14 +11501,83 @@ public partial class MainWindow : Window
                     ? GetCurrentStatus()
                     : contact?.Status ?? UserPresenceStatus.Offline,
                 CustomStatus = string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal)
-                    ? _customStatusText
+                    ? GetPublishedCustomStatus()
                     : contact?.CustomStatus ?? "",
-                IsOwner = string.Equals(member.UserId, group.GroupOwnerUserId, StringComparison.Ordinal),
+                IsOwner = isOwner,
                 IsFriend = contact is not null,
                 IsSelf = string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal),
-                CanManageGroup = canManage
+                CanManageGroup = canManage,
+                RoleSummary = BuildRoleSummary(roles, member, isOwner),
+                RoleGroupName = item.Role?.Name ?? "",
+                RoleGroupColor = item.Role?.Color ?? "#9CA3AF",
+                DisplayNameColor = group.IsServer ? BuildMemberDisplayNameColor(roles, member, isOwner) : "#F2F3F5",
+                ShowRoleGroupHeader = item.ShowHeader
             });
         }
+    }
+
+    private static string BuildMemberDisplayNameColor(IReadOnlyList<ServerRolePayload> roles, GroupMemberPayload member, bool isOwner)
+    {
+        var roleIds = GetMemberServerRoleIds(member, roles, isOwner);
+        return roles
+            .Where(x => roleIds.Contains(x.Id) && !string.IsNullOrWhiteSpace(x.Color))
+            .OrderBy(x => x.Position)
+            .Select(x => x.Color.Trim())
+            .FirstOrDefault() ?? "#F2F3F5";
+    }
+
+    private IEnumerable<(GroupMemberPayload Member, ServerRolePayload? Role, bool ShowHeader)> OrderServerMembersByDisplayedRole(
+        ContactViewModel server,
+        IReadOnlyList<GroupMemberPayload> members,
+        IReadOnlyList<ServerRolePayload> roles)
+    {
+        var visibleRoles = roles
+            .Where(x => x.ShowSeparately)
+            .OrderBy(x => x.Position)
+            .ToArray();
+        var memberRole = new List<(GroupMemberPayload Member, ServerRolePayload? Role, int RolePosition)>();
+        foreach (var member in members)
+        {
+            var isOwner = string.Equals(member.UserId, server.GroupOwnerUserId, StringComparison.Ordinal);
+            var roleIds = GetMemberServerRoleIds(member, roles, isOwner);
+            var role = visibleRoles.FirstOrDefault(x => roleIds.Contains(x.Id));
+            memberRole.Add((member, role, role?.Position ?? int.MaxValue));
+        }
+
+        string? previousRoleId = null;
+        foreach (var item in memberRole
+                     .OrderBy(x => x.RolePosition)
+                     .ThenByDescending(x => string.Equals(x.Member.UserId, server.GroupOwnerUserId, StringComparison.Ordinal))
+                     .ThenBy(x => x.Member.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var roleId = item.Role?.Id ?? "";
+            var showHeader = item.Role is not null && !string.Equals(previousRoleId, roleId, StringComparison.OrdinalIgnoreCase);
+            previousRoleId = roleId;
+            yield return (item.Member, item.Role, showHeader);
+        }
+    }
+
+    private static HashSet<string> GetMemberServerRoleIds(
+        GroupMemberPayload member,
+        IReadOnlyList<ServerRolePayload> roles,
+        bool isOwner)
+    {
+        var roleIds = SplitRoleIds(member.RoleIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        roleIds.Add("member");
+        if (isOwner)
+        {
+            roleIds.Add("owner");
+        }
+
+        foreach (var role in roles)
+        {
+            if (SplitRoleIds(role.MemberIds).Contains(member.UserId, StringComparer.Ordinal))
+            {
+                roleIds.Add(role.Id);
+            }
+        }
+
+        return roleIds;
     }
 
     private async void GroupMemberAddFriendMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -6495,7 +11647,7 @@ public partial class MainWindow : Window
         await _history.SaveContactAsync(group);
         await BroadcastGroupSnapshotAsync(group);
         RefreshGroupMembersPanel();
-        NetworkStatusText.Text = $"{member.DisplayName} is now group owner";
+        NetworkStatusText.Text = $"{member.DisplayName} is now {GroupKindName(group)} owner";
     }
 
     private async void GroupMemberRemoveMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -6519,7 +11671,79 @@ public partial class MainWindow : Window
         }
 
         RefreshGroupMembersPanel();
-        NetworkStatusText.Text = $"Removed {member.DisplayName} from group";
+        NetworkStatusText.Text = $"Removed {member.DisplayName} from {GroupKindName(group)}";
+    }
+
+    private async void GroupMemberBanMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem { DataContext: GroupMemberViewModel { CanRemoveFromGroup: true } member } ||
+            _selectedContact is not { IsGroup: true, IsServer: true } server ||
+            !HasServerPermission(server, ServerPermissionManageMembers))
+        {
+            return;
+        }
+
+        var banDevice = await ShowAppConfirmDialogAsync(
+            "Ban member",
+            $"Ban {member.DisplayName} as account + device? Choose No for account-only ban.",
+            "Account + device",
+            "Account only",
+            danger: true);
+
+        if (!await ShowAppConfirmDialogAsync(
+                "Confirm ban",
+                $"Ban {member.DisplayName} from {server.DisplayName}?",
+                "Ban",
+                "Cancel",
+                danger: true))
+        {
+            return;
+        }
+
+        var members = LoadGroupMembers(server);
+        var removed = members.FirstOrDefault(x => string.Equals(x.UserId, member.UserId, StringComparison.Ordinal));
+        members = members.Where(x => !string.Equals(x.UserId, member.UserId, StringComparison.Ordinal)).ToList();
+        SaveGroupMembers(server, members);
+
+        var roles = LoadServerRoles(server)
+            .Select(role =>
+            {
+                var memberIds = SplitRoleIds(role.MemberIds)
+                    .Where(x => !string.Equals(x, member.UserId, StringComparison.Ordinal))
+                    .ToArray();
+                return role with { MemberIds = JoinRoleIds(memberIds) };
+            })
+            .ToArray();
+        SaveServerRoles(server, roles);
+
+        var moderation = LoadServerModeration(server);
+        var bans = (moderation.Bans ?? [])
+            .Where(x => !string.Equals(x.UserId, member.UserId, StringComparison.Ordinal))
+            .ToList();
+        var banType = banDevice ? "device" : "account";
+        bans.Insert(0, new ServerBanPayload(
+            member.UserId,
+            member.DisplayName,
+            banType,
+            "",
+            _profile?.UserId ?? "",
+            DateTimeOffset.UtcNow));
+        moderation = moderation with { Bans = bans };
+        moderation = AddServerAuditEntry(server, moderation, "Banned member", $"{member.DisplayName} ({banType})");
+        SaveServerModeration(server, moderation);
+
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        if (removed is not null)
+        {
+            await SendGroupActionAsync(GroupKickIntent, new GroupActionPayload(server.UserId, server.GroupVersion, _profile?.UserId ?? "", member.UserId), removed);
+        }
+
+        RefreshGroupMembersPanel();
+        RefreshServerModerationOverlay(server);
+        NetworkStatusText.Text = $"Banned {member.DisplayName} from {server.DisplayName}";
     }
 
     private async void MessageInput_OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -7097,6 +12321,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_miniProfileEmojiTargetActive &&
+            MiniProfileLayer.Visibility == Visibility.Visible &&
+            _activeMiniProfile is not null)
+        {
+            _activeMiniProfile.SelectedEmoji = emoji;
+            InsertTextIntoTextBox(MiniProfileMessageInput, emoji);
+            SetPickerPanelVisible(EmojiPanel, false);
+            return;
+        }
+
         InsertTextIntoMessageInput(emoji);
     }
 
@@ -7244,15 +12478,30 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_miniProfileEmojiTargetActive &&
+            MiniProfileLayer.Visibility == Visibility.Visible &&
+            _activeMiniProfile is not null)
+        {
+            _activeMiniProfile.SelectedEmoji = emoji;
+            InsertTextIntoTextBox(MiniProfileMessageInput, emoji);
+            SetPickerPanelVisible(EmojiPanel, false);
+            return;
+        }
+
         InsertTextIntoMessageInput(emoji);
     }
 
     private void InsertTextIntoMessageInput(string text)
     {
+        InsertTextIntoTextBox(MessageInput, text);
+    }
+
+    private static void InsertTextIntoTextBox(System.Windows.Controls.TextBox target, string text)
+    {
         var normalized = NormalizeEmojiPresentation(text);
-        MessageInput.Focus();
-        MessageInput.SelectedText = normalized;
-        MessageInput.CaretIndex += normalized.Length;
+        target.Focus();
+        target.SelectedText = normalized;
+        target.CaretIndex += normalized.Length;
     }
 
     private void RefreshMessageInputEmojiPreview()
@@ -7422,6 +12671,52 @@ public partial class MainWindow : Window
         }
 
         return new Uri($"https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{string.Join("-", codepoints)}.png");
+    }
+
+    private static string[] BuildMiniProfileEmojiChoices()
+    {
+        var values = new List<string>(280);
+
+        void Add(int codepoint)
+        {
+            if (codepoint <= 0)
+            {
+                return;
+            }
+
+            values.Add(char.ConvertFromUtf32(codepoint));
+        }
+
+        void AddRange(int start, int end)
+        {
+            for (var codepoint = start; codepoint <= end; codepoint++)
+            {
+                Add(codepoint);
+            }
+        }
+
+        foreach (var codepoint in new[]
+        {
+            0x1F525, 0x1F602, 0x2764, 0x1F44D, 0x1F44B, 0x1F60E, 0x1F389, 0x1F914,
+            0x1F680, 0x1F4AF, 0x1F44C, 0x1F4AA, 0x1F642, 0x1F60A, 0x1F923, 0x1F929,
+            0x1F970, 0x1F621, 0x1F62D, 0x1F64F, 0x1F44F, 0x1F91D, 0x1F48E, 0x2728
+        })
+        {
+            Add(codepoint);
+        }
+
+        AddRange(0x1F600, 0x1F64F);
+        AddRange(0x1F400, 0x1F4FF);
+        AddRange(0x1F300, 0x1F3FF);
+        AddRange(0x1F680, 0x1F6C5);
+        AddRange(0x1F900, 0x1F9FF);
+        AddRange(0x2600, 0x27BF);
+
+        return values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .Take(260)
+            .ToArray();
     }
 
     private static IReadOnlyList<EmojiItemViewModel> AllEmojis()
@@ -8023,6 +13318,15 @@ public partial class MainWindow : Window
 
     private void StageFileDraft(string path)
     {
+        if (Directory.Exists(path))
+        {
+            path = CreateZipDraftFromDirectory(path);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+        }
+
         if (!File.Exists(path))
         {
             NetworkStatusText.Text = "The selected file no longer exists.";
@@ -8030,20 +13334,52 @@ public partial class MainWindow : Window
         }
 
         var file = new FileInfo(path);
-        if (file.Length <= 0 || file.Length > 5L * 1024 * 1024 * 1024)
+        const long maxServerFileBytes = 25L * 1024 * 1024;
+        if (file.Length <= 0 || file.Length > maxServerFileBytes)
         {
-            NetworkStatusText.Text = "Files must be between 1 byte and 5 GB.";
+            NetworkStatusText.Text = "Files must be between 1 byte and 25 MB.";
             return;
         }
 
         ClearImageDraft();
         _draftFilePath = path;
         FileDraftNameText.Text = file.Name;
-        FileDraftStatusText.Text = $"{FormatFileSize(file.Length)} - ready for Google Drive";
+        FileDraftStatusText.Text = $"{FormatFileSize(file.Length)} - ready to upload";
         FileDraftProgress.Value = 0;
         FileDraftProgress.Visibility = Visibility.Collapsed;
         FileDraftBar.Visibility = Visibility.Visible;
         MessageInput.Focus();
+    }
+
+    private string CreateZipDraftFromDirectory(string directoryPath)
+    {
+        try
+        {
+            AppPaths.EnsureAttachmentsDirectoryCreated();
+            var directory = new DirectoryInfo(directoryPath);
+            if (!directory.Exists)
+            {
+                NetworkStatusText.Text = "The selected folder no longer exists.";
+                return "";
+            }
+
+            var safeName = string.Join("_", directory.Name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+            if (string.IsNullOrWhiteSpace(safeName))
+            {
+                safeName = "folder";
+            }
+
+            var zipPath = Path.Combine(AppPaths.AttachmentsDirectory, $"{safeName}-{Guid.NewGuid():N}.zip");
+            ZipFile.CreateFromDirectory(directory.FullName, zipPath, CompressionLevel.Fastest, includeBaseDirectory: true);
+            NetworkStatusText.Text = $"Folder compressed to {Path.GetFileName(zipPath)}.";
+            return zipPath;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            AppLog.Write(ex, $"Folder zip staging failed: {directoryPath}");
+            NetworkStatusText.Text = "Could not compress this folder.";
+            return "";
+        }
     }
 
     private void ClearFileDraft()
@@ -8053,7 +13389,7 @@ public partial class MainWindow : Window
         _fileUploadCancellation = null;
         _draftFilePath = "";
         FileDraftNameText.Text = "";
-        FileDraftStatusText.Text = "Ready to upload to Google Drive";
+        FileDraftStatusText.Text = "Ready to upload";
         FileDraftProgress.Value = 0;
         FileDraftProgress.Visibility = Visibility.Collapsed;
         FileDraftBar.Visibility = Visibility.Collapsed;
@@ -8072,14 +13408,9 @@ public partial class MainWindow : Window
         {
             return;
         }
-        if (_googleDrive is null)
+        if (_serverHistory is null)
         {
-            NetworkStatusText.Text = "Google Drive storage was retired. Send images directly; encrypted server file storage is not available in this build.";
-            return;
-        }
-        if (!_googleDrive.IsConnected)
-        {
-            NetworkStatusText.Text = "Connect Google Drive in Settings > Data before sending files.";
+            NetworkStatusText.Text = "Server file storage is not available. Sign in to your account again.";
             return;
         }
 
@@ -8088,36 +13419,37 @@ public partial class MainWindow : Window
         _fileUploadCancellation?.Cancel();
         _fileUploadCancellation?.Dispose();
         _fileUploadCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-        var progress = new Progress<double>(value =>
+        IProgress<double> progress = new Progress<double>(value =>
         {
             FileDraftProgress.Visibility = Visibility.Visible;
             FileDraftProgress.Value = value * 100;
-            FileDraftStatusText.Text = $"Uploading to Google Drive - {value * 100:0}%";
+            FileDraftStatusText.Text = $"Uploading - {value * 100:0}%";
         });
 
         try
         {
             SendButton.IsEnabled = false;
-            var uploaded = await _googleDrive.UploadAsync(path, progress, _fileUploadCancellation.Token);
-            await AppSettingsStore.SaveAsync(_settings);
+            progress.Report(0.2);
             if (_selectedContact?.UserId != targetUserId)
             {
                 throw new InvalidOperationException("Return to the original chat to finish sending this file.");
             }
 
+            var file = new FileInfo(path);
+            var mime = GuessMimeType(path, MessageKinds.File);
             await SendRichMessageAsync(
                 MessageKinds.File,
                 caption,
+                attachmentPath: path,
                 replyTarget: _replyTarget,
-                fileName: uploaded.FileName,
-                fileSizeBytes: uploaded.FileSizeBytes,
-                mimeType: uploaded.MimeType,
-                driveFileId: uploaded.FileId,
-                downloadUrl: uploaded.DownloadUrl,
-                storageProvider: "GoogleDrive");
+                fileName: file.Name,
+                fileSizeBytes: file.Length,
+                mimeType: mime,
+                storageProvider: "ServerMedia");
+            progress.Report(1);
             MessageInput.Clear();
             ClearFileDraft();
-            NetworkStatusText.Text = "File uploaded and sent. The VPS received only its Drive link.";
+            NetworkStatusText.Text = "File uploaded and sent.";
         }
         catch (OperationCanceledException) when (!_stop.IsCancellationRequested)
         {
@@ -8125,7 +13457,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppLog.Write(ex, "Google Drive file send failed");
+            AppLog.Write(ex, "Server file send failed");
             FileDraftStatusText.Text = ex.Message;
             NetworkStatusText.Text = "File upload failed. You can retry without selecting it again.";
         }
@@ -8297,7 +13629,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        path = files.FirstOrDefault(File.Exists) ?? "";
+        path = files.FirstOrDefault(x => File.Exists(x) || Directory.Exists(x)) ?? "";
         return !string.IsNullOrWhiteSpace(path);
     }
 
@@ -8334,6 +13666,27 @@ public partial class MainWindow : Window
         }
 
         BeginForwardMessage(message);
+    }
+
+    private void MessageLinkButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: string url } ||
+            string.IsNullOrWhiteSpace(url) ||
+            !Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, $"Open message link failed: url={url}");
+            NetworkStatusText.Text = "Could not open this link.";
+        }
     }
 
     private void BeginForwardMessage(MessageViewModel message)
@@ -9819,6 +15172,7 @@ public partial class MainWindow : Window
         _messages.Add(message);
         ScrollMessagesToEnd();
         await _history.SaveAsync(message);
+        TouchContactActivity(_selectedContact);
 
         try
         {
@@ -9849,6 +15203,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (group.IsServer && !HasServerPermission(group, ServerPermissionSendMessages, group.SelectedServerChannelId))
+        {
+            NetworkStatusText.Text = "You do not have permission to send messages in this channel.";
+            return;
+        }
+
         MessageInput.Clear();
         var message = new MessageViewModel
         {
@@ -9864,6 +15224,7 @@ public partial class MainWindow : Window
         _messages.Add(message);
         ScrollMessagesToEnd();
         await _history.SaveAsync(message);
+        TouchContactActivity(group);
 
         var sent = 0;
         foreach (var member in LoadGroupMembers(group).Where(x => _profile is null || !string.Equals(x.UserId, _profile.UserId, StringComparison.Ordinal)))
@@ -9872,7 +15233,7 @@ public partial class MainWindow : Window
             {
                 var contact = _contacts.FirstOrDefault(x => x.UserId == member.UserId && !x.IsGroup)
                               ?? CreateContactFromGroupMember(member);
-                var payload = new GroupMessagePayload(group.UserId, body);
+                var payload = new GroupMessagePayload(group.UserId, body, group.SelectedServerChannelId);
                 var packet = CreateProfilePacket(member.UserId, JsonSerializer.Serialize(payload), GroupMessageIntent, member.RelayServer);
                 await SendOverRelayAsync(packet, contact, log: false);
                 sent++;
@@ -9992,6 +15353,7 @@ public partial class MainWindow : Window
         _messages.Add(message);
         ScrollMessagesToEnd();
         await _history.SaveAsync(message);
+        TouchContactActivity(_selectedContact);
         await SendOverRelayAsync(packet, _selectedContact);
         ClearReplyTarget();
     }
@@ -10049,6 +15411,7 @@ public partial class MainWindow : Window
             ScrollMessagesToEnd();
         }
 
+        TouchContactActivity(contact);
         await SendOverRelayAsync(packet, contact);
     }
 
@@ -10308,6 +15671,12 @@ public partial class MainWindow : Window
         var contact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId);
         if (contact is null)
         {
+            if (string.Equals(_settings.PrivacyMessages, "NoOne", StringComparison.OrdinalIgnoreCase))
+            {
+                NetworkStatusText.Text = "Message blocked by privacy settings.";
+                return;
+            }
+
             UpsertFriendRequest(packet);
             _ = RequestProfileFromPacketAsync(packet);
             NetworkStatusText.Text = $"Message request from {packet.FromDisplayName}";
@@ -10322,8 +15691,14 @@ public partial class MainWindow : Window
         {
             _messages.Add(message);
             ScrollMessagesToEnd();
+            MarkContactRead(contact);
+        }
+        else
+        {
+            IncrementUnread(contact);
         }
 
+        TouchContactActivity(contact);
         NetworkStatusText.Text = $"{statusText}: {contact.DisplayName}";
         ShowIncomingNotificationIfNeeded(contact.DisplayName, packet);
     }
@@ -10432,6 +15807,30 @@ public partial class MainWindow : Window
         {
             ApplyMessageGifDimensions(message, dimensions);
         }
+    }
+
+    private void RefreshMessageGrouping()
+    {
+        string? previousSenderId = null;
+        foreach (var message in _messages)
+        {
+            var senderId = GetMessageGroupingSenderId(message);
+            message.IsGroupStart = previousSenderId is null ||
+                                   !string.Equals(previousSenderId, senderId, StringComparison.Ordinal);
+            previousSenderId = senderId;
+        }
+    }
+
+    private string GetMessageGroupingSenderId(MessageViewModel message)
+    {
+        if (!string.IsNullOrWhiteSpace(message.SenderUserId))
+        {
+            return message.SenderUserId;
+        }
+
+        return message.IsOutgoing
+            ? _profile?.UserId ?? ""
+            : message.PeerUserId;
     }
 
     private void ApplyMessageSenderMetadata(MessageViewModel message)
@@ -10618,7 +16017,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var groupBody = JsonSerializer.Serialize(new CallGroupSignalPayload(contact.UserId, body));
+        var channelId = contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "";
+        var groupBody = JsonSerializer.Serialize(new CallGroupSignalPayload(contact.UserId, body, channelId));
         var sent = 0;
         foreach (var member in GetGroupCallTargets(contact))
         {
@@ -12275,6 +17675,7 @@ public partial class MainWindow : Window
     private bool IsScreenShareStageSuppressedByOverlay()
         => SettingsOverlay.Visibility == Visibility.Visible ||
            AddFriendPanel.Visibility == Visibility.Visible ||
+           ServerRolesOverlay.Visibility == Visibility.Visible ||
            AppConfirmDialogOverlay.Visibility == Visibility.Visible ||
            CreateGroupOverlay.Visibility == Visibility.Visible ||
            AvatarEditorOverlay.Visibility == Visibility.Visible ||
@@ -13129,61 +18530,152 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SetGroupVoiceParticipant(ContactViewModel group, string userId, string displayName, string avatarKind, string avatarPath, bool joined)
+    private string GetSelectedServerVoiceChannelId(ContactViewModel server)
+    {
+        if (!server.IsServer)
+        {
+            return "";
+        }
+
+        var channels = LoadServerChannels(server);
+        var selected = channels.FirstOrDefault(x =>
+            string.Equals(x.Id, server.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.Type, "voice", StringComparison.OrdinalIgnoreCase));
+        if (selected is not null)
+        {
+            return selected.Id;
+        }
+
+        return channels.FirstOrDefault(x => string.Equals(x.Type, "voice", StringComparison.OrdinalIgnoreCase))?.Id ?? "voice";
+    }
+
+    private static string NormalizeServerVoiceChannelId(ContactViewModel group, string channelId)
+        => group.IsServer
+            ? (string.IsNullOrWhiteSpace(channelId) ? "voice" : channelId.Trim())
+            : "";
+
+    private static string GetGroupVoiceRoomKey(ContactViewModel group, string channelId = "")
+        => group.IsServer
+            ? $"{group.UserId}:{NormalizeServerVoiceChannelId(group, channelId)}"
+            : group.UserId;
+
+    private static string GetGroupVoiceRoomPrefix(ContactViewModel group)
+        => $"{group.UserId}:";
+
+    private void SetGroupVoiceParticipant(ContactViewModel group, string userId, string displayName, string avatarKind, string avatarPath, bool joined, string channelId = "")
     {
         if (!group.IsGroup || string.IsNullOrWhiteSpace(group.UserId) || string.IsNullOrWhiteSpace(userId))
         {
             return;
         }
 
+        var roomKey = GetGroupVoiceRoomKey(group, channelId);
         if (joined)
         {
-            if (!_groupVoiceRooms.TryGetValue(group.UserId, out var room))
+            if (group.IsServer)
+            {
+                var prefix = GetGroupVoiceRoomPrefix(group);
+                foreach (var key in _groupVoiceRooms.Keys.Where(x => x.StartsWith(prefix, StringComparison.Ordinal) && !string.Equals(x, roomKey, StringComparison.Ordinal)).ToArray())
+                {
+                    var existingRoom = _groupVoiceRooms[key];
+                    existingRoom.Remove(userId);
+                    if (existingRoom.Count == 0)
+                    {
+                        _groupVoiceRooms.Remove(key);
+                    }
+                }
+            }
+
+            if (!_groupVoiceRooms.TryGetValue(roomKey, out var room))
             {
                 room = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-                _groupVoiceRooms[group.UserId] = room;
+                _groupVoiceRooms[roomKey] = room;
             }
 
             room[userId] = DateTimeOffset.UtcNow;
         }
-        else if (_groupVoiceRooms.TryGetValue(group.UserId, out var room))
+        else if (group.IsServer && string.IsNullOrWhiteSpace(channelId))
+        {
+            var prefix = GetGroupVoiceRoomPrefix(group);
+            foreach (var key in _groupVoiceRooms.Keys.Where(x => x.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+            {
+                var existingRoom = _groupVoiceRooms[key];
+                existingRoom.Remove(userId);
+                if (existingRoom.Count == 0)
+                {
+                    _groupVoiceRooms.Remove(key);
+                }
+            }
+        }
+        else if (_groupVoiceRooms.TryGetValue(roomKey, out var room))
         {
             room.Remove(userId);
             if (room.Count == 0)
             {
-                _groupVoiceRooms.Remove(group.UserId);
+                _groupVoiceRooms.Remove(roomKey);
             }
         }
 
         RefreshGroupVoiceParticipants(group);
+        RefreshServerVoiceChannelTimers();
         if (_activeCallContact?.UserId == group.UserId)
         {
             RefreshActiveCallPeerCache(group);
         }
     }
 
-    private void SetGroupVoiceParticipant(ContactViewModel group, ContactViewModel participant, bool joined)
-        => SetGroupVoiceParticipant(group, participant.UserId, participant.DisplayName, participant.AvatarKind, participant.AvatarPath, joined);
+    private void SetGroupVoiceParticipant(ContactViewModel group, ContactViewModel participant, bool joined, string channelId = "")
+        => SetGroupVoiceParticipant(group, participant.UserId, participant.DisplayName, participant.AvatarKind, participant.AvatarPath, joined, channelId);
 
-    private void SetSelfGroupVoiceParticipant(ContactViewModel group, bool joined)
+    private void SetSelfGroupVoiceParticipant(ContactViewModel group, bool joined, string channelId = "")
     {
         if (_profile is null)
         {
             return;
         }
 
-        SetGroupVoiceParticipant(group, _profile.UserId, _profile.DisplayName, _profile.AvatarKind, _profile.AvatarPath, joined);
+        if (group.IsServer)
+        {
+            if (joined)
+            {
+                var normalizedChannelId = string.IsNullOrWhiteSpace(channelId)
+                    ? GetSelectedServerVoiceChannelId(group)
+                    : channelId.Trim();
+                if (_selfServerVoiceChannels.TryGetValue(group.UserId, out var previousChannelId) &&
+                    !string.Equals(previousChannelId, normalizedChannelId, StringComparison.OrdinalIgnoreCase))
+                {
+                    SetGroupVoiceParticipant(group, _profile.UserId, _profile.DisplayName, _profile.AvatarKind, _profile.AvatarPath, joined: false, previousChannelId);
+                }
+
+                _selfServerVoiceChannels[group.UserId] = normalizedChannelId;
+                group.SelectedServerChannelId = normalizedChannelId;
+                channelId = normalizedChannelId;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(channelId) &&
+                    _selfServerVoiceChannels.TryGetValue(group.UserId, out var previousChannelId))
+                {
+                    channelId = previousChannelId;
+                }
+
+                _selfServerVoiceChannels.Remove(group.UserId);
+            }
+        }
+
+        SetGroupVoiceParticipant(group, _profile.UserId, _profile.DisplayName, _profile.AvatarKind, _profile.AvatarPath, joined, channelId);
     }
 
     private void RefreshGroupVoiceParticipants(ContactViewModel group)
     {
         group.ActiveVoiceParticipants.Clear();
-        if (!_groupVoiceRooms.TryGetValue(group.UserId, out var room) || room.Count == 0)
+        var roomEntries = GetGroupVoiceRoomEntries(group).ToArray();
+        if (roomEntries.Length == 0)
         {
             return;
         }
 
-        foreach (var userId in room
+        foreach (var userId in roomEntries
                      .OrderByDescending(x => _profile is not null && string.Equals(x.Key, _profile.UserId, StringComparison.Ordinal))
                      .ThenByDescending(x => x.Value)
                      .Select(x => x.Key)
@@ -13191,6 +18683,26 @@ public partial class MainWindow : Window
         {
             group.ActiveVoiceParticipants.Add(CreateGroupVoiceParticipantViewModel(group, userId));
         }
+    }
+
+    private IReadOnlyList<GroupVoiceParticipantViewModel> GetServerVoiceChannelParticipants(ContactViewModel server, string channelId)
+    {
+        if (!server.IsServer)
+        {
+            return [];
+        }
+
+        var key = GetGroupVoiceRoomKey(server, channelId);
+        if (!_groupVoiceRooms.TryGetValue(key, out var room) || room.Count == 0)
+        {
+            return [];
+        }
+
+        return room
+            .OrderByDescending(x => _profile is not null && string.Equals(x.Key, _profile.UserId, StringComparison.Ordinal))
+            .ThenByDescending(x => x.Value)
+            .Select(x => CreateGroupVoiceParticipantViewModel(server, x.Key))
+            .ToArray();
     }
 
     private GroupVoiceParticipantViewModel CreateGroupVoiceParticipantViewModel(ContactViewModel group, string userId)
@@ -13230,15 +18742,102 @@ public partial class MainWindow : Window
 
     private IReadOnlyList<string> GetActiveGroupVoiceParticipantIds(ContactViewModel group, bool includeSelf)
     {
-        if (_profile is null || !_groupVoiceRooms.TryGetValue(group.UserId, out var room) || room.Count == 0)
+        if (_profile is null)
         {
             return [];
         }
 
-        return room.Keys
+        return GetGroupVoiceRoomEntries(group)
+            .Select(x => x.Key)
             .Where(x => includeSelf || !string.Equals(x, _profile.UserId, StringComparison.Ordinal))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private IEnumerable<KeyValuePair<string, DateTimeOffset>> GetGroupVoiceRoomEntries(ContactViewModel group)
+    {
+        if (!group.IsGroup)
+        {
+            return [];
+        }
+
+        if (!group.IsServer)
+        {
+            return _groupVoiceRooms.TryGetValue(group.UserId, out var room)
+                ? room
+                : [];
+        }
+
+        var prefix = GetGroupVoiceRoomPrefix(group);
+        return _groupVoiceRooms
+            .Where(x => x.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .SelectMany(x => x.Value)
+            .GroupBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => x.OrderByDescending(entry => entry.Value).First());
+    }
+
+    private bool TryGetServerVoiceChannelStart(ContactViewModel server, string channelId, out DateTimeOffset startedAtUtc)
+    {
+        startedAtUtc = default;
+        if (!server.IsServer)
+        {
+            return false;
+        }
+
+        var key = GetGroupVoiceRoomKey(server, channelId);
+        if (!_groupVoiceRooms.TryGetValue(key, out var room) || room.Count == 0)
+        {
+            return false;
+        }
+
+        startedAtUtc = room.Values.Min();
+        return true;
+    }
+
+    private static string FormatVoiceElapsed(DateTimeOffset startedAtUtc)
+    {
+        var elapsed = DateTimeOffset.UtcNow - startedAtUtc;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        return elapsed.TotalHours >= 1
+            ? $"{(int)elapsed.TotalHours}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+            : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+    }
+
+    private void RefreshServerVoiceChannelTimers()
+    {
+        if (_selectedContact is not { IsGroup: true, IsServer: true } server)
+        {
+            RefreshServerVoiceTimerState();
+            return;
+        }
+
+        foreach (var channel in _serverChannels.Where(x => x.IsVoice))
+        {
+            var active = TryGetServerVoiceChannelStart(server, channel.Id, out var startedAtUtc);
+            channel.IsVoiceActive = active;
+            channel.VoiceElapsedText = active ? FormatVoiceElapsed(startedAtUtc) : "";
+            channel.ReplaceVoiceParticipants(active ? GetServerVoiceChannelParticipants(server, channel.Id) : []);
+        }
+
+        RefreshServerVoiceTimerState();
+    }
+
+    private void RefreshServerVoiceTimerState()
+    {
+        var hasActiveServerVoice = _selectedContact is { IsGroup: true, IsServer: true } server &&
+                                   _groupVoiceRooms.Any(x => x.Key.StartsWith(GetGroupVoiceRoomPrefix(server), StringComparison.Ordinal) && x.Value.Count > 0);
+        if (hasActiveServerVoice)
+        {
+            _serverVoiceElapsedTimer.Start();
+        }
+        else
+        {
+            _serverVoiceElapsedTimer.Stop();
+        }
     }
 
     private bool HasRemoteGroupVoiceParticipants(ContactViewModel group)
@@ -13259,6 +18858,11 @@ public partial class MainWindow : Window
 
     private string BuildDirectVoiceStatus(ContactViewModel contact)
     {
+        if (_callPeerReconnecting && _selfInCall && _peerInCall)
+        {
+            return $"Reconnecting to {contact.DisplayName}...";
+        }
+
         if (_selfInCall && _peerInCall)
         {
             return "Connected";
@@ -13275,6 +18879,102 @@ public partial class MainWindow : Window
         }
 
         return "Call ended";
+    }
+
+    private void BeginConnectedCallSession()
+    {
+        _callConnectedAtUtc = DateTimeOffset.UtcNow;
+        _lastCallPeerSignalUtc = _callConnectedAtUtc;
+        _callPeerReconnecting = false;
+        _callSelfLimitTriggered = false;
+    }
+
+    private void TouchActiveCallPeerSignal(string userId)
+    {
+        if (!IsActiveCallPeer(userId))
+        {
+            return;
+        }
+
+        _lastCallPeerSignalUtc = DateTimeOffset.UtcNow;
+        if (_callPeerReconnecting)
+        {
+            _callPeerReconnecting = false;
+            if (_activeCallContact is { IsGroup: false } contact && _selfInCall && _peerInCall)
+            {
+                ShowCallPanel(contact, BuildDirectVoiceStatus(contact), showIncomingActions: false);
+            }
+        }
+    }
+
+    private void UpdateCallReconnectState(ContactViewModel contact)
+    {
+        if (contact.IsGroup ||
+            !_selfInCall ||
+            !_peerInCall ||
+            _activeCallState != "connected" ||
+            _lastCallPeerSignalUtc == DateTimeOffset.MinValue)
+        {
+            return;
+        }
+
+        var silentFor = DateTimeOffset.UtcNow - _lastCallPeerSignalUtc;
+        if (silentFor >= CallPeerDisconnectAfter)
+        {
+            _callPeerReconnecting = false;
+            _peerInCall = false;
+            _activeCallState = "connected";
+            StopAudioCall();
+            ShowCallPanel(contact, BuildDirectVoiceStatus(contact), showIncomingActions: false);
+            NetworkStatusText.Text = $"{contact.DisplayName} disconnected from the call.";
+            return;
+        }
+
+        var shouldReconnect = silentFor >= CallPeerReconnectGrace;
+        if (shouldReconnect != _callPeerReconnecting)
+        {
+            _callPeerReconnecting = shouldReconnect;
+            ShowCallPanel(contact, BuildDirectVoiceStatus(contact), showIncomingActions: false);
+        }
+    }
+
+    private async Task EnforceCallSelfSessionLimitAsync(ContactViewModel contact)
+    {
+        if (_callSelfLimitTriggered ||
+            !_selfInCall ||
+            _activeCallState != "connected" ||
+            _callConnectedAtUtc == DateTimeOffset.MinValue ||
+            DateTimeOffset.UtcNow - _callConnectedAtUtc < CallSelfSessionLimit)
+        {
+            return;
+        }
+
+        _callSelfLimitTriggered = true;
+        StopAudioCall();
+        _selfInCall = false;
+        _activeCallState = _peerInCall ? "left" : "";
+        if (contact.IsServer)
+        {
+            ShowCallPanel(contact, BuildGroupVoiceStatus(contact), showIncomingActions: false);
+            NetworkStatusText.Text = "You were disconnected from voice after 5 minutes. The voice channel stays joined.";
+            RefreshServerChannelsPanel();
+            return;
+        }
+
+        if (contact.IsGroup)
+        {
+            SetSelfGroupVoiceParticipant(contact, joined: false);
+        }
+
+        await SendCallSignalAsync(contact, CallLeaveIntent);
+        if (_peerInCall)
+        {
+            ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
+        }
+        else
+        {
+            HideCallPanel();
+        }
     }
 
     private string BuildGroupCallNotificationText(ContactViewModel group, ContactViewModel caller)
@@ -13297,7 +18997,8 @@ public partial class MainWindow : Window
         AddOrUpdateContact(senderContact);
         _ = _history.SaveContactAsync(senderContact);
 
-        var contact = ResolveCallContact(packet, senderContact, out packet);
+        var contact = ResolveCallContact(packet, senderContact, out packet, out var callChannelId);
+        TouchActiveCallPeerSignal(packet.FromUserId);
         if (!contact.IsGroup || packet.Intent is CallInviteIntent or CallAcceptIntent or CallJoinIntent)
         {
             _activeCallPeerContact = senderContact;
@@ -13305,11 +19006,11 @@ public partial class MainWindow : Window
 
         if (contact.IsGroup && packet.Intent is CallInviteIntent or CallAcceptIntent or CallJoinIntent)
         {
-            SetGroupVoiceParticipant(contact, senderContact, joined: true);
+            SetGroupVoiceParticipant(contact, senderContact, joined: true, callChannelId);
         }
         else if (contact.IsGroup && packet.Intent is CallLeaveIntent or CallEndIntent)
         {
-            SetGroupVoiceParticipant(contact, senderContact, joined: false);
+            SetGroupVoiceParticipant(contact, senderContact, joined: false, callChannelId);
         }
 
         switch (packet.Intent)
@@ -13332,6 +19033,7 @@ public partial class MainWindow : Window
                     _selfInCall = true;
                     _peerInCall = true;
                     _activeCallState = "connected";
+                    BeginConnectedCallSession();
                     ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
                     _ = SendCallSignalAsync(contact, CallAcceptIntent);
                     StartAudioCall(contact);
@@ -13350,18 +19052,17 @@ public partial class MainWindow : Window
                 _activeCallState = "incoming";
                 _selfInCall = false;
                 _peerInCall = true;
-                _ = OpenContactAsync(contact);
-                RestoreWindowForIncomingCall();
-                ShowCallPanel(contact, "Incoming call", showIncomingActions: true);
                 StartCallRingtone();
-                ShowIncomingCallNotification(contact, senderContact);
+                ShowIncomingCallSurface(contact, senderContact);
                 break;
             case CallAcceptIntent:
                 StopCallRingtone();
+                CloseIncomingCallMiniWindow(contact);
                 _activeCallContact = contact;
                 _selfInCall = true;
                 _peerInCall = contact.IsGroup ? HasRemoteGroupVoiceParticipants(contact) : true;
                 _activeCallState = "connected";
+                BeginConnectedCallSession();
                 ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
                 StartAudioCall(contact);
                 NetworkStatusText.Text = $"{senderContact.DisplayName} accepted the call";
@@ -13374,6 +19075,7 @@ public partial class MainWindow : Window
                 }
 
                 StopCallRingtone();
+                CloseIncomingCallMiniWindow(contact);
                 if (_activeCallContact?.UserId == contact.UserId && _selfInCall)
                 {
                     _peerInCall = false;
@@ -13391,6 +19093,7 @@ public partial class MainWindow : Window
                 if (contact.IsGroup)
                 {
                     StopCallRingtone();
+                    CloseIncomingCallMiniWindow(contact);
                     if (_activeCallContact?.UserId == contact.UserId)
                     {
                         _peerInCall = HasRemoteGroupVoiceParticipants(contact);
@@ -13415,6 +19118,7 @@ public partial class MainWindow : Window
                 }
 
                 StopCallRingtone();
+                CloseIncomingCallMiniWindow(contact);
                 HideCallPanel();
                 NetworkStatusText.Text = $"{senderContact.DisplayName} ended the call";
                 break;
@@ -13422,6 +19126,7 @@ public partial class MainWindow : Window
                 if (contact.IsGroup)
                 {
                     StopCallRingtone();
+                    CloseIncomingCallMiniWindow(contact);
                     if (_activeCallContact?.UserId == contact.UserId)
                     {
                         _peerInCall = HasRemoteGroupVoiceParticipants(contact);
@@ -13446,6 +19151,7 @@ public partial class MainWindow : Window
                 }
 
                 StopCallRingtone();
+                CloseIncomingCallMiniWindow(contact);
                 if (_activeCallContact?.UserId == contact.UserId && _selfInCall)
                 {
                     _peerInCall = false;
@@ -13466,6 +19172,7 @@ public partial class MainWindow : Window
                 if (_selfInCall)
                 {
                     _activeCallState = "connected";
+                    BeginConnectedCallSession();
                     ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
                     StartAudioCall(contact);
                     NetworkStatusText.Text = $"{senderContact.DisplayName} joined the call";
@@ -13503,10 +19210,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private ContactViewModel ResolveCallContact(ChatPacket packet, ContactViewModel senderContact, out ChatPacket effectivePacket)
+    private ContactViewModel ResolveCallContact(ChatPacket packet, ContactViewModel senderContact, out ChatPacket effectivePacket, out string channelId)
     {
         effectivePacket = packet;
-        if (!TryGetGroupCallSignal(packet.Body, out var groupId, out var innerBody))
+        channelId = "";
+        if (!TryGetGroupCallSignal(packet.Body, out var groupId, out var innerBody, out channelId))
         {
             return senderContact;
         }
@@ -13515,6 +19223,11 @@ public partial class MainWindow : Window
         var group = _contacts.FirstOrDefault(x => x.IsGroup && string.Equals(x.UserId, groupId, StringComparison.Ordinal));
         if (group is not null)
         {
+            if (group.IsServer && !string.IsNullOrWhiteSpace(channelId))
+            {
+                group.SelectedServerChannelId = channelId;
+            }
+
             return group;
         }
 
@@ -13522,10 +19235,11 @@ public partial class MainWindow : Window
         return senderContact;
     }
 
-    private static bool TryGetGroupCallSignal(string body, out string groupId, out string innerBody)
+    private static bool TryGetGroupCallSignal(string body, out string groupId, out string innerBody, out string channelId)
     {
         groupId = "";
         innerBody = body;
+        channelId = "";
         if (string.IsNullOrWhiteSpace(body))
         {
             return false;
@@ -13541,6 +19255,7 @@ public partial class MainWindow : Window
 
             groupId = payload.GroupId;
             innerBody = payload.Body ?? "";
+            channelId = payload.ChannelId ?? "";
             return true;
         }
         catch (JsonException)
@@ -13655,6 +19370,8 @@ public partial class MainWindow : Window
         }
 
         PruneExpiredCallPings();
+        UpdateCallReconnectState(contact);
+        _ = EnforceCallSelfSessionLimitAsync(contact);
         UpdateCallNetworkMetrics();
         _ = SendCallNetworkPingIfDueAsync(contact);
     }
@@ -13682,6 +19399,7 @@ public partial class MainWindow : Window
         _currentCallPingMs = double.NaN;
         _averageCallPingMs = 0;
         _callPingSamples = 0;
+        _callPeerReconnecting = false;
         UpdateCallNetworkMetrics();
     }
 
@@ -14393,6 +20111,7 @@ public partial class MainWindow : Window
     private void HideCallPanel()
     {
         StopCallRingtone();
+        CloseIncomingCallMiniWindow();
         SoundboardPopup.IsOpen = false;
         StopActiveSoundboard();
         StopScreenShare(sendSignal: false);
@@ -14401,6 +20120,10 @@ public partial class MainWindow : Window
         _activeCallContact = null;
         _activeCallPeerContact = null;
         _activeCallState = "";
+        _callConnectedAtUtc = DateTimeOffset.MinValue;
+        _lastCallPeerSignalUtc = DateTimeOffset.MinValue;
+        _callPeerReconnecting = false;
+        _callSelfLimitTriggered = false;
         _selfInCall = false;
         _peerInCall = false;
         _isMicrophoneMuted = false;
@@ -14502,9 +20225,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        CloseIncomingCallMiniWindow(contact);
         _activeCallState = "left";
         _peerInCall = true;
-        ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
+        if (ShouldUseInlineIncomingCall(contact))
+        {
+            ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
+        }
+        else
+        {
+            NetworkStatusText.Text = $"Missed call from {contact.DisplayName}";
+        }
     }
 
     private void StartAudioCall(ContactViewModel contact)
@@ -16034,7 +21765,10 @@ public partial class MainWindow : Window
         var toRelayServer = string.Equals(currentRelayServer, contactRelayServer, StringComparison.OrdinalIgnoreCase)
             ? null
             : contactRelayServer;
-        var avatarPayload = CreateAvatarPayload();
+        var shareProfileDetails = contact is null || !contact.IsGroup;
+        var shareAvatar = !shareProfileDetails || AllowsPrivacyForUser(_settings.PrivacyAvatar, toUserId);
+        var shareStatus = !shareProfileDetails || AllowsPrivacyForUser(_settings.PrivacyStatus, toUserId);
+        var avatarPayload = shareAvatar ? CreateAvatarPayload() : (_profile.AvatarKind, null, null);
         var packetBody = string.IsNullOrWhiteSpace(intent)
             ? body
             : CreateControlBody(intent, body, avatarPayload);
@@ -16047,7 +21781,7 @@ public partial class MainWindow : Window
             fromRelayServer: currentRelayServer,
             toRelayServer: toRelayServer,
             intent: intent,
-            fromStatus: GetCurrentStatus().ToString(),
+            fromStatus: shareStatus ? GetCurrentStatus().ToString() : UserPresenceStatus.Offline.ToString(),
             fromAvatarKind: avatarPayload.kind,
             fromAvatarMediaBase64: avatarPayload.mediaBase64,
             fromAvatarExtension: avatarPayload.extension,
@@ -16142,9 +21876,16 @@ public partial class MainWindow : Window
             ? null
             : contactRelayServer;
 
-        var avatarPayload = includeAvatar
+        var shareAvatar = includeAvatar && AllowsPrivacyForUser(_settings.PrivacyAvatar, contact.UserId);
+        var shareStatus = AllowsPrivacyForUser(_settings.PrivacyStatus, contact.UserId);
+        var avatarPayload = shareAvatar
             ? CreateAvatarPayload()
             : (_profile.AvatarKind, null, null);
+        var publishedStatus = statusOverride ?? GetPublishedStatus();
+        if (!shareStatus)
+        {
+            publishedStatus = UserPresenceStatus.Offline;
+        }
 
         return ChatPacket.Create(
             _profile.UserId,
@@ -16154,16 +21895,16 @@ public partial class MainWindow : Window
             fromRelayServer: currentRelayServer,
             toRelayServer: toRelayServer,
             intent: "presence",
-            fromStatus: (statusOverride ?? GetPublishedStatus()).ToString(),
+            fromStatus: publishedStatus.ToString(),
             fromAvatarKind: avatarPayload.kind,
             fromAvatarMediaBase64: avatarPayload.mediaBase64,
             fromAvatarExtension: avatarPayload.extension,
             fromAvatarScale: _profile.AvatarScale,
             fromAvatarOffsetX: _profile.AvatarOffsetX,
             fromAvatarOffsetY: _profile.AvatarOffsetY,
-            fromAvatarVideoStartSeconds: _profile.AvatarVideoStartSeconds,
-            fromAvatarVideoDurationSeconds: _profile.AvatarVideoDurationSeconds,
-            fromCustomStatus: statusOverride == UserPresenceStatus.Offline ? "" : GetPublishedCustomStatus());
+            fromAvatarVideoStartSeconds: shareAvatar ? _profile.AvatarVideoStartSeconds : 0,
+            fromAvatarVideoDurationSeconds: shareAvatar ? _profile.AvatarVideoDurationSeconds : 0,
+            fromCustomStatus: publishedStatus == UserPresenceStatus.Offline ? "" : GetPublishedCustomStatus());
     }
 
     private static string CreateControlBody(
@@ -16280,7 +22021,8 @@ public partial class MainWindow : Window
         double AvatarOffsetY,
         double AvatarVideoStartSeconds,
         double AvatarVideoDurationSeconds,
-        DateTimeOffset JoinedAtUtc);
+        DateTimeOffset JoinedAtUtc,
+        string RoleIds = "");
 
     private sealed record GroupSnapshotPayload(
         string GroupId,
@@ -16296,7 +22038,12 @@ public partial class MainWindow : Window
         double AvatarOffsetY,
         double AvatarVideoStartSeconds,
         double AvatarVideoDurationSeconds,
-        IReadOnlyList<GroupMemberPayload> Members);
+        IReadOnlyList<GroupMemberPayload> Members,
+        string ServerTemplate = "",
+        string ServerChannelsJson = "",
+        string ServerRolesJson = "",
+        string ServerModerationJson = "",
+        string SelectedServerChannelId = "general");
 
     private sealed record GroupActionPayload(
         string GroupId,
@@ -16304,9 +22051,52 @@ public partial class MainWindow : Window
         string ActorUserId,
         string TargetUserId);
 
-    private sealed record GroupMessagePayload(string GroupId, string Text);
+    private sealed record ServerChannelPayload(string Id, string Name, string Type, string Category = "", int Position = 0, int UserLimit = 0);
 
-    private sealed record CallGroupSignalPayload(string GroupId, string Body = "");
+    private sealed record ServerRolePayload(string Id, string Name, string Color, string Permissions, int Position, bool IsSystem, string MemberIds = "", string ChannelOverridesJson = "", bool ShowSeparately = false);
+
+    private sealed record ServerChannelInvitePayload(
+        string ServerId,
+        string ChannelId,
+        string ChannelName,
+        string ChannelType,
+        string InviterUserId,
+        string InviterDisplayName,
+        DateTimeOffset ExpiresAtUtc,
+        GroupSnapshotPayload Snapshot);
+
+    private sealed record ServerModerationPayload(
+        bool AuditEnabled = false,
+        bool AuditAutoCleanup = false,
+        int AuditRetentionDays = 20,
+        int InviteExpiryDays = 7,
+        IReadOnlyList<ServerBanPayload>? Bans = null,
+        IReadOnlyList<ServerAuditEntryPayload>? AuditLog = null);
+
+    private sealed record ServerBanPayload(
+        string UserId,
+        string DisplayName,
+        string Type,
+        string Reason,
+        string BannedByUserId,
+        DateTimeOffset BannedAtUtc);
+
+    private sealed record ServerAuditEntryPayload(
+        string Id,
+        string ActorUserId,
+        string ActorDisplayName,
+        string ActorRole,
+        string Action,
+        string Target,
+        DateTimeOffset CreatedAtUtc);
+
+    private sealed record ServerChannelPermissionOverridePayload(string ChannelId, string Allow = "", string Deny = "");
+
+    private sealed record ServerPermissionInfo(string Id, string DisplayName, string Description);
+
+    private sealed record GroupMessagePayload(string GroupId, string Text, string ChannelId = "general");
+
+    private sealed record CallGroupSignalPayload(string GroupId, string Body = "", string ChannelId = "");
 
     private sealed record CallAudioState(bool MicrophoneMuted, bool HeadphonesMuted);
 
@@ -17592,12 +23382,32 @@ public partial class MainWindow : Window
         try
         {
             var extension = contact.AvatarKind == "video" ? ".mp4" : ".jpg";
-            var avatarPath = await _serverHistory.DownloadAvatarAsync(contact.UserId, extension, _stop.Token);
+            var mediaRef = contact.AvatarPath;
+            string? avatarPath;
+            if (TryParseMediaRef(contact.AvatarPath, out var mediaId, out var mediaExtension))
+            {
+                avatarPath = await _serverHistory.DownloadMediaAsync(mediaId, mediaExtension, _stop.Token);
+            }
+            else if (contact.IsServer && TryParseCachedMediaPath(contact.AvatarPath, out mediaId, out mediaExtension))
+            {
+                mediaRef = CreateMediaRef(mediaId, mediaExtension);
+                avatarPath = await _serverHistory.DownloadMediaAsync(mediaId, mediaExtension, _stop.Token);
+            }
+            else if (contact.IsServer)
+            {
+                return;
+            }
+            else
+            {
+                avatarPath = await _serverHistory.DownloadAvatarAsync(contact.UserId, extension, _stop.Token);
+            }
+
             if (string.IsNullOrWhiteSpace(avatarPath))
             {
                 return;
             }
 
+            var shouldSaveContact = false;
             await Dispatcher.InvokeAsync(() =>
             {
                 if (!string.IsNullOrWhiteSpace(contact.AvatarPath) &&
@@ -17607,11 +23417,98 @@ public partial class MainWindow : Window
                 }
 
                 contact.AvatarPath = avatarPath;
+                shouldSaveContact = true;
+                if (TryParseMediaRef(mediaRef, out _, out _))
+                {
+                    _syncedMediaRefs[avatarPath] = mediaRef;
+                }
+
+                if (ServerRolesOverlay.Visibility == Visibility.Visible &&
+                    _serverSettingsTab == ServerSettingsTab.Profile &&
+                    _selectedContact is { IsServer: true } selectedServer &&
+                    string.Equals(selectedServer.UserId, contact.UserId, StringComparison.Ordinal))
+                {
+                    RefreshServerProfileSection(contact);
+                }
             });
+
+            if (shouldSaveContact)
+            {
+                await _history.SaveContactAsync(contact);
+            }
         }
         catch (Exception ex) when (!_stop.IsCancellationRequested)
         {
             AppLog.Write(ex, $"Server avatar download failed: user={contact.UserId}");
+        }
+    }
+
+    private async Task DownloadServerBackgroundForContactAsync(ContactViewModel contact, string mediaRef)
+    {
+        if (_serverHistory is null ||
+            !contact.IsServer ||
+            string.IsNullOrWhiteSpace(mediaRef) ||
+            !TryParseMediaRef(mediaRef, out var mediaId, out var extension))
+        {
+            return;
+        }
+
+        try
+        {
+            var path = await _serverHistory.DownloadMediaAsync(mediaId, extension, _stop.Token);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                var sectionId = GetServerWallpaperSectionId(contact);
+                _settings.SectionWallpapers.TryGetValue(sectionId, out var previous);
+                if (previous is not null &&
+                    !string.Equals(previous.Path, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    DeleteCustomizationFileIfOwned(previous.Path);
+                }
+
+                _settings.SectionWallpapers[sectionId] = new SectionWallpaperSettings
+                {
+                    Path = path,
+                    Mode = "Fill",
+                    IsVideo = IsVideoFile(path)
+                };
+                _syncedMediaRefs[path] = mediaRef;
+                if (_selectedContact is not null &&
+                    string.Equals(_selectedContact.UserId, contact.UserId, StringComparison.Ordinal))
+                {
+                    ApplyCustomization();
+                }
+            });
+            await AppSettingsStore.SaveAsync(_settings);
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            AppLog.Write(ex, $"Server background download failed: server={contact.UserId}");
+        }
+    }
+
+    private void RemoveSyncedServerBackground(ContactViewModel contact)
+    {
+        if (!contact.IsServer)
+        {
+            return;
+        }
+
+        var sectionId = GetServerWallpaperSectionId(contact);
+        if (_settings.SectionWallpapers.Remove(sectionId, out var previous))
+        {
+            DeleteCustomizationFileIfOwned(previous.Path);
+            _ = AppSettingsStore.SaveAsync(_settings);
+            if (_selectedContact is not null &&
+                string.Equals(_selectedContact.UserId, contact.UserId, StringComparison.Ordinal))
+            {
+                ApplyCustomization();
+            }
         }
     }
 
@@ -17630,6 +23527,7 @@ public partial class MainWindow : Window
 
         var relayServer = NormalizeRelayServer(packet.FromRelayServer ?? _settings.RelayServer);
         var existing = _friendRequests.FirstOrDefault(x => x.UserId == packet.FromUserId);
+        var isNewRequest = existing is null;
         if (existing is not null)
         {
             _friendRequests.Remove(existing);
@@ -17658,6 +23556,22 @@ public partial class MainWindow : Window
         }
 
         AppLog.Write($"Friend request added: from={packet.FromUserId}, total={_friendRequests.Count}");
+        if (isNewRequest && _settings.FriendRequestNotificationsEnabled && !IsAutoDndActiveNow())
+        {
+            if (_settings.TaskbarFlashEnabled && (WindowState == WindowState.Minimized || !_isWindowActive))
+            {
+                TaskbarAttention.Flash(this);
+            }
+
+            if (_settings.DesktopNotificationsEnabled)
+            {
+                _desktopNotifications?.ShowMessage(
+                    string.IsNullOrWhiteSpace(packet.FromDisplayName) ? "FluxChat" : packet.FromDisplayName,
+                    L("notifications.friendRequest.received"),
+                    request.AvatarPath,
+                    "open-friend-requests");
+            }
+        }
     }
 
     private void ApplyPacketProfileToFriendRequest(ChatPacket packet, FriendRequestViewModel request)
@@ -17774,8 +23688,10 @@ public partial class MainWindow : Window
                 return;
             }
 
+            ApplyContactLocalPreferences(contact);
             _contacts.Add(contact);
             EmptyContactsHint.Visibility = Visibility.Collapsed;
+            SortContactsForDisplay();
             _ = SyncContactToServerAsync(contact);
             return;
         }
@@ -17809,6 +23725,9 @@ public partial class MainWindow : Window
             RemoveContactFromUi(existing);
         }
 
+        ApplyContactLocalPreferences(existing);
+        SortContactsForDisplay();
+
         if (_selectedContact?.UserId == existing.UserId)
         {
             ChatSubtitle.Text = existing.IsGroup
@@ -17839,6 +23758,21 @@ public partial class MainWindow : Window
         _ = _history.DeleteContactAsync(userId);
         _ = DeleteContactFromServerAsync(userId);
         EmptyContactsHint.Visibility = _contacts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateContactSectionHeaders();
+    }
+
+    private void UpdateContactSectionHeaders()
+    {
+        var serverHeaderAssigned = false;
+        foreach (var contact in _contacts)
+        {
+            var showServerHeader = contact.IsServer && !serverHeaderAssigned;
+            contact.ShowServerSectionHeader = showServerHeader;
+            if (showServerHeader)
+            {
+                serverHeaderAssigned = true;
+            }
+        }
     }
 
     private string GetRelayServer(ContactViewModel contact)
@@ -17895,22 +23829,34 @@ public partial class MainWindow : Window
     private void ShowIncomingNotificationIfNeeded(string displayName, ChatPacket packet)
     {
         var isRichChat = string.Equals(packet.Intent, ChatRichIntent, StringComparison.Ordinal);
-        if (_desktopNotifications is null ||
-            (!string.IsNullOrWhiteSpace(packet.Intent) && !isRichChat) ||
+        var isGroupChat = string.Equals(packet.Intent, GroupMessageIntent, StringComparison.Ordinal);
+        var notificationScopeId = GetNotificationScopeId(packet);
+        if ((!string.IsNullOrWhiteSpace(packet.Intent) && !isRichChat && !isGroupChat) ||
             string.IsNullOrWhiteSpace(packet.Body) ||
-            !ShouldShowDesktopNotification(packet.FromUserId))
+            ShouldSuppressMessageNotification(packet) ||
+            !ShouldShowDesktopNotification(notificationScopeId))
         {
             return;
         }
 
         var preview = GetNotificationPreview(packet);
         PlayNotificationSound(_settings.IncomingMessageSoundPath, fallbackSystemSound: false);
-        _notificationContactUserId = packet.FromUserId;
+        if (_settings.TaskbarFlashEnabled)
+        {
+            TaskbarAttention.Flash(this);
+        }
+
+        if (!_settings.DesktopNotificationsEnabled || _desktopNotifications is null)
+        {
+            return;
+        }
+
+        _notificationContactUserId = notificationScopeId;
         _desktopNotifications.ShowMessage(
             string.IsNullOrWhiteSpace(displayName) ? "FluxChat" : displayName,
             preview,
-            ResolveNotificationAvatarPath(packet.FromUserId),
-            $"open-chat:{packet.FromUserId}");
+            ResolveNotificationAvatarPath(notificationScopeId),
+            $"open-chat:{notificationScopeId}");
     }
 
     private bool ShouldShowDesktopNotification(string fromUserId)
@@ -17921,6 +23867,186 @@ public partial class MainWindow : Window
         }
 
         return _selectedContact?.UserId != fromUserId;
+    }
+
+    private void ShowIncomingCallSurface(ContactViewModel contact, ContactViewModel? caller = null)
+    {
+        var callerUserId = caller?.UserId ?? contact.UserId;
+        if (IsAutoDndActiveNow())
+        {
+            StopCallRingtone();
+            NetworkStatusText.Text = "Incoming call muted by Auto-DND.";
+            return;
+        }
+
+        if (!AllowsPrivacyForUser(_settings.PrivacyCalls, callerUserId))
+        {
+            StopCallRingtone();
+            NetworkStatusText.Text = "Incoming call blocked by privacy settings.";
+            return;
+        }
+
+        if (ShouldUseInlineIncomingCall(contact))
+        {
+            CloseIncomingCallMiniWindow(contact);
+            ShowCallPanel(contact, "Incoming call", showIncomingActions: true);
+            return;
+        }
+
+        try
+        {
+            if (TryShowIncomingCallMiniWindow(contact, caller))
+            {
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, "Incoming call mini window failed");
+            CloseIncomingCallMiniWindow();
+        }
+
+        ShowIncomingCallNotification(contact, caller);
+    }
+
+    private bool ShouldUseInlineIncomingCall(ContactViewModel contact)
+    {
+        return IsVisible &&
+               WindowState != WindowState.Minimized &&
+               _isWindowActive &&
+               _selectedContact is not null &&
+               string.Equals(_selectedContact.UserId, contact.UserId, StringComparison.Ordinal);
+    }
+
+    private bool TryShowIncomingCallMiniWindow(ContactViewModel contact, ContactViewModel? caller)
+    {
+        if (_incomingCallMiniWindow is not null)
+        {
+            if (_incomingCallMiniContact is not null &&
+                string.Equals(_incomingCallMiniContact.UserId, contact.UserId, StringComparison.Ordinal))
+            {
+                _incomingCallMiniWindow.UpdateCall(contact, caller);
+                return true;
+            }
+
+            CloseIncomingCallMiniWindow();
+        }
+
+        var window = new IncomingCallMiniWindow();
+        window.AcceptRequested += IncomingCallMiniWindow_OnAcceptRequested;
+        window.DeclineRequested += IncomingCallMiniWindow_OnDeclineRequested;
+        window.Closed += IncomingCallMiniWindow_OnClosed;
+        window.UpdateCall(contact, caller);
+        window.PlaceNearWorkArea();
+        _incomingCallMiniWindow = window;
+        _incomingCallMiniContact = contact;
+        window.Show();
+        return true;
+    }
+
+    private async void IncomingCallMiniWindow_OnAcceptRequested(object? sender, EventArgs e)
+    {
+        var contact = _incomingCallMiniContact;
+        if (contact is null)
+        {
+            CloseIncomingCallMiniWindow();
+            return;
+        }
+
+        await AcceptIncomingCallFromMiniWindowAsync(contact);
+    }
+
+    private async void IncomingCallMiniWindow_OnDeclineRequested(object? sender, EventArgs e)
+    {
+        var contact = _incomingCallMiniContact;
+        if (contact is null)
+        {
+            CloseIncomingCallMiniWindow();
+            return;
+        }
+
+        await DeclineIncomingCallFromMiniWindowAsync(contact);
+    }
+
+    private void IncomingCallMiniWindow_OnClosed(object? sender, EventArgs e)
+    {
+        var window = _incomingCallMiniWindow;
+        if (window is null || !ReferenceEquals(sender, window))
+        {
+            return;
+        }
+
+        window.AcceptRequested -= IncomingCallMiniWindow_OnAcceptRequested;
+        window.DeclineRequested -= IncomingCallMiniWindow_OnDeclineRequested;
+        window.Closed -= IncomingCallMiniWindow_OnClosed;
+        _incomingCallMiniWindow = null;
+        _incomingCallMiniContact = null;
+    }
+
+    private async Task AcceptIncomingCallFromMiniWindowAsync(ContactViewModel contact)
+    {
+        if (_activeCallContact is null ||
+            !string.Equals(_activeCallContact.UserId, contact.UserId, StringComparison.Ordinal) ||
+            _activeCallState != "incoming")
+        {
+            CloseIncomingCallMiniWindow(contact);
+            return;
+        }
+
+        CloseIncomingCallMiniWindow(contact);
+        StopCallRingtone();
+        RestoreWindowForIncomingCall();
+        await OpenContactAsync(contact);
+        await AcceptCallAsync(contact);
+    }
+
+    private async Task DeclineIncomingCallFromMiniWindowAsync(ContactViewModel contact)
+    {
+        if (_activeCallContact is null ||
+            !string.Equals(_activeCallContact.UserId, contact.UserId, StringComparison.Ordinal) ||
+            _activeCallState != "incoming")
+        {
+            CloseIncomingCallMiniWindow(contact);
+            return;
+        }
+
+        CloseIncomingCallMiniWindow(contact);
+        StopCallRingtone();
+        _selfInCall = false;
+        _peerInCall = true;
+        _activeCallState = "left";
+        NetworkStatusText.Text = $"Declined call from {contact.DisplayName}";
+        await SendCallSignalAsync(contact, CallDeclineIntent);
+    }
+
+    private void CloseIncomingCallMiniWindow(ContactViewModel? contact = null)
+    {
+        if (_incomingCallMiniWindow is null)
+        {
+            return;
+        }
+
+        if (contact is not null &&
+            _incomingCallMiniContact is not null &&
+            !string.Equals(_incomingCallMiniContact.UserId, contact.UserId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var window = _incomingCallMiniWindow;
+        window.AcceptRequested -= IncomingCallMiniWindow_OnAcceptRequested;
+        window.DeclineRequested -= IncomingCallMiniWindow_OnDeclineRequested;
+        window.Closed -= IncomingCallMiniWindow_OnClosed;
+        _incomingCallMiniWindow = null;
+        _incomingCallMiniContact = null;
+
+        try
+        {
+            window.Close();
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private void ShowIncomingCallNotification(ContactViewModel contact, ContactViewModel? caller = null)
@@ -18022,6 +24148,7 @@ public partial class MainWindow : Window
                 var contact = _contacts.FirstOrDefault(x => string.Equals(x.UserId, argument["decline-call:".Length..], StringComparison.Ordinal));
                 if (contact is not null)
                 {
+                    CloseIncomingCallMiniWindow(contact);
                     if (contact.IsGroup)
                     {
                         StopCallRingtone();
@@ -18159,6 +24286,11 @@ public partial class MainWindow : Window
             return _selectedStatus;
         }
 
+        if (IsAutoDndActiveNow())
+        {
+            return UserPresenceStatus.DoNotDisturb;
+        }
+
         return IdleDetector.GetIdleTime() >= IdleAfter
             ? UserPresenceStatus.Idle
             : UserPresenceStatus.Online;
@@ -18168,14 +24300,67 @@ public partial class MainWindow : Window
         => GetCurrentStatus();
 
     private string GetPublishedCustomStatus()
-        => GetCurrentStatus() == UserPresenceStatus.Offline ? "" : _customStatusText;
+    {
+        if (GetCurrentStatus() == UserPresenceStatus.Offline)
+        {
+            return "";
+        }
+
+        var explicitStatus = _customStatusText.Trim();
+        return string.IsNullOrWhiteSpace(explicitStatus)
+            ? BuildActivityText()
+            : explicitStatus;
+    }
+
+    private string BuildActivityText(bool compact = false)
+    {
+        if (!_settings.ActivityEnabled)
+        {
+            return "";
+        }
+
+        if (_settings.ActivityShowCalls && _activeCallContact is not null && !string.IsNullOrWhiteSpace(_activeCallState))
+        {
+            return L("activity.inCall");
+        }
+
+        if (_settings.ActivityShowScreenShare && (_isWatchingPeerScreen || _isScreenSharing))
+        {
+            return L("activity.screenShare");
+        }
+
+        if (_settings.ActivityShowRoblox && GameActivityDetector.Detect() is { } game)
+        {
+            if (compact)
+            {
+                return $"{game.Icon} {game.Name}";
+            }
+
+            return string.Format(CultureInfo.CurrentCulture, L("activity.playing"), game.Icon, game.Name);
+        }
+
+        return "";
+    }
+
+    private string GetOwnActivityChipText()
+    {
+        if (GetCurrentStatus() == UserPresenceStatus.Offline)
+        {
+            return "";
+        }
+
+        var explicitStatus = _customStatusText.Trim();
+        return string.IsNullOrWhiteSpace(explicitStatus)
+            ? BuildActivityText(compact: true)
+            : explicitStatus;
+    }
 
     private string GetCurrentStatusText() => GetCurrentStatus() switch
     {
-        UserPresenceStatus.Online => "online",
-        UserPresenceStatus.Idle => "idle",
-        UserPresenceStatus.DoNotDisturb => "do not disturb",
-        _ => "offline"
+        UserPresenceStatus.Online => L("profile.status.online").ToLower(CultureInfo.CurrentCulture),
+        UserPresenceStatus.Idle => L("profile.status.idle").ToLower(CultureInfo.CurrentCulture),
+        UserPresenceStatus.DoNotDisturb => L("profile.status.dnd").ToLower(CultureInfo.CurrentCulture),
+        _ => L("profile.status.offline").ToLower(CultureInfo.CurrentCulture)
     };
 
     private static string NormalizeCustomStatus(string? value)
@@ -18192,9 +24377,10 @@ public partial class MainWindow : Window
     private string FormatOwnStatusText()
     {
         var status = GetCurrentStatusText();
-        return string.IsNullOrWhiteSpace(_customStatusText)
+        var customStatus = GetPublishedCustomStatus();
+        return string.IsNullOrWhiteSpace(customStatus)
             ? status
-            : $"{_customStatusText} · {status}";
+            : $"{customStatus} · {status}";
     }
 
     private async Task SavePresencePreferencesAsync()
@@ -18222,7 +24408,8 @@ public partial class MainWindow : Window
 
     private void UpdateProfileStatusVisuals()
     {
-        var color = _selectedStatus switch
+        var status = GetCurrentStatus();
+        var color = status switch
         {
             UserPresenceStatus.Online => System.Windows.Media.Color.FromRgb(35, 165, 90),
             UserPresenceStatus.Idle => System.Windows.Media.Color.FromRgb(240, 178, 50),
@@ -18233,7 +24420,12 @@ public partial class MainWindow : Window
         var brush = new SolidColorBrush(color);
         ProfileStatusRing.Stroke = brush;
         ProfileStatusDot.Fill = brush;
-        ProfileStatusText.Text = FormatOwnStatusText();
+        ProfileStatusText.Text = GetCurrentStatusText();
+        var activityText = GetOwnActivityChipText();
+        ProfileActivityText.Text = activityText;
+        ProfileActivityChip.Visibility = string.IsNullOrWhiteSpace(activityText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         if (ProfileCustomStatusInput.Text != _customStatusText)
         {
             ProfileCustomStatusInput.Text = _customStatusText;
@@ -18271,23 +24463,31 @@ public partial class MainWindow : Window
         SettingsAvatarPreview.Fill = brush.Clone();
     }
 
-    private void ShowAvatarEditor(string kind, string path)
+    private void ShowAvatarEditor(
+        string kind,
+        string path,
+        AvatarEditorTarget target = AvatarEditorTarget.Profile,
+        double maxVideoDurationSeconds = 10)
     {
+        _avatarEditorTarget = target;
+        _avatarEditorMaxVideoDurationSeconds = Math.Clamp(maxVideoDurationSeconds, 1, 10);
         _pendingAvatarKind = kind;
         _pendingAvatarPath = path;
         _pendingAvatarScale = 1;
         _pendingAvatarOffsetX = 0;
         _pendingAvatarOffsetY = 0;
         _pendingAvatarVideoStartSeconds = 0;
-        _pendingAvatarVideoDurationSeconds = 10;
+        _pendingAvatarVideoDurationSeconds = _avatarEditorMaxVideoDurationSeconds;
 
-        AvatarEditorTitle.Text = kind == "video" ? "Edit Animated Avatar" : "Edit Image";
+        AvatarEditorTitle.Text = target == AvatarEditorTarget.ServerProfile
+            ? kind == "video" ? "Edit Server Video Avatar" : "Edit Server Avatar"
+            : kind == "video" ? "Edit Animated Avatar" : "Edit Image";
         AvatarEditorImage.Visibility = Visibility.Collapsed;
         AvatarEditorVideo.Visibility = Visibility.Collapsed;
         AvatarEditorVideoControls.Visibility = kind == "video" ? Visibility.Visible : Visibility.Collapsed;
         AvatarEditorZoomSlider.Value = 1;
         AvatarEditorVideoStartSlider.Value = 0;
-        AvatarEditorVideoDurationSlider.Value = 10;
+        AvatarEditorVideoDurationSlider.Value = _avatarEditorMaxVideoDurationSeconds;
 
         if (kind == "image")
         {
@@ -18298,13 +24498,17 @@ public partial class MainWindow : Window
         else
         {
             AvatarEditorVideo.Source = new Uri(path, UriKind.Absolute);
+            AvatarEditorVideo.Volume = 0;
+            AvatarEditorVideo.IsMuted = true;
             AvatarEditorVideo.Visibility = Visibility.Visible;
             _avatarVideoLoopTimer.Start();
             RestartEditorVideo();
         }
 
         ApplyAvatarEditorTransform();
+        System.Windows.Controls.Panel.SetZIndex(AvatarEditorOverlay, 90);
         AvatarEditorOverlay.Visibility = Visibility.Visible;
+        AvatarEditorOverlay.Focus();
     }
 
     private void ApplyAvatarEditorTransform()
@@ -18565,7 +24769,10 @@ public partial class MainWindow : Window
     {
         var hasSelectedVideo = _selectedAvatarKind == "video";
         var hasEditorVideo = AvatarEditorOverlay.Visibility == Visibility.Visible && _pendingAvatarKind == "video";
-        if (!hasSelectedVideo && !hasEditorVideo)
+        var hasServerPreviewVideo = _serverProfileAvatarKind == "video" &&
+                                    ServerProfileAvatarVideo.Visibility == Visibility.Visible &&
+                                    ServerProfileAvatarVideo.IsMouseOver;
+        if (!hasSelectedVideo && !hasEditorVideo && !hasServerPreviewVideo)
         {
             _avatarVideoLoopTimer.Stop();
             return;
@@ -18584,6 +24791,13 @@ public partial class MainWindow : Window
             var start = TimeSpan.FromSeconds(_pendingAvatarVideoStartSeconds);
             var end = start + TimeSpan.FromSeconds(Math.Min(10, Math.Max(1, _pendingAvatarVideoDurationSeconds)));
             LoopAvatarVideo(AvatarEditorVideo, start, end);
+        }
+
+        if (hasServerPreviewVideo)
+        {
+            var start = TimeSpan.FromSeconds(_serverProfileAvatarVideoStartSeconds);
+            var end = start + TimeSpan.FromSeconds(Math.Min(5, Math.Max(1, _serverProfileAvatarVideoDurationSeconds)));
+            LoopAvatarVideo(ServerProfileAvatarVideo, start, end);
         }
     }
 
@@ -18608,14 +24822,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var avatarPath = element.DataContext switch
-        {
-            ContactViewModel contact => contact.AvatarPath,
-            FriendRequestViewModel request => request.AvatarPath,
-            GroupMemberViewModel member => member.AvatarPath,
-            MessageViewModel message => message.SenderAvatarPath,
-            _ => null
-        };
+        var (avatarPath, startSeconds) = GetAvatarPlaybackInfo(element.DataContext);
 
         if (element.Source is null && !string.IsNullOrWhiteSpace(avatarPath))
         {
@@ -18638,7 +24845,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        TryRestartAvatarVideo(element, TimeSpan.Zero);
+        TryRestartAvatarVideo(element, TimeSpan.FromSeconds(startSeconds));
     }
 
     private void AvatarVideo_OnMediaEnded(object sender, RoutedEventArgs e)
@@ -18648,8 +24855,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        TryRestartAvatarVideo(element, TimeSpan.Zero);
+        var (_, startSeconds) = GetAvatarPlaybackInfo(element.DataContext);
+        TryRestartAvatarVideo(element, TimeSpan.FromSeconds(startSeconds));
     }
+
+    private static (string? Path, double StartSeconds) GetAvatarPlaybackInfo(object? dataContext)
+        => dataContext switch
+        {
+            ContactViewModel contact => (contact.AvatarPath, Math.Max(0, contact.AvatarVideoStartSeconds)),
+            FriendRequestViewModel request => (request.AvatarPath, Math.Max(0, request.AvatarVideoStartSeconds)),
+            GroupMemberViewModel member => (member.AvatarPath, Math.Max(0, member.AvatarVideoStartSeconds)),
+            MessageViewModel message => (message.SenderAvatarPath, 0),
+            MiniProfileViewModel miniProfile => (miniProfile.AvatarPath, 0),
+            _ => (null, 0)
+        };
 
     private static void TryRestartAvatarVideo(MediaElement element, TimeSpan position)
     {
@@ -18691,7 +24910,7 @@ public partial class MainWindow : Window
 
         var totalSeconds = Math.Max(1, AvatarEditorVideo.NaturalDuration.TimeSpan.TotalSeconds);
         AvatarEditorVideoStartSlider.Maximum = Math.Max(0, totalSeconds - 1);
-        AvatarEditorVideoDurationSlider.Maximum = Math.Min(10, totalSeconds);
+        AvatarEditorVideoDurationSlider.Maximum = Math.Min(_avatarEditorMaxVideoDurationSeconds, totalSeconds);
         _pendingAvatarVideoStartSeconds = Math.Min(_pendingAvatarVideoStartSeconds, AvatarEditorVideoStartSlider.Maximum);
         _pendingAvatarVideoDurationSeconds = Math.Min(_pendingAvatarVideoDurationSeconds, AvatarEditorVideoDurationSlider.Maximum);
         AvatarEditorVideoStartSlider.Value = _pendingAvatarVideoStartSeconds;
