@@ -96,6 +96,8 @@ internal sealed class HistoryStore
         await AddMessageColumnAsync(connection, "AttachmentUrl TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "ReplyToMessageId TEXT NULL");
         await AddMessageColumnAsync(connection, "ReplyPreview TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "ReplyAuthorUserId TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "ReplyAuthorDisplayName TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "ForwardedFrom TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "EditedAtUtc TEXT NULL");
         await AddMessageColumnAsync(connection, "ReactionsJson TEXT NOT NULL DEFAULT ''");
@@ -109,6 +111,9 @@ internal sealed class HistoryStore
         await AddMessageColumnAsync(connection, "DriveFileId TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "DownloadUrl TEXT NOT NULL DEFAULT ''");
         await AddMessageColumnAsync(connection, "StorageProvider TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "TextPreview TEXT NOT NULL DEFAULT ''");
+        await AddMessageColumnAsync(connection, "TextPreviewTruncated INTEGER NOT NULL DEFAULT 0");
+        await AddMessageColumnAsync(connection, "OriginalFolderName TEXT NOT NULL DEFAULT ''");
         await DeleteEmptyMessagesAsync(connection);
     }
 
@@ -165,14 +170,16 @@ internal sealed class HistoryStore
         command.CommandText = """
             INSERT OR REPLACE INTO Messages (
                 MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
-                ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson,
+                ReplyToMessageId, ReplyPreview, ReplyAuthorUserId, ReplyAuthorDisplayName, ForwardedFrom, EditedAtUtc, ReactionsJson,
                 SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath,
-                FileName, FileSizeBytes, MimeType, DriveFileId, DownloadUrl, StorageProvider)
+                FileName, FileSizeBytes, MimeType, DriveFileId, DownloadUrl, StorageProvider,
+                TextPreview, TextPreviewTruncated, OriginalFolderName)
             VALUES (
                 $messageId, $peerUserId, $body, $isOutgoing, $sentAtUtc, $kind, $text, $attachmentPath, $attachmentUrl,
-                $replyToMessageId, $replyPreview, $forwardedFrom, $editedAtUtc, $reactionsJson,
+                $replyToMessageId, $replyPreview, $replyAuthorUserId, $replyAuthorDisplayName, $forwardedFrom, $editedAtUtc, $reactionsJson,
                 $senderUserId, $senderDisplayName, $senderAvatarKind, $senderAvatarPath,
-                $fileName, $fileSizeBytes, $mimeType, $driveFileId, $downloadUrl, $storageProvider);
+                $fileName, $fileSizeBytes, $mimeType, $driveFileId, $downloadUrl, $storageProvider,
+                $textPreview, $textPreviewTruncated, $originalFolderName);
             """;
         command.Parameters.AddWithValue("$messageId", message.MessageId.ToString());
         command.Parameters.AddWithValue("$peerUserId", message.PeerUserId);
@@ -185,6 +192,8 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$attachmentUrl", message.AttachmentUrl);
         command.Parameters.AddWithValue("$replyToMessageId", message.ReplyToMessageId?.ToString() ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$replyPreview", message.ReplyPreview);
+        command.Parameters.AddWithValue("$replyAuthorUserId", message.ReplyAuthorUserId);
+        command.Parameters.AddWithValue("$replyAuthorDisplayName", message.ReplyAuthorDisplayName);
         command.Parameters.AddWithValue("$forwardedFrom", message.ForwardedFrom);
         command.Parameters.AddWithValue("$editedAtUtc", message.EditedAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$reactionsJson", message.ReactionsJson);
@@ -198,6 +207,9 @@ internal sealed class HistoryStore
         command.Parameters.AddWithValue("$driveFileId", message.DriveFileId);
         command.Parameters.AddWithValue("$downloadUrl", message.DownloadUrl);
         command.Parameters.AddWithValue("$storageProvider", message.StorageProvider);
+        command.Parameters.AddWithValue("$textPreview", message.TextPreview);
+        command.Parameters.AddWithValue("$textPreviewTruncated", message.TextPreviewTruncated ? 1 : 0);
+        command.Parameters.AddWithValue("$originalFolderName", message.OriginalFolderName);
 
         await command.ExecuteNonQueryAsync();
     }
@@ -290,9 +302,10 @@ internal sealed class HistoryStore
         var command = connection.CreateCommand();
         command.CommandText = """
             SELECT MessageId, PeerUserId, Body, IsOutgoing, SentAtUtc, Kind, Text, AttachmentPath, AttachmentUrl,
-                   ReplyToMessageId, ReplyPreview, ForwardedFrom, EditedAtUtc, ReactionsJson,
+                   ReplyToMessageId, ReplyPreview, ReplyAuthorUserId, ReplyAuthorDisplayName, ForwardedFrom, EditedAtUtc, ReactionsJson,
                    SenderUserId, SenderDisplayName, SenderAvatarKind, SenderAvatarPath,
-                   FileName, FileSizeBytes, MimeType, DriveFileId, DownloadUrl, StorageProvider
+                   FileName, FileSizeBytes, MimeType, DriveFileId, DownloadUrl, StorageProvider,
+                   TextPreview, TextPreviewTruncated, OriginalFolderName
             FROM Messages
             WHERE PeerUserId = $peerUserId
             ORDER BY SentAtUtc ASC;
@@ -304,9 +317,9 @@ internal sealed class HistoryStore
         {
             var body = reader.GetString(2);
             var text = reader.IsDBNull(6) ? "" : reader.GetString(6);
-            var editedAt = reader.IsDBNull(12)
+            var editedAt = reader.IsDBNull(14)
                 ? (DateTimeOffset?)null
-                : DateTimeOffset.Parse(reader.GetString(12));
+                : DateTimeOffset.Parse(reader.GetString(14));
             messages.Add(new MessageViewModel
             {
                 MessageId = Guid.Parse(reader.GetString(0)),
@@ -320,23 +333,58 @@ internal sealed class HistoryStore
                 AttachmentUrl = reader.IsDBNull(8) ? "" : reader.GetString(8),
                 ReplyToMessageId = reader.IsDBNull(9) ? null : Guid.Parse(reader.GetString(9)),
                 ReplyPreview = reader.IsDBNull(10) ? "" : reader.GetString(10),
-                ForwardedFrom = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                ReplyAuthorUserId = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                ReplyAuthorDisplayName = reader.IsDBNull(12) ? "" : reader.GetString(12),
+                ForwardedFrom = reader.IsDBNull(13) ? "" : reader.GetString(13),
                 EditedAtUtc = editedAt,
-                ReactionsJson = reader.IsDBNull(13) ? "" : reader.GetString(13),
-                SenderUserId = reader.IsDBNull(14) ? "" : reader.GetString(14),
-                SenderDisplayName = reader.IsDBNull(15) ? "" : reader.GetString(15),
-                SenderAvatarKind = reader.IsDBNull(16) ? "color" : reader.GetString(16),
-                SenderAvatarPath = reader.IsDBNull(17) ? "" : reader.GetString(17),
-                FileName = reader.IsDBNull(18) ? "" : reader.GetString(18),
-                FileSizeBytes = reader.IsDBNull(19) ? 0 : reader.GetInt64(19),
-                MimeType = reader.IsDBNull(20) ? "" : reader.GetString(20),
-                DriveFileId = reader.IsDBNull(21) ? "" : reader.GetString(21),
-                DownloadUrl = reader.IsDBNull(22) ? "" : reader.GetString(22),
-                StorageProvider = reader.IsDBNull(23) ? "" : reader.GetString(23)
+                ReactionsJson = reader.IsDBNull(15) ? "" : reader.GetString(15),
+                SenderUserId = reader.IsDBNull(16) ? "" : reader.GetString(16),
+                SenderDisplayName = reader.IsDBNull(17) ? "" : reader.GetString(17),
+                SenderAvatarKind = reader.IsDBNull(18) ? "color" : reader.GetString(18),
+                SenderAvatarPath = reader.IsDBNull(19) ? "" : reader.GetString(19),
+                FileName = reader.IsDBNull(20) ? "" : reader.GetString(20),
+                FileSizeBytes = reader.IsDBNull(21) ? 0 : reader.GetInt64(21),
+                MimeType = reader.IsDBNull(22) ? "" : reader.GetString(22),
+                DriveFileId = reader.IsDBNull(23) ? "" : reader.GetString(23),
+                DownloadUrl = reader.IsDBNull(24) ? "" : reader.GetString(24),
+                StorageProvider = reader.IsDBNull(25) ? "" : reader.GetString(25),
+                TextPreview = reader.IsDBNull(26) ? "" : reader.GetString(26),
+                TextPreviewTruncated = !reader.IsDBNull(27) && reader.GetInt32(27) == 1,
+                OriginalFolderName = reader.IsDBNull(28) ? "" : reader.GetString(28)
             });
         }
 
         return messages;
+    }
+
+    public async Task<int> DeleteCachedMessagesOlderThanAsync(DateTimeOffset cutoffUtc, CancellationToken cancellationToken = default)
+    {
+        if (!PersistMessageCache || !_useLocalDatabase) return 0;
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM Messages
+            WHERE SentAtUtc < $cutoffUtc;
+            """;
+        command.Parameters.AddWithValue("$cutoffUtc", cutoffUtc.UtcDateTime.ToString("O"));
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task OptimizeAsync(CancellationToken cancellationToken = default)
+    {
+        if (!PersistMessageCache || !_useLocalDatabase) return;
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var optimize = connection.CreateCommand();
+        optimize.CommandText = "PRAGMA optimize;";
+        await optimize.ExecuteNonQueryAsync(cancellationToken);
+
+        var vacuum = connection.CreateCommand();
+        vacuum.CommandText = "VACUUM;";
+        await vacuum.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task SaveContactAsync(ContactViewModel contact)

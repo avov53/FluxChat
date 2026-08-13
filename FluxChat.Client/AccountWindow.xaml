@@ -122,6 +122,45 @@
             </Setter>
         </Style>
 
+        <Style x:Key="PasswordRevealButton" TargetType="Button">
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,5,0"/>
+            <Setter Property="Foreground" Value="#C9CDD7"/>
+            <Setter Property="Background" Value="#00000000"/>
+            <Setter Property="BorderBrush" Value="#00000000"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="RevealButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="RevealButtonBorder" Property="Background" Value="#3A3E48"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="RevealButtonBorder" Property="Background" Value="#4B5060"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="SmoothButton" TargetType="Button">
             <Setter Property="Height" Value="46"/>
             <Setter Property="Padding" Value="18,0"/>
@@ -402,7 +441,33 @@
                                 </Border>
                             </Popup>
                             <TextBlock x:Name="SignInPasswordLabelText" Text="Password" Style="{StaticResource FieldLabel}"/>
-                            <PasswordBox x:Name="PasswordInput" GotKeyboardFocus="PasswordInput_OnGotKeyboardFocus"/>
+                            <Grid>
+                                <PasswordBox x:Name="PasswordInput"
+                                             Padding="13,9,46,9"
+                                             PasswordChanged="PasswordField_OnPasswordChanged"
+                                             GotKeyboardFocus="PasswordInput_OnGotKeyboardFocus"/>
+                                <TextBox x:Name="PasswordRevealInput"
+                                         Padding="13,9,46,9"
+                                         Visibility="Collapsed"
+                                         Opacity="0"
+                                         TextChanged="PasswordRevealInput_OnTextChanged"/>
+                                <Button x:Name="PasswordRevealButton"
+                                        Style="{StaticResource PasswordRevealButton}"
+                                        ToolTip="Show password"
+                                        Click="PasswordRevealButton_OnClick">
+                                    <Grid Width="20" Height="20">
+                                        <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Data="M12,4.5C7,4.5 2.7,7.6 1,12C2.7,16.4 7,19.5 12,19.5C17,19.5 21.3,16.4 23,12C21.3,7.6 17,4.5 12,4.5ZM12,8A4,4 0 1,0 12,16A4,4 0 0,0 12,8Z"
+                                              Stretch="Uniform"/>
+                                        <Path x:Name="PasswordRevealSlash"
+                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="2"
+                                              StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round"
+                                              Data="M4,4 L20,20"/>
+                                    </Grid>
+                                </Button>
+                            </Grid>
                             <Button x:Name="SignInButton" Content="Sign in" Style="{StaticResource PrimaryButton}"
                                     Margin="0,22,0,0" Click="SignInButton_OnClick"/>
                         </StackPanel>
@@ -436,9 +501,59 @@
                                 <TextBlock x:Name="RegisterLoginLabelText" Text="Login" Style="{StaticResource FieldLabel}"/>
                                 <TextBox x:Name="NewLoginInput"/>
                                 <TextBlock x:Name="RegisterPasswordLabelText" Text="Password (10 or more characters)" Style="{StaticResource FieldLabel}"/>
-                                <PasswordBox x:Name="NewPasswordInput"/>
+                                <Grid>
+                                    <PasswordBox x:Name="NewPasswordInput"
+                                                 Padding="13,9,46,9"
+                                                 PasswordChanged="PasswordField_OnPasswordChanged"/>
+                                    <TextBox x:Name="NewPasswordRevealInput"
+                                             Padding="13,9,46,9"
+                                             Visibility="Collapsed"
+                                             Opacity="0"
+                                             TextChanged="PasswordRevealInput_OnTextChanged"/>
+                                    <Button x:Name="NewPasswordRevealButton"
+                                            Style="{StaticResource PasswordRevealButton}"
+                                            ToolTip="Show password"
+                                            Click="PasswordRevealButton_OnClick">
+                                        <Grid Width="20" Height="20">
+                                            <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  Data="M12,4.5C7,4.5 2.7,7.6 1,12C2.7,16.4 7,19.5 12,19.5C17,19.5 21.3,16.4 23,12C21.3,7.6 17,4.5 12,4.5ZM12,8A4,4 0 1,0 12,16A4,4 0 0,0 12,8Z"
+                                                  Stretch="Uniform"/>
+                                            <Path x:Name="NewPasswordRevealSlash"
+                                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  StrokeThickness="2"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"
+                                                  Data="M4,4 L20,20"/>
+                                        </Grid>
+                                    </Button>
+                                </Grid>
                                 <TextBlock x:Name="RegisterRepeatPasswordLabelText" Text="Repeat password" Style="{StaticResource FieldLabel}"/>
-                                <PasswordBox x:Name="ConfirmPasswordInput"/>
+                                <Grid>
+                                    <PasswordBox x:Name="ConfirmPasswordInput"
+                                                 Padding="13,9,46,9"
+                                                 PasswordChanged="PasswordField_OnPasswordChanged"/>
+                                    <TextBox x:Name="ConfirmPasswordRevealInput"
+                                             Padding="13,9,46,9"
+                                             Visibility="Collapsed"
+                                             Opacity="0"
+                                             TextChanged="PasswordRevealInput_OnTextChanged"/>
+                                    <Button x:Name="ConfirmPasswordRevealButton"
+                                            Style="{StaticResource PasswordRevealButton}"
+                                            ToolTip="Show password"
+                                            Click="PasswordRevealButton_OnClick">
+                                        <Grid Width="20" Height="20">
+                                            <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  Data="M12,4.5C7,4.5 2.7,7.6 1,12C2.7,16.4 7,19.5 12,19.5C17,19.5 21.3,16.4 23,12C21.3,7.6 17,4.5 12,4.5ZM12,8A4,4 0 1,0 12,16A4,4 0 0,0 12,8Z"
+                                                  Stretch="Uniform"/>
+                                            <Path x:Name="ConfirmPasswordRevealSlash"
+                                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  StrokeThickness="2"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"
+                                                  Data="M4,4 L20,20"/>
+                                        </Grid>
+                                    </Button>
+                                </Grid>
                                 <TextBlock x:Name="RegisterServerLabelText" Text="VPS server" Style="{StaticResource FieldLabel}"/>
                                 <TextBox x:Name="RegisterApiUrlInput" ToolTip="IP address and relay port, for example 91.186.217.186:42800"/>
                                 <TextBlock x:Name="RegisterInviteLabelText" Text="Invite code" Style="{StaticResource FieldLabel}"/>

@@ -16,16 +16,29 @@ public partial class IncomingCallMiniWindow : Window
         InitializeComponent();
     }
 
-    public event EventHandler? AcceptRequested;
+    public event EventHandler? AcceptAudioRequested;
+    public event EventHandler? AcceptVideoRequested;
     public event EventHandler? DeclineRequested;
 
-    public void UpdateCall(ContactViewModel contact, ContactViewModel? caller)
+    public void UpdateCall(
+        ContactViewModel contact,
+        ContactViewModel? caller,
+        bool isVideoCall,
+        bool canUseCamera,
+        string cameraUnavailableReason)
     {
         var displayContact = contact.IsGroup ? contact : caller ?? contact;
-        TitleText.Text = contact.IsGroup ? "Incoming group call..." : "Incoming call...";
+        TitleText.Text = isVideoCall ? "Incoming video call..." : contact.IsGroup ? "Incoming group call..." : "Incoming call...";
         CallerNameText.Text = contact.DisplayName;
-        SubtitleText.Text = contact.IsGroup ? "Group call" : "";
-        SubtitleText.Visibility = contact.IsGroup ? Visibility.Visible : Visibility.Collapsed;
+        SubtitleText.Text = contact.IsGroup
+            ? isVideoCall ? "Group video call" : "Group call"
+            : isVideoCall ? "Camera requested" : "";
+        SubtitleText.Visibility = contact.IsGroup || isVideoCall ? Visibility.Visible : Visibility.Collapsed;
+        AcceptVideoButton.Visibility = isVideoCall ? Visibility.Visible : Visibility.Collapsed;
+        AcceptVideoButton.IsEnabled = canUseCamera;
+        AcceptVideoButton.ToolTip = canUseCamera
+            ? "Accept with video"
+            : string.IsNullOrWhiteSpace(cameraUnavailableReason) ? "Camera unavailable" : cameraUnavailableReason;
 
         AvatarInitials.Text = displayContact.Initials;
         AvatarInitials.Visibility = Visibility.Visible;
@@ -70,8 +83,8 @@ public partial class IncomingCallMiniWindow : Window
     public void PlaceNearWorkArea()
     {
         var area = SystemParameters.WorkArea;
-        Left = Math.Max(area.Left + 16, area.Right - Width - 24);
-        Top = Math.Max(area.Top + 16, area.Top + 72);
+        Left = area.Left + Math.Max(0, (area.Width - Width) / 2);
+        Top = area.Top + Math.Max(0, (area.Height - Height) / 2);
     }
 
     protected override void OnClosed(EventArgs e)
@@ -100,8 +113,11 @@ public partial class IncomingCallMiniWindow : Window
     private void DeclineButton_OnClick(object sender, RoutedEventArgs e)
         => DeclineRequested?.Invoke(this, EventArgs.Empty);
 
-    private void AcceptButton_OnClick(object sender, RoutedEventArgs e)
-        => AcceptRequested?.Invoke(this, EventArgs.Empty);
+    private void AcceptAudioButton_OnClick(object sender, RoutedEventArgs e)
+        => AcceptAudioRequested?.Invoke(this, EventArgs.Empty);
+
+    private void AcceptVideoButton_OnClick(object sender, RoutedEventArgs e)
+        => AcceptVideoRequested?.Invoke(this, EventArgs.Empty);
 
     private void AvatarVideo_OnMediaEnded(object sender, RoutedEventArgs e)
     {

@@ -31,7 +31,7 @@ internal sealed class AppSettings
     public bool ReducedMotionEnabled { get; set; }
     public DataStorageLocation ChatHistoryStorage { get; set; } = DataStorageLocation.LocalComputer;
     public DataStorageLocation ImageStorage { get; set; } = DataStorageLocation.LocalComputer;
-    public DataStorageLocation FileStorage { get; set; } = DataStorageLocation.GoogleDrive;
+    public DataStorageLocation FileStorage { get; set; } = DataStorageLocation.LocalComputer;
     public string GoogleDriveClientId { get; set; } = "";
     [JsonIgnore]
     public string GoogleDriveRefreshToken { get; set; } = "";
@@ -63,6 +63,7 @@ internal sealed class AppSettings
     public bool ActivityEnabled { get; set; } = true;
     public string ActivityVisibility { get; set; } = "Friends";
     public List<string> ActivitySelectedFriendIds { get; set; } = [];
+    public string CallActivityVisibility { get; set; } = "Participants";
     public bool ActivityShowRoblox { get; set; } = true;
     public bool ActivityShowCalls { get; set; } = true;
     public bool ActivityShowScreenShare { get; set; } = true;
@@ -72,6 +73,10 @@ internal sealed class AppSettings
     public string PrivacyFriendRequests { get; set; } = "Everyone";
     public string PrivacyStatus { get; set; } = "Everyone";
     public string PrivacyAvatar { get; set; } = "Everyone";
+    public int LocalMessageCacheDays { get; set; } = 30;
+    public long LocalMediaCacheMaxBytes { get; set; } = 1024L * 1024 * 1024;
+    public long LocalFileCacheMaxBytes { get; set; } = 1024L * 1024 * 1024;
+    public bool AutoCleanLocalCache { get; set; } = true;
 }
 
 internal sealed class SectionWallpaperSettings
@@ -213,6 +218,7 @@ internal static class AppSettingsStore
             settings.ActivityEnabled = false;
         }
         settings.ActivityVisibility = NormalizeChoice(settings.ActivityVisibility, "Friends", "Everyone", "Friends", "Selected");
+        settings.CallActivityVisibility = NormalizeChoice(settings.CallActivityVisibility, "Participants", "Everyone", "Friends", "Selected", "NoOne", "Participants");
         settings.ActivitySelectedFriendIds ??= [];
         settings.ActivitySelectedFriendIds = settings.ActivitySelectedFriendIds
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -225,6 +231,20 @@ internal static class AppSettingsStore
         settings.PrivacyFriendRequests = NormalizeChoice(settings.PrivacyFriendRequests, "Everyone", "Everyone", "Friends", "NoOne");
         settings.PrivacyStatus = NormalizeChoice(settings.PrivacyStatus, "Everyone", "Everyone", "Friends", "NoOne");
         settings.PrivacyAvatar = NormalizeChoice(settings.PrivacyAvatar, "Everyone", "Everyone", "Friends", "NoOne");
+        settings.LocalMessageCacheDays = settings.LocalMessageCacheDays switch
+        {
+            7 or 30 or 90 => settings.LocalMessageCacheDays,
+            <= 0 => 30,
+            _ => Math.Clamp(settings.LocalMessageCacheDays, 7, 90)
+        };
+        settings.LocalMediaCacheMaxBytes = NormalizeCacheLimitBytes(settings.LocalMediaCacheMaxBytes);
+        settings.LocalFileCacheMaxBytes = NormalizeCacheLimitBytes(settings.LocalFileCacheMaxBytes);
+    }
+
+    private static long NormalizeCacheLimitBytes(long value)
+    {
+        var allowed = new[] { 300L * 1024 * 1024, 1024L * 1024 * 1024, 5L * 1024 * 1024 * 1024 };
+        return allowed.Contains(value) ? value : 1024L * 1024 * 1024;
     }
 
     private static string NormalizeChoice(string? value, string fallback, params string[] allowed)
@@ -260,6 +280,7 @@ internal static class AppLanguage
         ["settings.privacy"] = "Privacy",
         ["settings.activity"] = "Activity",
         ["settings.notifications"] = "Notifications",
+        ["settings.data"] = "Data",
         ["settings.privacy.subtitle"] = "Control who can contact you and what profile data they can see.",
         ["settings.activity.subtitle"] = "Game activity and scheduled Do Not Disturb.",
         ["settings.notifications.subtitle"] = "Choose how FluxChat alerts you.",
@@ -364,6 +385,9 @@ internal static class AppLanguage
         ["activity.visibility.friends"] = "Friends",
         ["activity.visibility.everyone"] = "Everyone",
         ["activity.visibility.selected"] = "Selected friends",
+        ["activity.visibility.noOne"] = "No one",
+        ["activity.visibility.participants"] = "Call participants",
+        ["activity.callVisibility"] = "Who can see call and screen-share activity",
         ["activity.searchFriends"] = "Search friends",
         ["activity.preview"] = "Current published activity: {0}",
         ["activity.none"] = "none",
@@ -379,6 +403,29 @@ internal static class AppLanguage
         ["notifications.taskbarFlash"] = "Flash FluxChat on the taskbar for new messages",
         ["notifications.friendRequests"] = "Notify when someone sends a friend request",
         ["notifications.friendRequest.received"] = "Sent you a friend request",
+        ["notifications.sounds.title"] = "Notification sounds",
+        ["notifications.sounds.body"] = "Custom local sounds for incoming calls and messages.",
+        ["notifications.callSound"] = "Incoming call ringtone",
+        ["notifications.callSound.hint"] = "If the file is longer, FluxChat will let you choose a 20-second part.",
+        ["notifications.messageSound"] = "Incoming message sound",
+        ["settings.data.subtitle"] = "Choose how FluxChat stores local cache.",
+        ["settings.data.storage"] = "Storage",
+        ["settings.data.chatHistory"] = "Chat history",
+        ["settings.data.chatHistory.body"] = "Stored locally as a temporary cache. VPS remains the main source.",
+        ["settings.data.images"] = "Images",
+        ["settings.data.images.body"] = "Cached on this device and cleaned automatically.",
+        ["settings.data.files"] = "Videos and files",
+        ["settings.data.files.body"] = "Cached locally with the file cache limit below.",
+        ["settings.data.localCache"] = "Local cache",
+        ["settings.data.localCache.title"] = "Local cache",
+        ["settings.data.autoClean"] = "Auto clean",
+        ["settings.data.messageCacheAge"] = "Message cache age",
+        ["settings.data.mediaCacheLimit"] = "Media cache limit",
+        ["settings.data.fileCacheLimit"] = "File cache limit",
+        ["settings.data.days"] = "{0} days",
+        ["settings.data.clearCache"] = "Clear cache",
+        ["settings.data.reducedMotion"] = "Reduced motion",
+        ["settings.data.reducedMotion.body"] = "Disables hover and press animations throughout FluxChat.",
         ["profile.status.online"] = "Online",
         ["profile.status.idle"] = "Idle",
         ["profile.status.dnd"] = "Do not disturb",
@@ -389,6 +436,7 @@ internal static class AppLanguage
         ["miniProfile.commonGroups"] = "Common groups: {0}",
         ["miniProfile.writeMessage"] = "Write a message",
         ["miniProfile.self"] = "This is your profile",
+        ["server.roles.add"] = "Add role",
         ["sidebar.directMessages"] = "DIRECT MESSAGES",
         ["sidebar.emptyContacts"] = "Add another FluxChat user by UserId.",
         ["addFriend.title"] = "Add Friend",
@@ -416,6 +464,8 @@ internal static class AppLanguage
         ["account.password"] = "Password",
         ["account.passwordLong"] = "Password (10 or more characters)",
         ["account.repeatPassword"] = "Repeat password",
+        ["account.showPassword"] = "Show password",
+        ["account.hidePassword"] = "Hide password",
         ["account.vpsServer"] = "VPS server",
         ["account.inviteCode"] = "Invite code",
         ["account.back"] = "Back",
@@ -538,6 +588,9 @@ internal static class AppLanguage
         ["activity.visibility.friends"] = "Друзья",
         ["activity.visibility.everyone"] = "Все",
         ["activity.visibility.selected"] = "Выбранные друзья",
+        ["activity.visibility.noOne"] = "Никто",
+        ["activity.visibility.participants"] = "Участники звонка",
+        ["activity.callVisibility"] = "Кто видит активности: в звонке, демонстрирует экран",
         ["activity.searchFriends"] = "Поиск друзей",
         ["activity.preview"] = "Текущая активность: {0}",
         ["activity.none"] = "нет",
@@ -563,6 +616,7 @@ internal static class AppLanguage
         ["miniProfile.commonGroups"] = "Общих групп: {0}",
         ["miniProfile.writeMessage"] = "Написать сообщение",
         ["miniProfile.self"] = "Это ваш профиль",
+        ["server.roles.add"] = "Добавить роль",
         ["sidebar.directMessages"] = "ЛИЧНЫЕ СООБЩЕНИЯ",
         ["sidebar.emptyContacts"] = "Добавьте другого пользователя FluxChat по UserId.",
         ["addFriend.title"] = "Добавить друга",
@@ -594,6 +648,36 @@ internal static class AppLanguage
         ["account.inviteCode"] = "Код приглашения",
         ["account.back"] = "Назад",
         ["account.wait"] = "Подождите..."
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> RussianOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["settings.data"] = "\u0414\u0430\u043d\u043d\u044b\u0435",
+        ["settings.data.subtitle"] = "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u0442\u0435, \u043a\u0430\u043a FluxChat \u0445\u0440\u0430\u043d\u0438\u0442 \u043b\u043e\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u043a\u044d\u0448.",
+        ["settings.data.storage"] = "\u0425\u0440\u0430\u043d\u0438\u043b\u0438\u0449\u0435",
+        ["settings.data.chatHistory"] = "\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0447\u0430\u0442\u043e\u0432",
+        ["settings.data.chatHistory.body"] = "\u0425\u0440\u0430\u043d\u0438\u0442\u0441\u044f \u043b\u043e\u043a\u0430\u043b\u044c\u043d\u043e \u043a\u0430\u043a \u0432\u0440\u0435\u043c\u0435\u043d\u043d\u044b\u0439 \u043a\u044d\u0448. VPS \u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f \u0433\u043b\u0430\u0432\u043d\u044b\u043c \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u043e\u043c.",
+        ["settings.data.images"] = "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f",
+        ["settings.data.images.body"] = "\u041a\u044d\u0448\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u043d\u0430 \u044d\u0442\u043e\u043c \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0435 \u0438 \u043e\u0447\u0438\u0449\u0430\u044e\u0442\u0441\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438.",
+        ["settings.data.files"] = "\u0412\u0438\u0434\u0435\u043e \u0438 \u0444\u0430\u0439\u043b\u044b",
+        ["settings.data.files.body"] = "\u041a\u044d\u0448\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u043b\u043e\u043a\u0430\u043b\u044c\u043d\u043e \u0441 \u043b\u0438\u043c\u0438\u0442\u043e\u043c \u0444\u0430\u0439\u043b\u043e\u0432\u043e\u0433\u043e \u043a\u044d\u0448\u0430 \u043d\u0438\u0436\u0435.",
+        ["settings.data.localCache"] = "\u041b\u043e\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u043a\u044d\u0448",
+        ["settings.data.localCache.title"] = "\u041b\u043e\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u043a\u044d\u0448",
+        ["settings.data.autoClean"] = "\u0410\u0432\u0442\u043e\u043e\u0447\u0438\u0441\u0442\u043a\u0430",
+        ["settings.data.messageCacheAge"] = "\u0421\u0440\u043e\u043a \u043a\u044d\u0448\u0430 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439",
+        ["settings.data.mediaCacheLimit"] = "\u041b\u0438\u043c\u0438\u0442 \u043a\u044d\u0448\u0430 \u043c\u0435\u0434\u0438\u0430",
+        ["settings.data.fileCacheLimit"] = "\u041b\u0438\u043c\u0438\u0442 \u043a\u044d\u0448\u0430 \u0444\u0430\u0439\u043b\u043e\u0432",
+        ["settings.data.days"] = "{0} \u0434\u043d.",
+        ["settings.data.clearCache"] = "\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043a\u044d\u0448",
+        ["settings.data.reducedMotion"] = "\u041c\u0435\u043d\u044c\u0448\u0435 \u0430\u043d\u0438\u043c\u0430\u0446\u0438\u0439",
+        ["settings.data.reducedMotion.body"] = "\u041e\u0442\u043a\u043b\u044e\u0447\u0430\u0435\u0442 \u0430\u043d\u0438\u043c\u0430\u0446\u0438\u0438 \u043d\u0430\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u0438 \u043d\u0430\u0436\u0430\u0442\u0438\u044f \u0432 FluxChat.",
+        ["notifications.sounds.title"] = "\u0417\u0432\u0443\u043a\u0438 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0439",
+        ["notifications.sounds.body"] = "\u041b\u043e\u043a\u0430\u043b\u044c\u043d\u044b\u0435 \u0437\u0432\u0443\u043a\u0438 \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u044f\u0449\u0438\u0445 \u0437\u0432\u043e\u043d\u043a\u043e\u0432 \u0438 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439.",
+        ["notifications.callSound"] = "\u041c\u0435\u043b\u043e\u0434\u0438\u044f \u0432\u0445\u043e\u0434\u044f\u0449\u0435\u0433\u043e \u0437\u0432\u043e\u043d\u043a\u0430",
+        ["notifications.callSound.hint"] = "\u0415\u0441\u043b\u0438 \u0444\u0430\u0439\u043b \u0434\u043b\u0438\u043d\u043d\u0435\u0435, FluxChat \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0438\u0442 \u0432\u044b\u0431\u0440\u0430\u0442\u044c 20-\u0441\u0435\u043a\u0443\u043d\u0434\u043d\u044b\u0439 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442.",
+        ["notifications.messageSound"] = "\u0417\u0432\u0443\u043a \u0432\u0445\u043e\u0434\u044f\u0449\u0435\u0433\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f",
+        ["account.showPassword"] = "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043f\u0430\u0440\u043e\u043b\u044c",
+        ["account.hidePassword"] = "\u0421\u043a\u0440\u044b\u0442\u044c \u043f\u0430\u0440\u043e\u043b\u044c"
     };
 
     public static readonly IReadOnlyList<(string Code, string DisplayName)> Supported =
@@ -654,6 +738,11 @@ internal static class AppLanguage
 
     public static string Text(string key)
     {
+        if (ShouldUseRussian() && RussianOverrides.TryGetValue(key, out var overrideValue))
+        {
+            return overrideValue;
+        }
+
         var dictionary = ShouldUseRussian() ? Russian : English;
         return dictionary.TryGetValue(key, out var value)
             ? value

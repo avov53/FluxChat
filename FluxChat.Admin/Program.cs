@@ -97,7 +97,9 @@ internal sealed class FluxusApp
             .. _items,
             new("PostgreSQL database", ManagePostgres),
             new("Message retention", ManageRetention),
-            new("Server limits", ManageServerLimits)
+            new("Server limits", ManageServerLimits),
+            new("File upload limit", ManageFileUploadLimit),
+            new("Update panel", ManageUpdatePanel)
         ];
     }
 
@@ -435,6 +437,147 @@ internal sealed class FluxusApp
         {
             Console.WriteLine($"Server limit update failed: {exception.Message}");
         }
+    }
+
+    private void ManageFileUploadLimit()
+    {
+        if (_accounts is null)
+        {
+            Console.WriteLine("PostgreSQL account storage is not configured.");
+            return;
+        }
+
+        try
+        {
+            var currentLimit = _accounts.GetMaxFileUploadBytesAsync().GetAwaiter().GetResult();
+
+            Console.WriteLine("FluxChat file upload limit");
+            Console.WriteLine();
+            Console.WriteLine($"Current upload limit: {FormatBytes(currentLimit)}");
+            Console.WriteLine("Allowed range: 1 MB - 1024 MB");
+            Console.WriteLine("Examples: 10 mb, 25MB, 100m");
+            Console.WriteLine();
+            Console.Write("New limit (blank to keep current): ");
+            var input = (Console.ReadLine() ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                Console.WriteLine("File upload limit was not changed.");
+                return;
+            }
+
+            if (!TryParseFileUploadLimit(input, out var bytes) ||
+                bytes is < 1L * 1024 * 1024 or > 1024L * 1024 * 1024)
+            {
+                Console.WriteLine("Invalid limit. Use a value from 1 MB to 1024 MB.");
+                return;
+            }
+
+            _accounts.SetMaxFileUploadBytesAsync(bytes).GetAwaiter().GetResult();
+            Console.WriteLine($"File upload limit updated to {FormatBytes(bytes)}.");
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"File upload limit update failed: {exception.Message}");
+        }
+    }
+
+    private void ManageUpdatePanel()
+    {
+        Console.WriteLine("FluxChat update panel");
+        Console.WriteLine();
+        Console.WriteLine("1. Update with current saved domain and Let's Encrypt HTTPS settings");
+        Console.WriteLine("   Downloads the latest fluxusui from GitHub and reuses /etc/fluxchat/account.env.");
+        Console.WriteLine("2. Interactive update/setup");
+        Console.WriteLine("   Runs the installer as usual and lets you enter domain, Let's Encrypt email and setup answers.");
+        Console.WriteLine();
+        Console.Write("Choice [1]: ");
+
+        var choice = (Console.ReadLine() ?? string.Empty).Trim();
+        switch (string.IsNullOrWhiteSpace(choice) ? "1" : choice)
+        {
+            case "1":
+                RunInstaller(
+                    "curl -fsSL https://raw.githubusercontent.com/avov53/fluxusui/main/install.sh | FLUXCHAT_UPDATE_CURRENT_ACCOUNT=1 bash");
+                break;
+            case "2":
+                RunInstaller(
+                    "bash <(curl -Ls https://raw.githubusercontent.com/avov53/fluxusui/main/install.sh)");
+                break;
+            default:
+                Console.WriteLine("Choose 1 or 2.");
+                break;
+        }
+    }
+
+    private static void RunInstaller(string command)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("This update panel is available on the VPS Linux server.");
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Starting update...");
+        Console.WriteLine();
+
+        var startInfo = new ProcessStartInfo("/usr/bin/env")
+        {
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add("bash");
+        startInfo.ArgumentList.Add("-lc");
+        startInfo.ArgumentList.Add(command);
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            Console.WriteLine("Could not start the update command.");
+            return;
+        }
+
+        process.WaitForExit();
+        Console.WriteLine();
+        Console.WriteLine(process.ExitCode == 0
+            ? "Update finished."
+            : $"Update failed with exit code {process.ExitCode}.");
+    }
+
+    private static bool TryParseFileUploadLimit(string input, out long bytes)
+    {
+        bytes = 0;
+        var normalized = input.Trim().ToLowerInvariant().Replace(" ", "");
+        if (normalized.Length == 0)
+        {
+            return false;
+        }
+
+        var multiplier = 1024L * 1024;
+        if (normalized.EndsWith("gb", StringComparison.Ordinal) ||
+            normalized.EndsWith("g", StringComparison.Ordinal))
+        {
+            normalized = normalized.EndsWith("gb", StringComparison.Ordinal)
+                ? normalized[..^2]
+                : normalized[..^1];
+            multiplier = 1024L * 1024 * 1024;
+        }
+        else if (normalized.EndsWith("mb", StringComparison.Ordinal) ||
+                 normalized.EndsWith("m", StringComparison.Ordinal))
+        {
+            normalized = normalized.EndsWith("mb", StringComparison.Ordinal)
+                ? normalized[..^2]
+                : normalized[..^1];
+            multiplier = 1024L * 1024;
+        }
+
+        if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ||
+            value <= 0)
+        {
+            return false;
+        }
+
+        bytes = (long)Math.Round(value * multiplier, MidpointRounding.AwayFromZero);
+        return bytes > 0;
     }
 
     private static System.Diagnostics.Process? FindRelayProcess()

@@ -52,6 +52,9 @@ public partial class MainWindow : Window
     private const string GroupTransferOwnerIntent = "group-transfer-owner";
     private const string GroupMessageIntent = "group-message";
     private const string ServerChannelInviteIntent = "server-channel-invite";
+    private const string ServerVoiceJoinIntent = "server-voice-join";
+    private const string ServerVoiceLeaveIntent = "server-voice-leave";
+    private const string ServerVoiceStateIntent = "server-voice-state";
     private const string ChatRichIntent = "chat-rich";
     private const string ChatEditIntent = "chat-edit";
     private const string ChatReactionIntent = "chat-reaction";
@@ -73,6 +76,10 @@ public partial class MainWindow : Window
     private const string CallScreenWebRtcAnswerIntent = "call-screen-webrtc-answer";
     private const string CallScreenWebRtcIceIntent = "call-screen-webrtc-ice";
     private const string CallScreenWebRtcFallbackIntent = "call-screen-webrtc-fallback";
+    private const string CallVideoStateIntent = "call-video-state";
+    private const string CallVideoWebRtcOfferIntent = "call-video-webrtc-offer";
+    private const string CallVideoWebRtcAnswerIntent = "call-video-webrtc-answer";
+    private const string CallVideoWebRtcIceIntent = "call-video-webrtc-ice";
     private static readonly TimeSpan IncomingCallRingDuration = TimeSpan.FromSeconds(20);
     private const string LegacyFriendRequestBody = "Friend request";
     private const string LegacyFriendAcceptBody = "Friend request accepted";
@@ -84,27 +91,26 @@ public partial class MainWindow : Window
     private const long ScreenShareHighLoadJpegQuality = 58L;
     private const int ScreenShareMaxCompactHeight = 150;
     private static readonly TimeSpan ScreenShareSelfPreviewInterval = TimeSpan.FromMilliseconds(180);
-    private static readonly TimeSpan ScreenShareEncodedLocalPreviewInterval = TimeSpan.FromSeconds(1);
     private const int ScreenShareMinAdaptiveHeight = 720;
     private const int ScreenShareHighResolutionMinAdaptiveHeight = 1080;
     private const int ScreenShareAdaptiveStep = 120;
     private const int ScreenShareHighResolutionMaxFrameRate = 60;
     private const int ScreenShareFallbackMaxHeight = 720;
     private const int ScreenShareFallbackMaxFrameRate = 15;
-    private const int ScreenShareVoiceProtectedMaxHeight = 1080;
-    private const int ScreenShareVoiceProtectedMaxFrameRate = 30;
-    private const int ScreenShareVoiceProtectedWebRtcMaxBitrate = 4_500_000;
-    private const int ScreenShareVoiceProtectedH264MaxBitrateKbps = 4_500;
+    private const int ScreenShareVoiceProtectedMaxHeight = 1440;
+    private const int ScreenShareVoiceProtectedMaxFrameRate = 60;
+    private const int ScreenShareVoiceProtectedWebRtcMaxBitrate = 30_000_000;
+    private const int ScreenShareVoiceProtectedH264MaxBitrateKbps = 30_000;
     private const int ScreenShareMaxPeerRenderFrameRate = 60;
     private const int ScreenShareFullscreenMaxPeerRenderFrameRate = 60;
-    private const int ScreenShareEncodedChunkSize = 32 * 1024;
-    private const int ScreenShareEncodedDataChannelBufferLimit = 512 * 1024;
+    private const int ScreenShareEncodedChunkSize = 256 * 1024;
+    private const int ScreenShareEncodedDataChannelBufferLimit = 16 * 1024 * 1024;
     private const double ScreenShareMiniPlayerWidth = 320;
     private const double ScreenShareMiniPlayerHeight = 180;
     private const double ScreenShareMiniPlayerMargin = 18;
     private static readonly TimeSpan ScreenShareSendTimeout = TimeSpan.FromMilliseconds(250);
     private static readonly bool ScreenSharePreferWebRtc = true;
-    private static readonly bool ScreenSharePreferEncodedWebRtc = true;
+    private static readonly bool ScreenSharePreferEncodedWebRtc = false;
     private static readonly TimeSpan ScreenShareDuplicateFrameInterval = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan ScreenShareWebRtcDuplicateFrameInterval = TimeSpan.Zero;
     private const string ScreenShareCodecJpeg = "jpeg";
@@ -114,8 +120,8 @@ public partial class MainWindow : Window
     private const int CallAudioSampleRate = 16000;
     private const int CallAudioChannels = 1;
     private const int CallAudioOpusFrameSize = CallAudioSampleRate / 50;
-    private const int CallAudioOpusBitrate = 32000;
-    private const int CallAudioOpusExpectedLossPercent = 5;
+    private const int CallAudioOpusBitrate = 48000;
+    private const int CallAudioOpusExpectedLossPercent = 12;
     private const int CallAudioOpusMaxPacketBytes = 512;
     private const int CallAudioMixPayloadVersion = 1;
     private const int SoundboardMaxDurationSeconds = 30;
@@ -128,16 +134,16 @@ public partial class MainWindow : Window
     private const int CallAudioVoiceFloorPeak = 140;
     private const int CallAudioSpeakingPeak = 900;
     private const int CallAudioNoisePeak = 180;
-    private const int CallAudioMaxCaptureQueueFrames = 12;
-    private const int CallAudioMaxPlaybackQueueFrames = 12;
+    private const int CallAudioMaxCaptureQueueFrames = 18;
+    private const int CallAudioMaxPlaybackQueueFrames = 24;
     private const int CallAudioLossSequenceDelay = 8;
-    private const int CallAudioJitterWarmupFrames = 4;
-    private const int CallAudioJitterLossDelay = 2;
-    private const int CallAudioJitterMaxFrames = 32;
-    private const int CallAudioMaxConcealmentFrames = 3;
+    private const int CallAudioJitterWarmupFrames = 6;
+    private const int CallAudioJitterLossDelay = 3;
+    private const int CallAudioJitterMaxFrames = 48;
+    private const int CallAudioMaxConcealmentFrames = 4;
     private const double CallAudioMaxGain = 2.4;
     private static readonly TimeSpan CallAudioSendTimeout = TimeSpan.FromMilliseconds(750);
-    private static readonly TimeSpan CallNetworkPingInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan CallNetworkPingInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan CallNetworkPingTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan CallPeerReconnectGrace = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CallPeerDisconnectAfter = TimeSpan.FromSeconds(20);
@@ -147,6 +153,11 @@ public partial class MainWindow : Window
     private const double AvatarEditorCircleSize = 344;
     private const double ProfileAvatarSize = 44;
     private const double SettingsAvatarSize = 64;
+    private const double CallMediaTileWidth = 220;
+    private const double CallMediaTileHeight = 124;
+    private const double CallMediaTileMinWidth = 180;
+    private const double CallMediaTileGap = 10;
+    private const double CallFocusedToolbarReserveHeight = 92;
     private const double PickerGap = 10;
     private const double PickerDefaultWorkspaceHeight = 350;
     private const double PickerMinWidth = 250;
@@ -207,6 +218,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<AccountDeviceSessionViewModel> _accountDeviceSessions = [];
     private readonly ObservableCollection<ScreenShareSourceItem> _screenShareSources = [];
     private readonly ObservableCollection<ScreenShareSourceItem> _visibleScreenShareSources = [];
+    private readonly ObservableCollection<CallParticipantTileViewModel> _callParticipants = [];
     private readonly Dictionary<string, SettingsTabInfo> _settingsTabs = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedGroupMemberIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _activeCallPeerUserIds = new(StringComparer.Ordinal);
@@ -244,9 +256,12 @@ public partial class MainWindow : Window
     private MessageViewModel? _replyTarget;
     private MessageViewModel? _editingMessage;
     private MessageViewModel? _forwardTarget;
+    private bool _isForwardDialogAnimating;
     private MessageViewModel? _reactionTarget;
     private MessageViewModel? _activeMiniProfileMessage;
     private MiniProfileViewModel? _activeMiniProfile;
+    private ContactViewModel? _activeMiniProfileServerContext;
+    private string _activeMiniProfileUserId = "";
     private bool _miniProfileEmojiTargetActive;
     private MessageViewModel? _imageViewerMessage;
     private MessageViewModel? _videoViewerMessage;
@@ -257,6 +272,7 @@ public partial class MainWindow : Window
     private double _imageViewerFitZoom = 1;
     private string _draftImagePath = "";
     private string _draftFilePath = "";
+    private string _draftOriginalFolderName = "";
     private CancellationTokenSource? _fileUploadCancellation;
     private GoogleDriveService? _googleDrive = null;
     private bool _isInitializingDataSettings;
@@ -313,6 +329,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _videoPlaybackTimer;
     private readonly DispatcherTimer _screenShareMiniPlayerTimer;
     private readonly DispatcherTimer _serverVoiceElapsedTimer;
+    private readonly DispatcherTimer _localCacheTimer;
     private readonly Queue<CallAudioSendReport> _peerAudioSendReports = new();
     private UserPresenceStatus _lastPublishedStatus = UserPresenceStatus.Offline;
     private string _lastPublishedCustomStatus = "";
@@ -333,18 +350,32 @@ public partial class MainWindow : Window
     private int _activeServerChannelOriginalUserLimit;
     private bool _isRefreshingServerChannelSettings;
     private bool _suppressServerChannelSelectionAction;
+    private bool _serverVoiceSelectionHandledOnMouseUp;
     private string _activeCallState = "";
+    private string _activeCallServerChannelId = "";
     private bool _selfInCall;
     private bool _peerInCall;
     private bool _isMicrophoneMuted;
     private bool _isHeadphonesMuted;
     private bool _peerMicrophoneMuted;
     private bool _peerHeadphonesMuted;
+    private bool _isVideoCallRequested;
+    private bool _isLocalCameraOn;
+    private bool _isPeerCameraOn;
+    private bool _isCallVideoFocusMode;
+    private bool _canUseCamera = true;
+    private bool _callVideoWebRtcReady;
+    private bool _callVideoWebRtcInitializing;
+    private readonly Queue<(string Intent, string Body, string FromUserId)> _pendingCallVideoSignals = new();
+    private bool _pendingLocalCameraStart;
+    private string _cameraUnavailableReason = "";
+    private string _callVideoRuntimeStatus = "Camera ready";
     private bool _isScreenSharing;
     private bool _peerScreenSharing;
     private bool _isWatchingPeerScreen;
     private bool _isScreenShareFocusMode;
     private bool _isScreenShareFullscreenMode;
+    private bool _suppressHeaderCallButtonsForActiveCallNavigation;
     private bool _screenShareWindowFullscreenApplied;
     private bool _screenSharePickerSuppressesStage;
     private ScreenShareFocusTarget _screenShareFocusTarget = ScreenShareFocusTarget.Auto;
@@ -354,7 +385,7 @@ public partial class MainWindow : Window
     private int _screenShareResolution = 1440;
     private int _screenShareFrameRate = 60;
     private int _screenShareAdaptiveHeight = 1440;
-    private string _screenShareRuntimeStatus = "Ready for hardware H.264";
+    private string _screenShareRuntimeStatus = "Ready for direct WebRTC";
     private bool _screenShareMuteAudio = true;
     private string _screenShareQualityPreset = "Balanced";
     private string _screenShareSourceFilter = "All";
@@ -367,6 +398,7 @@ public partial class MainWindow : Window
     private bool _screenShareWebRtcActive;
     private bool _screenShareWebRtcInitializing;
     private bool _screenShareWebRtcSettingsMode;
+    private bool _screenShareCapturePromptVisible;
     private bool _screenShareStartSignalSent;
     private bool _screenShareUsingEncodedWebRtc;
     private bool _screenShareEncodedChannelOpen;
@@ -374,6 +406,12 @@ public partial class MainWindow : Window
     private readonly object _screenShareEncodedFlowGate = new();
     private TaskCompletionSource<bool>? _screenShareEncodedDrainWaiter;
     private bool _peerScreenShareUsingWebRtc;
+    private string _lastScreenShareWebRtcState = "";
+    private long _lastScreenShareWebRtcStateLogTicks;
+    private double _lastRemoteWebRtcWidth;
+    private double _lastRemoteWebRtcHeight;
+    private double _lastRemoteWebRtcReadyState;
+    private long _lastRemoteWebRtcPlayingLogTicks;
     private bool _screenShareMiniPlayerDismissed;
     private bool _screenShareMiniPlayerDockedInApp;
     private bool _isDraggingScreenShareMiniPlayer;
@@ -387,7 +425,6 @@ public partial class MainWindow : Window
     private long _receivedScreenShareFrames;
     private long _droppedReceivedScreenShareFrames;
     private long _lastSelfScreenSharePreviewTicks;
-    private long _lastEncodedScreenSharePreviewTicks;
     private long _lastPeerScreenShareFrameAcceptedTicks;
     private ulong _lastScreenShareFrameHash;
     private long _lastScreenShareFrameHashSentTicks;
@@ -414,7 +451,9 @@ public partial class MainWindow : Window
     private long _lastAudioPingTicks;
     private long _lastRelayAudioReceivedTicks;
     private int _udpAudioWarningShown;
+    private int _audioRelayReconnectInProgress;
     private readonly Dictionary<long, DateTimeOffset> _pendingCallPings = [];
+    private readonly Queue<double> _recentCallPingSamples = new();
     private long _callPingSequence;
     private long _lastCallPingSentTicks;
     private double _currentCallPingMs = double.NaN;
@@ -501,6 +540,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         InitializeSettingsTabs();
         ScreenShareSourceList.ItemsSource = _visibleScreenShareSources;
+        CallParticipantsList.ItemsSource = _callParticipants;
         ScreenShareStreamAudioCheck.IsChecked = !_screenShareMuteAudio;
         UpdateScreenSharePickerState();
         _avatarVideoLoopTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
@@ -523,6 +563,8 @@ public partial class MainWindow : Window
         _screenShareMiniPlayerTimer.Tick += ScreenShareMiniPlayerTimer_OnTick;
         _serverVoiceElapsedTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _serverVoiceElapsedTimer.Tick += (_, _) => RefreshServerVoiceChannelTimers();
+        _localCacheTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
+        _localCacheTimer.Tick += async (_, _) => await RunLocalCacheCleanupAsync(force: false);
         ProfileAvatarVideo.MediaOpened += AvatarVideo_OnMediaOpened;
         ProfileAvatarVideo.MediaEnded += AvatarVideo_OnMediaEnded;
         SettingsAvatarVideo.MediaOpened += AvatarVideo_OnMediaOpened;
@@ -537,7 +579,7 @@ public partial class MainWindow : Window
         GifResultsList.ItemsSource = _gifResults;
         GifFavoritesList.ItemsSource = _favoriteGifs;
         SoundboardClipsList.ItemsSource = _soundboardClips;
-        ForwardContactsList.ItemsSource = _contacts;
+        RefreshForwardContacts();
         FriendRequestsList.ItemsSource = _friendRequests;
         GroupFriendsList.ItemsSource = _groupCandidates;
         GroupMembersList.ItemsSource = _groupMembers;
@@ -596,6 +638,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (ForwardOverlay.Visibility == Visibility.Visible)
+        {
+            _ = CloseForwardDialogAsync();
+            e.Handled = true;
+            return;
+        }
+
         if (MiniProfileLayer.Visibility == Visibility.Visible)
         {
             CloseMiniProfile();
@@ -606,6 +655,13 @@ public partial class MainWindow : Window
         if (ImageViewerOverlay.Visibility == Visibility.Visible)
         {
             CloseImageViewer();
+            e.Handled = true;
+            return;
+        }
+
+        if (_isCallVideoFocusMode)
+        {
+            ExitCallVideoFocusMode();
             e.Handled = true;
             return;
         }
@@ -622,7 +678,9 @@ public partial class MainWindow : Window
         {
             ExitScreenShareFocusMode();
             e.Handled = true;
+            return;
         }
+
     }
 
     private void MainWindow_OnPreviewTextInput(object sender, TextCompositionEventArgs e)
@@ -707,6 +765,8 @@ public partial class MainWindow : Window
         _serverHistory = new ServerHistoryClient(_settings.AccountApiUrl, _settings.AccountSessionToken);
         await _history.InitializeAsync();
         AppLog.Write("History store initialized");
+        await RunLocalCacheCleanupAsync(force: false);
+        _localCacheTimer.Start();
 
         LoadAvatarSelectionFromProfile();
         await RefreshOwnAvatarFromServerAsync();
@@ -772,12 +832,165 @@ public partial class MainWindow : Window
         {
             AppLog.Write("Screen share WebRTC browser capture disabled; using native capture path.");
         }
+        _ = Dispatcher.InvokeAsync(
+            () => _ = InitializeCallVideoWebRtcAsync(),
+            DispatcherPriority.ApplicationIdle);
         _ = CheckForUpdatesAsync();
         if (isFirstRun)
         {
             FirstRunVpsOverlay.Visibility = Visibility.Visible;
             FirstRunServerAddressInput.Focus();
             NetworkStatusText.Text = "Connect your VPS server to start.";
+        }
+    }
+
+    private async Task InitializeCallVideoWebRtcAsync()
+    {
+        if (_callVideoWebRtcInitializing || _callVideoWebRtcReady)
+        {
+            return;
+        }
+
+        _callVideoWebRtcInitializing = true;
+        try
+        {
+            var webRoot = Path.Combine(AppPaths.DataDirectory, "webrtc");
+            Directory.CreateDirectory(webRoot);
+            await File.WriteAllTextAsync(Path.Combine(webRoot, "call-video.html"), CallVideoWebRtcHtml, _stop.Token);
+            await CallVideoWebView.EnsureCoreWebView2Async();
+            CallVideoWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            CallVideoWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            CallVideoWebView.CoreWebView2.PermissionRequested -= CallVideoWebView_OnPermissionRequested;
+            CallVideoWebView.CoreWebView2.PermissionRequested += CallVideoWebView_OnPermissionRequested;
+            CallVideoWebView.CoreWebView2.WebMessageReceived -= CallVideoWebView_OnWebMessageReceived;
+            CallVideoWebView.CoreWebView2.WebMessageReceived += CallVideoWebView_OnWebMessageReceived;
+            CallVideoWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "fluxchat.local",
+                webRoot,
+                CoreWebView2HostResourceAccessKind.DenyCors);
+            CallVideoWebView.CoreWebView2.Navigate("https://fluxchat.local/call-video.html");
+            AppLog.Write("Call video WebRTC view initialized");
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            _callVideoWebRtcReady = false;
+            _canUseCamera = false;
+            _cameraUnavailableReason = ex.Message;
+            AppLog.Write(ex, "Call video WebRTC initialization failed");
+            UpdateCallVideoControlVisuals();
+        }
+        finally
+        {
+            _callVideoWebRtcInitializing = false;
+        }
+    }
+
+    private static void CallVideoWebView_OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        if (e.PermissionKind == CoreWebView2PermissionKind.Camera)
+        {
+            e.State = CoreWebView2PermissionState.Allow;
+        }
+    }
+
+    private void CallVideoWebView_OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(e.WebMessageAsJson);
+            var root = document.RootElement;
+            var type = GetJsonString(root, "type");
+            switch (type)
+            {
+                case "ready":
+                    _callVideoWebRtcReady = true;
+                    ConfigureCallVideoWebRtc();
+                    PostCallVideoWebRtcMessage(new { type = "probe-camera" });
+                    FlushPendingCallVideoSignals();
+                    UpdateCallVideoControlVisuals();
+                    AppLog.Write("Call video WebRTC ready");
+                    break;
+                case "camera-available":
+                    _canUseCamera = true;
+                    _cameraUnavailableReason = "";
+                    UpdateIncomingCallMiniWindow();
+                    UpdateCallVideoControlVisuals();
+                    if (_pendingLocalCameraStart && _selfInCall && _activeCallState == "connected")
+                    {
+                        TryStartLocalCamera();
+                    }
+                    break;
+                case "camera-unavailable":
+                    _canUseCamera = false;
+                    _cameraUnavailableReason = GetJsonString(root, "message");
+                    _isLocalCameraOn = false;
+                    _isCallVideoFocusMode = false;
+                    _pendingLocalCameraStart = false;
+                    UpdateIncomingCallMiniWindow();
+                    UpdateCallVideoControlVisuals();
+                    break;
+                case "offer":
+                    SendCallVideoWebRtcSignal(CallVideoWebRtcOfferIntent, e.WebMessageAsJson);
+                    break;
+                case "answer":
+                    SendCallVideoWebRtcSignal(CallVideoWebRtcAnswerIntent, e.WebMessageAsJson);
+                    break;
+                case "ice":
+                    SendCallVideoWebRtcSignal(CallVideoWebRtcIceIntent, e.WebMessageAsJson);
+                    break;
+                case "local-started":
+                    _isLocalCameraOn = true;
+                    _isVideoCallRequested = true;
+                    _pendingLocalCameraStart = false;
+                    SendCallVideoStateAsync();
+                    UpdateCallVideoControlVisuals();
+                    AppLog.Write($"Call video local camera started: profile={GetJsonString(root, "profile")}, width={GetJsonDouble(root, "width"):0}, height={GetJsonDouble(root, "height"):0}, fps={GetJsonDouble(root, "frameRate"):0.#}");
+                    break;
+                case "local-stopped":
+                case "local-ended":
+                    _isLocalCameraOn = false;
+                    _isVideoCallRequested = _isPeerCameraOn;
+                    _isCallVideoFocusMode = _isPeerCameraOn && _isCallVideoFocusMode;
+                    _pendingLocalCameraStart = false;
+                    SendCallVideoStateAsync();
+                    UpdateCallVideoControlVisuals();
+                    break;
+                case "remote-started":
+                    _isPeerCameraOn = true;
+                    UpdateCallVideoControlVisuals();
+                    AppLog.Write("Call video remote camera started");
+                    break;
+                case "remote-video-ready":
+                    AppLog.Write($"Call video remote video ready: width={GetJsonDouble(root, "width"):0}, height={GetJsonDouble(root, "height"):0}, readyState={GetJsonDouble(root, "readyState"):0}");
+                    break;
+                case "remote-playing":
+                    _isPeerCameraOn = true;
+                    UpdateCallVideoControlVisuals();
+                    AppLog.Write($"Call video remote video playing: width={GetJsonDouble(root, "width"):0}, height={GetJsonDouble(root, "height"):0}, readyState={GetJsonDouble(root, "readyState"):0}");
+                    break;
+                case "focus-request":
+                    ToggleCallVideoFocusMode();
+                    break;
+                case "remote-stopped":
+                    _isPeerCameraOn = false;
+                    _isVideoCallRequested = _isLocalCameraOn;
+                    _isCallVideoFocusMode = _isLocalCameraOn && _isCallVideoFocusMode;
+                    UpdateCallVideoControlVisuals();
+                    break;
+                case "state":
+                    _callVideoRuntimeStatus = GetJsonString(root, "value");
+                    UpdateCallVideoStatusText();
+                    break;
+                case "error":
+                    _callVideoRuntimeStatus = GetJsonString(root, "message");
+                    AppLog.Write($"Call video WebRTC error: {_callVideoRuntimeStatus}");
+                    UpdateCallVideoStatusText();
+                    break;
+            }
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            AppLog.Write(ex, "Call video WebRTC host message failed");
         }
     }
 
@@ -848,17 +1061,30 @@ public partial class MainWindow : Window
                         break;
                     }
 
+                    _screenShareCapturePromptVisible = false;
                     _screenShareWebRtcActive = true;
                     SetScreenShareWebRtcVisible(true);
                     SendScreenShareStartSignal(localSource, useWebRtc: true);
 
-                    if (!_isScreenShareFocusMode)
-                    {
-                        EnterScreenShareFocusMode();
-                    }
-
                     UpdateScreenShareStageVisibility();
-                    AppLog.Write("Screen share WebRTC local stream started");
+                    var localMode = GetJsonString(root, "mode");
+                    var localWidth = GetJsonDouble(root, "width");
+                    var localHeight = GetJsonDouble(root, "height");
+                    var localFrameRate = GetJsonDouble(root, "frameRate");
+                    var displaySurface = GetJsonString(root, "displaySurface");
+                    AppLog.Write(
+                        string.Equals(localMode, "direct-track", StringComparison.Ordinal)
+                            ? $"Screen share direct WebRTC track started: width={localWidth:0}, height={localHeight:0}, fps={localFrameRate:0.#}, surface={displaySurface}"
+                            : "Screen share WebRTC local stream started");
+                    break;
+                case "capture-gesture-required":
+                    if (_isScreenSharing)
+                    {
+                        _screenShareCapturePromptVisible = true;
+                        SetScreenShareWebRtcVisible(true);
+                        UpdateScreenShareStageVisibility();
+                        AppLog.Write("Screen share direct WebRTC requires confirmation inside WebView2");
+                    }
                     break;
                 case "encoded-local-started":
                     var encodedSource = _activeScreenShareSource;
@@ -871,10 +1097,6 @@ public partial class MainWindow : Window
                     _screenShareWebRtcActive = true;
                     SetScreenShareWebRtcVisible(true);
                     SendScreenShareStartSignal(encodedSource, useWebRtc: true);
-                    if (!_isScreenShareFocusMode)
-                    {
-                        EnterScreenShareFocusMode();
-                    }
 
                     UpdateScreenShareStageVisibility();
                     AppLog.Write("Screen share encoded WebRTC signaling started");
@@ -905,11 +1127,6 @@ public partial class MainWindow : Window
                     _peerScreenShareUsingWebRtc = true;
                     _screenShareWebRtcActive = true;
                     SetScreenShareWebRtcVisible(_isWatchingPeerScreen);
-                    if (_isWatchingPeerScreen && !_isScreenShareFocusMode)
-                    {
-                        EnterScreenShareFocusMode();
-                    }
-
                     UpdateScreenShareStageVisibility();
                     QueueScreenShareMiniPlayerPreviewUpdate();
                     if (_activeCallContact is { IsGroup: false } remoteContact)
@@ -919,15 +1136,38 @@ public partial class MainWindow : Window
                     AppLog.Write("Screen share WebRTC remote stream started");
                     break;
                 case "remote-playing":
+                    var remoteWidth = GetJsonDouble(root, "width");
+                    var remoteHeight = GetJsonDouble(root, "height");
+                    var remoteReadyState = GetJsonDouble(root, "readyState");
+                    var remoteDimensionsChanged =
+                        Math.Abs(remoteWidth - _lastRemoteWebRtcWidth) > 0.5 ||
+                        Math.Abs(remoteHeight - _lastRemoteWebRtcHeight) > 0.5 ||
+                        Math.Abs(remoteReadyState - _lastRemoteWebRtcReadyState) > 0.5;
+                    var wasRemoteWebRtcPlaying = _peerScreenSharing &&
+                                                 _peerScreenShareUsingWebRtc &&
+                                                 _screenShareWebRtcActive;
                     _peerScreenSharing = true;
                     _screenShareMiniPlayerDismissed = false;
                     _screenShareMiniPlayerDockedInApp = false;
                     _peerScreenShareUsingWebRtc = true;
                     _screenShareWebRtcActive = true;
                     SetScreenShareWebRtcVisible(_isWatchingPeerScreen);
-                    UpdateScreenShareStageVisibility();
+                    if (!wasRemoteWebRtcPlaying || remoteDimensionsChanged)
+                    {
+                        UpdateScreenShareStageVisibility();
+                    }
+
                     QueueScreenShareMiniPlayerPreviewUpdate();
-                    AppLog.Write($"Screen share WebRTC remote video playing: width={GetJsonDouble(root, "width"):0}, height={GetJsonDouble(root, "height"):0}, readyState={GetJsonDouble(root, "readyState"):0}");
+                    var nowTicks = DateTime.UtcNow.Ticks;
+                    if (remoteDimensionsChanged ||
+                        nowTicks - Interlocked.Read(ref _lastRemoteWebRtcPlayingLogTicks) > TimeSpan.FromSeconds(5).Ticks)
+                    {
+                        _lastRemoteWebRtcWidth = remoteWidth;
+                        _lastRemoteWebRtcHeight = remoteHeight;
+                        _lastRemoteWebRtcReadyState = remoteReadyState;
+                        Interlocked.Exchange(ref _lastRemoteWebRtcPlayingLogTicks, nowTicks);
+                        AppLog.Write($"Screen share WebRTC remote video playing: width={remoteWidth:0}, height={remoteHeight:0}, readyState={remoteReadyState:0}");
+                    }
                     break;
                 case "remote-video-ready":
                     AppLog.Write($"Screen share WebRTC remote video ready: width={GetJsonDouble(root, "width"):0}, height={GetJsonDouble(root, "height"):0}, readyState={GetJsonDouble(root, "readyState"):0}");
@@ -938,7 +1178,10 @@ public partial class MainWindow : Window
                     RequestPeerScreenShareFallback(decodeReason);
                     break;
                 case "focus-request":
-                    FocusScreenShareFromPreview(ParseScreenShareFocusTarget(GetJsonString(root, "target")));
+                    if (_isScreenSharing || _peerScreenSharing)
+                    {
+                        FocusScreenShareFromPreview(ParseScreenShareFocusTarget(GetJsonString(root, "target")));
+                    }
                     break;
                 case "stream-context-request":
                     ShowActiveStreamAudioMenu(CallScreenShareStage);
@@ -955,7 +1198,8 @@ public partial class MainWindow : Window
                     _screenShareEncodedChannelOpen = false;
                     StopScreenShareEncoderProcess();
                     _screenShareWebRtcActive = _peerScreenShareUsingWebRtc;
-                    SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+                    SetScreenShareWebRtcVisible(_peerScreenShareUsingWebRtc && _isWatchingPeerScreen);
+                    UpdateScreenShareStageVisibility();
                     break;
                 case "remote-stopped":
                     _peerScreenSharing = false;
@@ -980,7 +1224,15 @@ public partial class MainWindow : Window
                     break;
                 case "state":
                     var state = GetJsonString(root, "value");
-                    AppLog.Write($"Screen share WebRTC state: {state}");
+                    var shouldLogState =
+                        !string.Equals(state, _lastScreenShareWebRtcState, StringComparison.Ordinal) ||
+                        DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastScreenShareWebRtcStateLogTicks) > TimeSpan.FromSeconds(5).Ticks;
+                    if (shouldLogState)
+                    {
+                        _lastScreenShareWebRtcState = state;
+                        Interlocked.Exchange(ref _lastScreenShareWebRtcStateLogTicks, DateTime.UtcNow.Ticks);
+                        AppLog.Write($"Screen share WebRTC state: {state}");
+                    }
                     if (state.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
                         state.Contains("closed", StringComparison.OrdinalIgnoreCase) ||
                         state.Contains("timeout", StringComparison.OrdinalIgnoreCase))
@@ -993,6 +1245,7 @@ public partial class MainWindow : Window
                     AppLog.Write($"Screen share WebRTC error: {message}");
                     if (IsScreenSharePickerCancellation(message))
                     {
+                        _screenShareCapturePromptVisible = false;
                         NetworkStatusText.Text = "Screen share cancelled.";
                         StopScreenShare(sendSignal: false);
                         break;
@@ -1129,6 +1382,259 @@ public partial class MainWindow : Window
         };
     }
 
+    private void ConfigureCallVideoWebRtc()
+    {
+        if (!_callVideoWebRtcReady || CallVideoWebView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var iceServers = GetScreenShareWebRtcIceServers();
+        PostCallVideoWebRtcMessage(new
+        {
+            type = "configure",
+            iceServers,
+            connectTimeoutMs = 9000,
+            polite = IsPoliteCallVideoPeer()
+        });
+    }
+
+    private bool IsPoliteCallVideoPeer()
+        => _profile is not null &&
+           _activeCallPeerContact is not null &&
+           string.CompareOrdinal(_profile.UserId, _activeCallPeerContact.UserId) > 0;
+
+    private void PostCallVideoWebRtcMessage(object message)
+        => PostCallVideoWebRtcMessageJson(JsonSerializer.Serialize(message));
+
+    private void PostCallVideoWebRtcMessageJson(string json)
+    {
+        try
+        {
+            CallVideoWebView.CoreWebView2?.PostWebMessageAsJson(json);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or COMException)
+        {
+            AppLog.Write(ex, "Call video WebRTC post message failed");
+        }
+    }
+
+    private void SendCallVideoWebRtcSignal(string intent, string body)
+    {
+        if (_activeCallContact is null)
+        {
+            return;
+        }
+
+        _ = SendCallControlAsync(_activeCallContact, intent, body, log: false);
+    }
+
+    private void HandleCallVideoWebRtcSignal(ChatPacket packet)
+    {
+        var intent = packet.Intent ?? "";
+        if (string.IsNullOrWhiteSpace(intent))
+        {
+            return;
+        }
+
+        _activeCallPeerContact = _contacts.FirstOrDefault(x => x.UserId == packet.FromUserId && !x.IsGroup) ?? _activeCallPeerContact;
+        if (!_callVideoWebRtcReady || CallVideoWebView.CoreWebView2 is null)
+        {
+            if (_pendingCallVideoSignals.Count >= 64)
+            {
+                _pendingCallVideoSignals.Dequeue();
+            }
+
+            _pendingCallVideoSignals.Enqueue((intent, packet.Body, packet.FromUserId));
+            AppLog.Write($"Call video WebRTC signal queued while not ready: intent={intent}, from={packet.FromUserId}, queued={_pendingCallVideoSignals.Count}");
+            return;
+        }
+
+        ConfigureCallVideoWebRtc();
+        PostCallVideoSignalToWebView(intent, packet.Body);
+    }
+
+    private void FlushPendingCallVideoSignals()
+    {
+        if (!_callVideoWebRtcReady || CallVideoWebView.CoreWebView2 is null || _pendingCallVideoSignals.Count == 0)
+        {
+            return;
+        }
+
+        var flushed = 0;
+        while (_pendingCallVideoSignals.Count > 0)
+        {
+            var signal = _pendingCallVideoSignals.Dequeue();
+            _activeCallPeerContact = _contacts.FirstOrDefault(x => x.UserId == signal.FromUserId && !x.IsGroup) ?? _activeCallPeerContact;
+            ConfigureCallVideoWebRtc();
+            PostCallVideoSignalToWebView(signal.Intent, signal.Body);
+            flushed++;
+        }
+
+        AppLog.Write($"Call video WebRTC queued signals applied: count={flushed}");
+    }
+
+    private void PostCallVideoSignalToWebView(string intent, string body)
+    {
+        var messageType = intent switch
+        {
+            CallVideoWebRtcOfferIntent => "remote-offer",
+            CallVideoWebRtcAnswerIntent => "remote-answer",
+            CallVideoWebRtcIceIntent => "remote-ice",
+            _ => ""
+        };
+        if (string.IsNullOrWhiteSpace(messageType))
+        {
+            return;
+        }
+
+        PostCallVideoWebRtcMessageJson(WrapCallVideoWebRtcSignal(messageType, body));
+    }
+
+    private static string WrapCallVideoWebRtcSignal(string type, string signalJson)
+    {
+        using var signal = JsonDocument.Parse(signalJson);
+        return JsonSerializer.Serialize(new
+        {
+            type,
+            signal = signal.RootElement.Clone()
+        });
+    }
+
+    private async Task StartCallVideoAsync(bool enableLocalCamera)
+    {
+        if (!HasVideoPermissionForCall(_activeCallContact))
+        {
+            NetworkStatusText.Text = "You do not have permission to use video in this voice channel.";
+            UpdateCallVideoControlVisuals();
+            return;
+        }
+
+        _isVideoCallRequested = true;
+        await InitializeCallVideoWebRtcAsync();
+        ConfigureCallVideoWebRtc();
+        UpdateCallVideoControlVisuals();
+        if (enableLocalCamera)
+        {
+            _pendingLocalCameraStart = true;
+            TryStartLocalCamera();
+        }
+        else
+        {
+            _pendingLocalCameraStart = false;
+            SendCallVideoStateAsync();
+        }
+    }
+
+    private void TryStartLocalCamera()
+    {
+        if (!_canUseCamera || !_callVideoWebRtcReady)
+        {
+            _isLocalCameraOn = false;
+            _isCallVideoFocusMode = false;
+            SendCallVideoStateAsync();
+            UpdateCallVideoControlVisuals();
+            return;
+        }
+
+        _pendingLocalCameraStart = false;
+        ConfigureCallVideoWebRtc();
+        PostCallVideoWebRtcMessage(new { type = "start-camera" });
+    }
+
+    private void StopLocalCamera(bool notifyPeer)
+    {
+        _isLocalCameraOn = false;
+        _isVideoCallRequested = _isPeerCameraOn;
+        _isCallVideoFocusMode = _isPeerCameraOn && _isCallVideoFocusMode;
+        _pendingLocalCameraStart = false;
+        if (!_callVideoWebRtcReady)
+        {
+            if (notifyPeer)
+            {
+                SendCallVideoStateAsync();
+            }
+            UpdateCallVideoControlVisuals();
+            return;
+        }
+
+        PostCallVideoWebRtcMessage(new { type = "stop-local" });
+        if (notifyPeer)
+        {
+            SendCallVideoStateAsync();
+        }
+
+        UpdateCallVideoControlVisuals();
+    }
+
+    private void StopCallVideo(bool notifyPeer)
+    {
+        if (notifyPeer)
+        {
+            SendCallVideoStateAsync(localCameraOn: false, peerEnding: true);
+        }
+
+        _isVideoCallRequested = false;
+        _isLocalCameraOn = false;
+        _isPeerCameraOn = false;
+        _isCallVideoFocusMode = false;
+        _pendingLocalCameraStart = false;
+        _callVideoRuntimeStatus = "Camera ready";
+        if (_callVideoWebRtcReady)
+        {
+            PostCallVideoWebRtcMessage(new { type = "stop" });
+        }
+
+        UpdateCallVideoControlVisuals();
+    }
+
+    private void SendCallVideoStateAsync(bool? localCameraOn = null, bool peerEnding = false)
+    {
+        if (_activeCallContact is null)
+        {
+            return;
+        }
+
+        var payload = JsonSerializer.Serialize(new CallVideoStatePayload(
+            localCameraOn ?? _isLocalCameraOn,
+            peerEnding,
+            _cameraUnavailableReason));
+        _ = SendCallControlAsync(_activeCallContact, CallVideoStateIntent, payload, log: false);
+    }
+
+    private void ApplyPeerCallVideoState(ChatPacket packet)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<CallVideoStatePayload>(packet.Body);
+            if (payload is null)
+            {
+                return;
+            }
+
+            _isPeerCameraOn = payload.CameraOn && !payload.Ended;
+            if (!_isPeerCameraOn)
+            {
+                PostCallVideoWebRtcMessage(new { type = "stop-remote" });
+            }
+
+            _isVideoCallRequested = _isLocalCameraOn || _isPeerCameraOn;
+
+            UpdateCallVideoControlVisuals();
+        }
+        catch (JsonException)
+        {
+            _isPeerCameraOn = string.Equals(packet.Body, "on", StringComparison.OrdinalIgnoreCase);
+            if (!_isPeerCameraOn)
+            {
+                PostCallVideoWebRtcMessage(new { type = "stop-remote" });
+            }
+
+            _isVideoCallRequested = _isLocalCameraOn || _isPeerCameraOn;
+            UpdateCallVideoControlVisuals();
+        }
+    }
+
     private int GetScreenShareWebRtcMaxBitrate()
     {
         if (_screenShareResolution >= 1440)
@@ -1182,7 +1688,11 @@ public partial class MainWindow : Window
         var rttMs = GetJsonDouble(root, "rttMs");
         var packetLoss = GetJsonDouble(root, "packetLoss");
         var quality = GetJsonString(root, "qualityLimitationReason");
-        AppLog.Write($"Screen share WebRTC stats: direction={direction}, fps={fps:0.#}, bitrateKbps={bitrateKbps:0}, dropped={dropped:0}, packetsLost={packetsLost:0}, rttMs={rttMs:0}, packetLoss={packetLoss:0.###}, quality={quality}");
+        var mediaLag = GetJsonDouble(root, "mediaLag");
+        var appendQueue = GetJsonDouble(root, "appendQueue");
+        var sendQueue = GetJsonDouble(root, "sendQueue");
+        var bufferedAmount = GetJsonDouble(root, "bufferedAmount");
+        AppLog.Write($"Screen share WebRTC stats: direction={direction}, fps={fps:0.#}, bitrateKbps={bitrateKbps:0}, dropped={dropped:0}, packetsLost={packetsLost:0}, rttMs={rttMs:0}, packetLoss={packetLoss:0.###}, quality={quality}, mediaLag={mediaLag:0.###}, appendQueue={appendQueue:0}, sendQueue={sendQueue:0}, bufferedAmount={bufferedAmount:0}");
     }
 
     private void SetScreenShareWebRtcVisible(bool visible)
@@ -1190,20 +1700,25 @@ public partial class MainWindow : Window
         var stageSuppressed = IsScreenShareStageSuppressedByOverlay();
         var keepWebViewAlive =
             visible ||
+            _screenShareCapturePromptVisible ||
             _screenShareUsingNativeWebRtc ||
             _screenShareUsingEncodedWebRtc ||
             _peerScreenShareUsingWebRtc;
+        var showLocalWebView = _isScreenSharing &&
+                               _screenShareWebRtcActive;
+        var showPeerWebView = _peerScreenShareUsingWebRtc && _isWatchingPeerScreen;
         var showWebViewStage =
             keepWebViewAlive &&
-            _peerScreenShareUsingWebRtc &&
-            _isWatchingPeerScreen &&
+            (showLocalWebView || showPeerWebView || _screenShareCapturePromptVisible) &&
             !_screenSharePickerSuppressesStage &&
             !stageSuppressed;
 
         ScreenShareWebView.Visibility = keepWebViewAlive
             ? (showWebViewStage ? Visibility.Visible : Visibility.Hidden)
             : Visibility.Collapsed;
-        ScreenShareWebView.IsHitTestVisible = showWebViewStage;
+        // The stream is display-only. Let the WPF stage receive clicks so the
+        // remote viewer can enter focused/fullscreen mode consistently.
+        ScreenShareWebView.IsHitTestVisible = _screenShareCapturePromptVisible;
         ScreenShareWebView.Width = showWebViewStage ? double.NaN : 1;
         ScreenShareWebView.Height = showWebViewStage ? double.NaN : 1;
         ScreenShareWebView.HorizontalAlignment = showWebViewStage
@@ -1213,6 +1728,9 @@ public partial class MainWindow : Window
             ? System.Windows.VerticalAlignment.Stretch
             : System.Windows.VerticalAlignment.Top;
         CallScreenShareGrid.Visibility = showWebViewStage ? Visibility.Collapsed : Visibility.Visible;
+        CallScreenShareWebViewHitOverlay.Visibility = showWebViewStage && !_screenShareCapturePromptVisible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private bool IsScreenShareWebRtcPreferred()
@@ -1345,6 +1863,7 @@ public partial class MainWindow : Window
         _callRingtoneTimer.Stop();
         _videoPlaybackTimer.Stop();
         _screenShareMiniPlayerTimer.Stop();
+        _localCacheTimer.Stop();
         CloseIncomingCallMiniWindow();
         CloseExternalScreenShareMiniPlayer();
         CloseVideoViewer();
@@ -1358,6 +1877,7 @@ public partial class MainWindow : Window
         var activeCallContact = _activeCallContact;
         if (activeCallContact is not null)
         {
+            _selfInCall = false;
             await SendCallSignalAsync(activeCallContact, CallEndIntent);
         }
 
@@ -1559,7 +2079,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (packet.Intent is CallInviteIntent or CallAcceptIntent or CallDeclineIntent or CallEndIntent or CallLeaveIntent or CallJoinIntent or CallAudioStateIntent or CallPingIntent or CallPongIntent or CallScreenStartIntent or CallScreenFrameIntent or CallScreenStopIntent or CallScreenWebRtcOfferIntent or CallScreenWebRtcAnswerIntent or CallScreenWebRtcIceIntent or CallScreenWebRtcFallbackIntent)
+            if (packet.Intent is CallInviteIntent or CallAcceptIntent or CallDeclineIntent or CallEndIntent or CallLeaveIntent or CallJoinIntent or ServerVoiceJoinIntent or ServerVoiceLeaveIntent or ServerVoiceStateIntent or CallAudioStateIntent or CallPingIntent or CallPongIntent or CallScreenStartIntent or CallScreenFrameIntent or CallScreenStopIntent or CallScreenWebRtcOfferIntent or CallScreenWebRtcAnswerIntent or CallScreenWebRtcIceIntent or CallScreenWebRtcFallbackIntent or CallVideoStateIntent or CallVideoWebRtcOfferIntent or CallVideoWebRtcAnswerIntent or CallVideoWebRtcIceIntent)
             {
                 HandleCallPacket(packet);
                 return;
@@ -1764,6 +2284,7 @@ public partial class MainWindow : Window
         ComposerPanel.Visibility = Visibility.Visible;
         EmptyChatHint.Visibility = Visibility.Collapsed;
         StartCallButton.Visibility = contact.IsServer ? Visibility.Collapsed : Visibility.Visible;
+        StartVideoCallButton.Visibility = contact.IsServer ? Visibility.Collapsed : Visibility.Visible;
         ChatSearchInput.Visibility = Visibility.Visible;
         ChatSearchInput.Clear();
         _currentSearchIndex = -1;
@@ -1786,9 +2307,14 @@ public partial class MainWindow : Window
             AppLog.Write(ex, "Server history load failed; using local migration cache");
         }
 
+        var localConversation = await _history.LoadConversationAsync(contact.UserId);
         if (conversation.Count == 0)
         {
-            conversation = await _history.LoadConversationAsync(contact.UserId);
+            conversation = localConversation;
+        }
+        else if (localConversation.Count > 0)
+        {
+            conversation = MergeConversationMessages(conversation, localConversation);
         }
         foreach (var message in conversation)
         {
@@ -1806,8 +2332,31 @@ public partial class MainWindow : Window
         {
             ShowCallPanel(contact, "Incoming call", showIncomingActions: true);
         }
+        else
+        {
+            RefreshActiveCallPanelVisibility();
+        }
 
         MessageInput.Focus();
+    }
+
+    private static IReadOnlyList<MessageViewModel> MergeConversationMessages(
+        IReadOnlyList<MessageViewModel> primary,
+        IReadOnlyList<MessageViewModel> local)
+    {
+        if (primary.Count == 0) return local;
+        if (local.Count == 0) return primary;
+
+        var byId = new Dictionary<Guid, MessageViewModel>();
+        foreach (var message in primary.Concat(local))
+        {
+            byId[message.MessageId] = message;
+        }
+
+        return byId.Values
+            .OrderBy(x => x.SentAtUtc)
+            .ThenBy(x => x.MessageId)
+            .ToArray();
     }
 
     private void SetServerChannelsPanelVisible(bool visible)
@@ -1921,18 +2470,8 @@ public partial class MainWindow : Window
 
         if (channel.IsVoice)
         {
-            if (!HasServerPermission(group, ServerPermissionJoinVoice, channel.Id))
-            {
-                NetworkStatusText.Text = "You do not have permission to join this voice channel.";
-                ServerChannelsList.SelectedItem = _serverChannels.FirstOrDefault(x => string.Equals(x.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase));
-                return;
-            }
-
-            group.SelectedServerChannelId = channel.Id;
-            await _history.SaveContactAsync(group);
-            await SyncContactToServerAsync(group);
-            await StartCallForContactAsync(group);
-            RefreshServerChannelsPanel();
+            _serverVoiceSelectionHandledOnMouseUp = true;
+            await OpenServerVoiceChannelAsync(group, channel);
             return;
         }
 
@@ -1941,6 +2480,80 @@ public partial class MainWindow : Window
         await SyncContactToServerAsync(group);
         MarkServerChannelRead(group, channel.Id);
         RefreshServerChannelsPanel();
+        RefreshActiveCallPanelVisibility();
+    }
+
+    private async void ServerChannelsList_OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isRefreshingServerChannels ||
+            _selectedContact is not { IsGroup: true } group)
+        {
+            return;
+        }
+
+        var item = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
+        if (item?.DataContext is not ServerChannelViewModel { IsVoice: true } channel)
+        {
+            _serverVoiceSelectionHandledOnMouseUp = false;
+            return;
+        }
+
+        if (_serverVoiceSelectionHandledOnMouseUp)
+        {
+            _serverVoiceSelectionHandledOnMouseUp = false;
+            return;
+        }
+
+        e.Handled = true;
+        _suppressServerChannelSelectionAction = true;
+        ServerChannelsList.SelectedItem = channel;
+        _suppressServerChannelSelectionAction = false;
+        await OpenServerVoiceChannelAsync(group, channel);
+    }
+
+    private async Task OpenServerVoiceChannelAsync(ContactViewModel group, ServerChannelViewModel channel)
+    {
+        if (!group.IsServer || !channel.IsVoice)
+        {
+            return;
+        }
+
+        if (!HasServerPermission(group, ServerPermissionJoinVoice, channel.Id))
+        {
+            NetworkStatusText.Text = "You do not have permission to join this voice channel.";
+            _suppressServerChannelSelectionAction = true;
+            ServerChannelsList.SelectedItem = _serverChannels.FirstOrDefault(x => string.Equals(x.Id, group.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase));
+            _suppressServerChannelSelectionAction = false;
+            return;
+        }
+
+        group.SelectedServerChannelId = channel.Id;
+        await _history.SaveContactAsync(group);
+        await SyncContactToServerAsync(group);
+
+        var alreadyJoinedThisChannel = _selfServerVoiceChannels.TryGetValue(group.UserId, out var joinedChannelId) &&
+                                       string.Equals(joinedChannelId, channel.Id, StringComparison.OrdinalIgnoreCase);
+        if (alreadyJoinedThisChannel ||
+            (_activeCallContact?.UserId == group.UserId && _selfInCall && string.Equals(_activeCallState, "connected", StringComparison.OrdinalIgnoreCase)))
+        {
+            _activeCallContact = group;
+            _activeCallPeerContact = null;
+            _activeCallServerChannelId = channel.Id;
+            _selfInCall = true;
+            _activeCallState = "connected";
+            SetSelfGroupVoiceParticipant(group, joined: true, channel.Id);
+            _peerInCall = HasRemoteGroupVoiceParticipants(group);
+            BeginConnectedCallSession();
+            ShowCallPanel(group, BuildGroupVoiceStatus(group), showIncomingActions: false);
+            StartAudioCall(group);
+            await SendCallSignalAsync(group, ServerVoiceJoinIntent);
+            RefreshServerChannelsPanel();
+            RefreshGroupMembersPanel();
+            return;
+        }
+
+        await StartCallForContactAsync(group);
+        RefreshGroupMembersPanel();
     }
 
     private static string NormalizeReadChannelId(string? channelId)
@@ -2905,7 +3518,9 @@ public partial class MainWindow : Window
                 CanSpeak = allow.Contains(ServerPermissionSpeak) ||
                            (!deny.Contains(ServerPermissionSpeak) && permissions.Contains(ServerPermissionSpeak)),
                 CanStream = allow.Contains(ServerPermissionStream) ||
-                            (!deny.Contains(ServerPermissionStream) && permissions.Contains(ServerPermissionStream))
+                            (!deny.Contains(ServerPermissionStream) && permissions.Contains(ServerPermissionStream)),
+                CanVideo = allow.Contains(ServerPermissionVideo) ||
+                           (!deny.Contains(ServerPermissionVideo) && permissions.Contains(ServerPermissionVideo))
             });
         }
     }
@@ -2955,6 +3570,7 @@ public partial class MainWindow : Window
         {
             UpdateOverridePermission(access.CanSpeak, ServerPermissionSpeak, basePermissions, allow, deny);
             UpdateOverridePermission(access.CanStream, ServerPermissionStream, basePermissions, allow, deny);
+            UpdateOverridePermission(access.CanVideo, ServerPermissionVideo, basePermissions, allow, deny);
         }
         existingOverrides.Add(new ServerChannelPermissionOverridePayload(
             _activeServerChannelSettingsId,
@@ -2969,7 +3585,7 @@ public partial class MainWindow : Window
 
     private void OpenServerInviteDialog(ContactViewModel server, ServerChannelViewModel? channel)
     {
-        if (!HasServerPermission(server, ServerPermissionCreateInvite, channel?.Id ?? server.SelectedServerChannelId))
+        if (!HasServerPermission(server, ServerPermissionCreateInvite, channel?.Id ?? ""))
         {
             NetworkStatusText.Text = "You do not have permission to create invites.";
             return;
@@ -2977,18 +3593,14 @@ public partial class MainWindow : Window
 
         EnsureServerMetadata(server);
         _activeServerInviteContact = server;
-        _activeServerInviteChannel = channel
-                                     ?? _serverChannels.FirstOrDefault(x => string.Equals(x.Id, server.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase))
-                                     ?? _serverChannels.FirstOrDefault(x => !x.IsVoice)
-                                     ?? _serverChannels.FirstOrDefault();
+        _activeServerInviteChannel = channel;
 
         var selectedChannel = _activeServerInviteChannel;
-        var channelId = selectedChannel?.Id ?? server.SelectedServerChannelId;
         var days = GetServerInviteExpiryDays(server);
-        _activeServerInviteLink = $"fluxchat://server/{Uri.EscapeDataString(server.UserId)}/{Uri.EscapeDataString(channelId)}";
+        _activeServerInviteLink = BuildFluxChatServerInviteLink(server, selectedChannel);
         ServerInviteTitleText.Text = $"Invite friends to {server.DisplayName}";
         ServerInviteDestinationText.Text = selectedChannel is null
-            ? "Members will join this server."
+            ? $"Join {server.DisplayName}."
             : $"Members will land in {(selectedChannel.IsVoice ? "voice" : "#")} {selectedChannel.DisplayName}.";
         ServerInviteExpiryText.Text = $"Invite expires in {days} day(s).";
         ServerInviteLinkTextBox.Text = _activeServerInviteLink;
@@ -3028,6 +3640,18 @@ public partial class MainWindow : Window
         return Math.Clamp(moderation.InviteExpiryDays <= 0 ? 7 : moderation.InviteExpiryDays, 1, 30);
     }
 
+    private static string BuildFluxChatServerInviteLink(ContactViewModel server, ServerChannelViewModel? channel)
+    {
+        var link = $"fluxchat://server/{Uri.EscapeDataString(server.UserId)}";
+        if (channel is null)
+        {
+            return $"{link}?type=server";
+        }
+
+        var channelType = channel.IsVoice ? "voice" : "text";
+        return $"{link}/{Uri.EscapeDataString(channel.Id)}?type={Uri.EscapeDataString(channelType)}&name={Uri.EscapeDataString(channel.DisplayName)}";
+    }
+
     private void RefreshServerInviteFriends()
     {
         _serverInviteFriends.Clear();
@@ -3046,13 +3670,16 @@ public partial class MainWindow : Window
                      .OrderBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                      .Take(80))
         {
+            var isAlreadyMember = memberIds.Contains(contact.UserId);
             _serverInviteFriends.Add(new ServerInviteFriendViewModel
             {
                 UserId = contact.UserId,
                 DisplayName = contact.DisplayName,
                 ShortId = FormatShortUserId(contact.UserId),
                 StatusText = $"{contact.StatusText} • {FormatShortUserId(contact.UserId)}",
-                IsAlreadyMember = memberIds.Contains(contact.UserId)
+                IsAlreadyMember = isAlreadyMember,
+                InviteButtonText = isAlreadyMember ? "Invite" : "Add",
+                CanInvite = true
             });
         }
     }
@@ -3078,9 +3705,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var channel = _activeServerInviteChannel
-                      ?? _serverChannels.FirstOrDefault(x => string.Equals(x.Id, server.SelectedServerChannelId, StringComparison.OrdinalIgnoreCase));
-        var channelId = channel?.Id ?? server.SelectedServerChannelId;
+        var channel = _activeServerInviteChannel;
+        var channelId = channel?.Id ?? "";
         if (!HasServerPermission(server, ServerPermissionCreateInvite, channelId))
         {
             ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
@@ -3099,44 +3725,51 @@ public partial class MainWindow : Window
                              IpAddress = $"{RelayContactPrefix}{relayServer}",
                              MessagePort = FluxChatPorts.Relay
                          };
-            var members = LoadGroupMembers(server).ToList();
-            if (members.All(x => !string.Equals(x.UserId, friend.UserId, StringComparison.Ordinal)))
-            {
-                members.Add(new GroupMemberPayload(
-                    friend.UserId,
-                    friend.DisplayName,
-                    GetRelayServer(target),
-                    target.AvatarKind,
-                    "",
-                    target.AvatarPath,
-                    target.AvatarScale,
-                    target.AvatarOffsetX,
-                    target.AvatarOffsetY,
-                    target.AvatarVideoStartSeconds,
-                    target.AvatarVideoDurationSeconds,
-                    DateTimeOffset.UtcNow));
-                SaveGroupMembers(server, members);
-                server.GroupVersion++;
-                await _history.SaveContactAsync(server);
-                await SyncContactToServerAsync(server);
-                await BroadcastGroupSnapshotAsync(server);
-            }
 
             var expiresAtUtc = DateTimeOffset.UtcNow.AddDays(GetServerInviteExpiryDays(server));
+            var voiceParticipants = channel?.IsVoice == true
+                ? GetActiveGroupVoiceParticipantIds(server, includeSelf: true)
+                    .Take(3)
+                    .Select(x => CreateGroupVoiceParticipantViewModel(server, x))
+                    .Select(x => new ServerInviteVoiceParticipantPayload(x.UserId, x.DisplayName))
+                    .ToArray()
+                : [];
             var payload = new ServerChannelInvitePayload(
                 server.UserId,
                 channelId,
-                channel?.DisplayName ?? channelId,
-                channel?.IsVoice == true ? "voice" : "text",
+                channel?.DisplayName ?? "",
+                channel is null ? "server" : channel.IsVoice ? "voice" : "text",
                 _profile.UserId,
                 _profile.DisplayName,
                 expiresAtUtc,
-                CreateGroupSnapshot(server));
+                CreateGroupSnapshot(server),
+                voiceParticipants);
             var packet = CreateProfilePacket(friend.UserId, JsonSerializer.Serialize(payload), ServerChannelInviteIntent, GetRelayServer(target));
             await SendOverRelayAsync(packet, target, log: false);
+            var outgoingMessage = new MessageViewModel
+            {
+                MessageId = packet.MessageId,
+                PeerUserId = friend.UserId,
+                Body = JsonSerializer.Serialize(payload),
+                IsOutgoing = true,
+                SentAtUtc = packet.SentAtUtc,
+                Kind = MessageKinds.ServerInvite,
+                SenderUserId = _profile.UserId,
+                SenderDisplayName = _profile.DisplayName
+            };
+            PrepareMessageForUi(outgoingMessage);
+            await _history.SaveAsync(outgoingMessage);
+            if (_selectedContact?.UserId == friend.UserId)
+            {
+                _messages.Add(outgoingMessage);
+                RefreshMessageGrouping();
+                ScrollMessagesToEnd();
+            }
+
+            TouchContactActivity(target);
             RefreshServerInviteFriends();
             ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
-            ServerInviteStatusText.Text = $"Invite sent to {friend.DisplayName}. It expires {expiresAtUtc.ToLocalTime():g}.";
+            ServerInviteStatusText.Text = $"{(channel?.IsVoice == true && !friend.IsAlreadyMember ? "Voice invite" : "Invite")} sent to {friend.DisplayName}. It expires {expiresAtUtc.ToLocalTime():g}.";
         }
         catch (Exception ex) when (!_stop.IsCancellationRequested)
         {
@@ -3146,46 +3779,165 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ServerInviteCopyButton_OnClick(object sender, RoutedEventArgs e)
+    private async void ServerInviteCopyButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(_activeServerInviteLink))
         {
             return;
         }
 
-    Clipboard.SetText(_activeServerInviteLink);
-    ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
-    ServerInviteStatusText.Text = "Invite link copied.";
+        if (await TrySetClipboardTextAsync(_activeServerInviteLink))
+        {
+            ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
+            ServerInviteStatusText.Text = "Invite link copied.";
+            return;
+        }
+
+        ServerInviteStatusText.Foreground = System.Windows.Media.Brushes.LightCoral;
+        ServerInviteStatusText.Text = "Clipboard is busy. Try copy again.";
     }
 
     private async Task HandleIncomingServerChannelInviteAsync(ChatPacket packet)
     {
         try
         {
+            packet = ApplyControlBodyFallback(packet);
             var payload = JsonSerializer.Deserialize<ServerChannelInvitePayload>(packet.Body);
-            if (payload is null || payload.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+            if (payload is null)
             {
                 return;
             }
 
-            await ApplyGroupSnapshotAsync(payload.Snapshot, packet);
-            var server = _contacts.FirstOrDefault(x => x.IsGroup && x.IsServer && string.Equals(x.UserId, payload.ServerId, StringComparison.Ordinal));
-            if (server is not null)
+            var contact = _contacts.FirstOrDefault(x => !x.IsGroup && string.Equals(x.UserId, packet.FromUserId, StringComparison.Ordinal))
+                          ?? CreateContactFromPacket(packet);
+            ApplyPacketProfileToContact(packet, contact);
+            AddOrUpdateContact(contact);
+            await _history.SaveContactAsync(contact);
+            RequestProfileIfAvatarMissing(packet, contact);
+
+            var message = new MessageViewModel
             {
-                server.SelectedServerChannelId = payload.ChannelId;
-                await _history.SaveContactAsync(server);
-                ContactsList.Items.Refresh();
-                if (_selectedContact is not null && string.Equals(_selectedContact.UserId, server.UserId, StringComparison.Ordinal))
-                {
-                    RefreshServerChannelsPanel();
-                }
+                MessageId = packet.MessageId,
+                PeerUserId = packet.FromUserId,
+                Body = packet.Body,
+                IsOutgoing = false,
+                SentAtUtc = packet.SentAtUtc,
+                Kind = MessageKinds.ServerInvite,
+                SenderUserId = packet.FromUserId,
+                SenderDisplayName = packet.FromDisplayName
+            };
+            PrepareMessageForUi(message);
+            await _history.SaveAsync(message);
+
+            if (_selectedContact?.UserId == packet.FromUserId)
+            {
+                _messages.Add(message);
+                RefreshMessageGrouping();
+                ScrollMessagesToEnd();
+                MarkContactRead(contact);
+            }
+            else
+            {
+                IncrementUnread(contact);
             }
 
-            NetworkStatusText.Text = $"{packet.FromDisplayName} invited you to {payload.ChannelName}.";
+            TouchContactActivity(contact);
+            var inviteTargetText = string.Equals(payload.ChannelType, "server", StringComparison.OrdinalIgnoreCase)
+                ? payload.Snapshot.DisplayName
+                : string.IsNullOrWhiteSpace(payload.ChannelName) ? payload.Snapshot.DisplayName : payload.ChannelName;
+            NetworkStatusText.Text = $"{packet.FromDisplayName} invited you to {inviteTargetText}.";
+            ShowIncomingNotificationIfNeeded(contact.DisplayName, packet);
         }
         catch (JsonException ex)
         {
             AppLog.Write(ex, $"Server channel invite parse failed: from={packet.FromUserId}");
+        }
+    }
+
+    private async void ServerInviteJoinButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: MessageViewModel message })
+        {
+            return;
+        }
+
+        await JoinServerInviteAsync(message);
+    }
+
+    private async Task JoinServerInviteAsync(MessageViewModel message)
+    {
+        if (_profile is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var payloadBody = ExtractServerInvitePayloadBody(message.Body);
+            var payload = JsonSerializer.Deserialize<ServerChannelInvitePayload>(payloadBody);
+            if (payload is null)
+            {
+                return;
+            }
+
+            if (payload.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+            {
+                NetworkStatusText.Text = "Invite expired.";
+                return;
+            }
+
+            await ApplyGroupSnapshotAsync(payload.Snapshot, CreateProfilePacket(payload.ServerId, JsonSerializer.Serialize(payload.Snapshot), GroupUpsertIntent));
+            var server = _contacts.FirstOrDefault(x => x.IsGroup && x.IsServer && string.Equals(x.UserId, payload.ServerId, StringComparison.Ordinal));
+            if (server is null)
+            {
+                NetworkStatusText.Text = "Could not join server invite.";
+                return;
+            }
+
+            var members = LoadGroupMembers(server).ToList();
+            if (members.All(x => !string.Equals(x.UserId, _profile.UserId, StringComparison.Ordinal)))
+            {
+                members.Add(CreateSelfGroupMember());
+                SaveGroupMembers(server, members);
+                server.GroupVersion = Math.Max(server.GroupVersion, payload.Snapshot.GroupVersion) + 1;
+                await _history.SaveContactAsync(server);
+                await SyncContactToServerAsync(server);
+                await BroadcastGroupSnapshotAsync(server);
+            }
+
+            var isVoiceInvite = string.Equals(payload.ChannelType, "voice", StringComparison.OrdinalIgnoreCase);
+            var isServerOnlyInvite = string.Equals(payload.ChannelType, "server", StringComparison.OrdinalIgnoreCase);
+            server.SelectedServerChannelId = isServerOnlyInvite || string.IsNullOrWhiteSpace(payload.ChannelId)
+                ? string.IsNullOrWhiteSpace(server.SelectedServerChannelId) ? "general" : server.SelectedServerChannelId
+                : payload.ChannelId;
+            await _history.SaveContactAsync(server);
+            AddOrUpdateContact(server);
+            ContactsList.Items.Refresh();
+            await OpenContactAsync(server);
+            RefreshServerChannelsPanel();
+            if (isVoiceInvite)
+            {
+                server.SelectedServerChannelId = payload.ChannelId;
+                await _history.SaveContactAsync(server);
+                RefreshServerChannelsPanel();
+                if (HasServerPermission(server, ServerPermissionJoinVoice, payload.ChannelId) &&
+                    HasServerPermission(server, ServerPermissionViewChannel, payload.ChannelId))
+                {
+                    await StartCallForContactAsync(server);
+                    NetworkStatusText.Text = $"Joined {server.DisplayName} voice.";
+                    return;
+                }
+
+                NetworkStatusText.Text = $"Joined {server.DisplayName}, but you cannot join that voice channel.";
+                return;
+            }
+
+            NetworkStatusText.Text = $"Joined {server.DisplayName}.";
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or InvalidOperationException)
+        {
+            AppLog.Write(ex, $"Join server invite failed: messageId={message.MessageId}");
+            NetworkStatusText.Text = $"Join failed: {ex.Message}";
         }
     }
 
@@ -3196,6 +3948,7 @@ public partial class MainWindow : Window
         {
             packet = MessageE2eCrypto.Decrypt(packet, _profile);
         }
+        packet = ApplyControlBodyFallback(packet);
         var outgoing = string.Equals(packet.FromUserId, _profile.UserId, StringComparison.Ordinal);
         if (packet.Intent == GroupMessageIntent)
         {
@@ -3229,6 +3982,21 @@ public partial class MainWindow : Window
                 AppLog.Write(ex, $"Archived group message parse failed: {packet.MessageId}");
                 return null;
             }
+        }
+
+        if (packet.Intent == ServerChannelInviteIntent)
+        {
+            return new MessageViewModel
+            {
+                MessageId = packet.MessageId,
+                PeerUserId = outgoing ? packet.ToUserId : packet.FromUserId,
+                Body = packet.Body,
+                IsOutgoing = outgoing,
+                SentAtUtc = packet.SentAtUtc,
+                Kind = MessageKinds.ServerInvite,
+                SenderUserId = packet.FromUserId,
+                SenderDisplayName = packet.FromDisplayName
+            };
         }
 
         if (packet.Intent != ChatRichIntent)
@@ -3277,6 +4045,8 @@ public partial class MainWindow : Window
                 AttachmentUrl = payload.AttachmentUrl,
                 ReplyToMessageId = payload.ReplyToMessageId,
                 ReplyPreview = payload.ReplyPreview,
+                ReplyAuthorUserId = payload.ReplyAuthorUserId,
+                ReplyAuthorDisplayName = payload.ReplyAuthorDisplayName,
                 ForwardedFrom = payload.ForwardedFrom,
                 FileName = payload.FileName,
                 FileSizeBytes = payload.FileSizeBytes,
@@ -3284,6 +4054,9 @@ public partial class MainWindow : Window
                 DriveFileId = payload.DriveFileId,
                 DownloadUrl = payload.DownloadUrl,
                 StorageProvider = payload.StorageProvider,
+                TextPreview = payload.TextPreview,
+                TextPreviewTruncated = payload.TextPreviewTruncated,
+                OriginalFolderName = payload.OriginalFolderName,
                 SenderUserId = packet.FromUserId,
                 SenderDisplayName = packet.FromDisplayName
             };
@@ -3355,37 +4128,53 @@ public partial class MainWindow : Window
         return Task.CompletedTask;
     }
 
-    private async Task StartCallForContactAsync(ContactViewModel contact)
+    private async Task StartCallForContactAsync(ContactViewModel contact, bool requestVideo = false)
     {
-        if (_activeCallContact?.UserId == contact.UserId && CallPanel.Visibility == Visibility.Visible)
+        if (_activeCallContact?.UserId == contact.UserId && !string.IsNullOrWhiteSpace(_activeCallState))
         {
             if (contact.IsServer)
             {
-                SetSelfGroupVoiceParticipant(contact, joined: true, GetSelectedServerVoiceChannelId(contact));
+                _activeCallServerChannelId = GetSelectedServerVoiceChannelId(contact);
+                SetSelfGroupVoiceParticipant(contact, joined: true, _activeCallServerChannelId);
                 _peerInCall = HasRemoteGroupVoiceParticipants(contact);
                 _activeCallState = "connected";
                 BeginConnectedCallSession();
                 ShowCallPanel(contact, BuildGroupVoiceStatus(contact), showIncomingActions: false);
                 StartAudioCall(contact);
-                await SendCallSignalAsync(contact, CallJoinIntent);
+                await SendCallSignalAsync(contact, ServerVoiceJoinIntent);
+                if (requestVideo)
+                {
+                    await StartCallVideoAsync(enableLocalCamera: true);
+                }
                 RefreshServerChannelsPanel();
             }
 
             return;
         }
 
+        _isVideoCallRequested = requestVideo;
+        _isLocalCameraOn = false;
+        _isPeerCameraOn = false;
         _activeCallContact = contact;
         _activeCallPeerContact = contact.IsGroup ? null : contact;
+        _activeCallServerChannelId = contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "";
         _selfInCall = true;
         if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(contact, joined: true, contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "");
+            SetSelfGroupVoiceParticipant(contact, joined: true, _activeCallServerChannelId);
             _peerInCall = HasRemoteGroupVoiceParticipants(contact);
             _activeCallState = "connected";
             BeginConnectedCallSession();
             ShowCallPanel(_activeCallContact, BuildGroupVoiceStatus(contact), showIncomingActions: false);
             StartAudioCall(_activeCallContact);
-            await SendCallSignalAsync(_activeCallContact, CallInviteIntent);
+            await SendCallSignalAsync(
+                _activeCallContact,
+                contact.IsServer ? ServerVoiceJoinIntent : CallInviteIntent,
+                contact.IsServer ? "" : CreateCallInviteBody(requestVideo));
+            if (requestVideo)
+            {
+                await StartCallVideoAsync(enableLocalCamera: true);
+            }
             return;
         }
 
@@ -3394,7 +4183,11 @@ public partial class MainWindow : Window
         BeginConnectedCallSession();
         ShowCallPanel(_activeCallContact, BuildDirectVoiceStatus(_activeCallContact), showIncomingActions: false);
         StartAudioCall(_activeCallContact);
-        await SendCallSignalAsync(_activeCallContact, CallInviteIntent);
+        await SendCallSignalAsync(_activeCallContact, CallInviteIntent, CreateCallInviteBody(requestVideo));
+        if (requestVideo)
+        {
+            await StartCallVideoAsync(enableLocalCamera: true);
+        }
     }
 
     private async void StartCallButton_OnClick(object sender, RoutedEventArgs e)
@@ -3407,6 +4200,16 @@ public partial class MainWindow : Window
         await StartCallForContactAsync(_selectedContact);
     }
 
+    private async void StartVideoCallButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedContact is null || _selectedContact.IsServer)
+        {
+            return;
+        }
+
+        await StartCallForContactAsync(_selectedContact, requestVideo: true);
+    }
+
     private async void AcceptCallButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_activeCallContact is null)
@@ -3417,7 +4220,7 @@ public partial class MainWindow : Window
         await AcceptCallAsync(_activeCallContact);
     }
 
-    private async Task AcceptCallAsync(ContactViewModel contact)
+    private async Task AcceptCallAsync(ContactViewModel contact, bool acceptWithVideo = false)
     {
         CloseIncomingCallMiniWindow(contact);
         StopCallRingtone();
@@ -3425,17 +4228,25 @@ public partial class MainWindow : Window
         _selfInCall = true;
         _peerInCall = true;
         _activeCallContact = contact;
+        _activeCallServerChannelId = contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "";
         if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(contact, joined: true, contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "");
+            SetSelfGroupVoiceParticipant(contact, joined: true, _activeCallServerChannelId);
             _peerInCall = HasRemoteGroupVoiceParticipants(contact);
         }
 
         BeginConnectedCallSession();
         ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
         await OpenContactAsync(contact);
-        await SendCallSignalAsync(contact, CallAcceptIntent);
+        await SendCallSignalAsync(
+            contact,
+            contact.IsServer ? ServerVoiceJoinIntent : CallAcceptIntent,
+            contact.IsServer ? "" : CreateCallAcceptBody(acceptWithVideo));
         StartAudioCall(contact);
+        if (_isVideoCallRequested || acceptWithVideo)
+        {
+            await StartCallVideoAsync(enableLocalCamera: acceptWithVideo);
+        }
     }
 
     private async void DeclineCallButton_OnClick(object sender, RoutedEventArgs e)
@@ -3513,8 +4324,8 @@ public partial class MainWindow : Window
         {
             SetSelfGroupVoiceParticipant(contact, joined: false, contact.IsServer && _selfServerVoiceChannels.TryGetValue(contact.UserId, out var voiceChannelId) ? voiceChannelId : "");
             StopAudioCall();
-            await SendCallSignalAsync(contact, CallLeaveIntent);
             _selfInCall = false;
+            await SendCallSignalAsync(contact, contact.IsServer ? ServerVoiceLeaveIntent : CallLeaveIntent);
             _peerInCall = HasRemoteGroupVoiceParticipants(contact);
             _activeCallState = _peerInCall ? "left" : "";
             if (_peerInCall)
@@ -3556,7 +4367,7 @@ public partial class MainWindow : Window
         _isWatchingPeerScreen = false;
         _screenShareMiniPlayerDismissed = true;
         _screenShareMiniPlayerDockedInApp = false;
-        SetScreenShareWebRtcVisible(_screenShareWebRtcActive || _peerScreenShareUsingWebRtc);
+        SetScreenShareWebRtcVisible(_isScreenSharing && _screenShareWebRtcActive);
         if (!_isScreenSharing && _isScreenShareFocusMode)
         {
             ExitScreenShareFocusMode();
@@ -3579,13 +4390,14 @@ public partial class MainWindow : Window
         _activeCallState = "connected";
         if (contact.IsGroup)
         {
-            SetSelfGroupVoiceParticipant(contact, joined: true, contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "");
+            _activeCallServerChannelId = contact.IsServer ? GetSelectedServerVoiceChannelId(contact) : "";
+            SetSelfGroupVoiceParticipant(contact, joined: true, _activeCallServerChannelId);
             _peerInCall = HasRemoteGroupVoiceParticipants(contact);
         }
 
         BeginConnectedCallSession();
         ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
-        await SendCallSignalAsync(contact, CallJoinIntent);
+        await SendCallSignalAsync(contact, contact.IsServer ? ServerVoiceJoinIntent : CallJoinIntent);
         StartAudioCall(contact);
     }
 
@@ -3638,7 +4450,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowScreenSharePicker(webRtcSettingsOnly: false);
+        ShowScreenSharePicker(webRtcSettingsOnly: IsScreenShareWebRtcPreferred());
+    }
+
+    private async void CameraToggleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isLocalCameraOn)
+        {
+            StopLocalCamera(notifyPeer: true);
+            return;
+        }
+
+        if (!CanUseVideoForActiveCall(out var reason))
+        {
+            NetworkStatusText.Text = reason;
+            UpdateCallVideoControlVisuals();
+            return;
+        }
+
+        await StartCallVideoAsync(enableLocalCamera: true);
     }
 
     private void CallPeerParticipant_OnMouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -3939,7 +4769,7 @@ public partial class MainWindow : Window
         }
 
         _screenSharePickerSuppressesStage = suppress;
-        SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+        SetScreenShareWebRtcVisible(!suppress && _isScreenSharing && _screenShareWebRtcActive);
         UpdateScreenShareStageVisibility();
         CallScreenShareStage.UpdateLayout();
         ScreenShareWebView.UpdateLayout();
@@ -4069,7 +4899,7 @@ public partial class MainWindow : Window
                 : $"Native capture: {selected.Title}";
         ScreenShareStreamAudioCheck.IsChecked = !_screenShareMuteAudio;
         ScreenShareQualityWarningText.Text = IsScreenShareWebRtcPreferred()
-            ? "Fixed quality mode keeps the selected resolution and frame rate. 1440p60 requires hardware H.264 and a strong connection."
+            ? "Direct WebRTC sends the selected screen as a video track. 1440p60 requires hardware video encoding and a strong connection."
             : "Compatibility capture cannot guarantee 1440p60. FluxChat will not silently lower the selected quality.";
         ScreenShareQualityWarningText.Visibility = _screenShareResolution >= 1440 || _screenShareFrameRate >= 60
             ? Visibility.Visible
@@ -4110,33 +4940,119 @@ public partial class MainWindow : Window
             return;
         }
 
-        _isWatchingPeerScreen = true;
-        _screenShareMiniPlayerDismissed = false;
-        _screenShareMiniPlayerDockedInApp = false;
-        SetScreenShareWebRtcVisible(_screenShareWebRtcActive || _peerScreenShareUsingWebRtc);
-        if (!_isScreenShareFocusMode && !IsScreenShareStageSuppressedByOverlay())
-        {
-            EnterScreenShareFocusMode();
-        }
-
-        UpdateScreenShareStageVisibility();
-        QueueScreenShareMiniPlayerPreviewUpdate();
+        e.Handled = true;
+        StartWatchingPeerScreenShareInTile();
     }
 
     private void CallScreenShareTile_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount < 2 || (!_isScreenSharing && !_peerScreenSharing))
+        if (e.ChangedButton != MouseButton.Left || (!_isScreenSharing && !_peerScreenSharing))
+        {
+            return;
+        }
+
+        var tag = sender is FrameworkElement element ? element.Tag as string : null;
+        var target = string.Equals(tag, "Local", StringComparison.OrdinalIgnoreCase) || ReferenceEquals(sender, CallSelfScreenTile)
+            ? ScreenShareFocusTarget.Local
+            : string.Equals(tag, "Peer", StringComparison.OrdinalIgnoreCase) || ReferenceEquals(sender, CallPeerScreenTile)
+                ? ScreenShareFocusTarget.Peer
+                : ScreenShareFocusTarget.Auto;
+        if (target == ScreenShareFocusTarget.Peer && _peerScreenSharing && !_isWatchingPeerScreen)
+        {
+            e.Handled = true;
+            StartWatchingPeerScreenShareInTile();
+            return;
+        }
+
+        e.Handled = true;
+        _isCallVideoFocusMode = false;
+        FocusScreenShareFromPreview(target);
+    }
+
+    private void CallScreenShareStage_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || (!_isScreenSharing && !_peerScreenSharing))
         {
             return;
         }
 
         e.Handled = true;
-        var target = ReferenceEquals(sender, CallSelfScreenTile)
-            ? ScreenShareFocusTarget.Local
-            : ReferenceEquals(sender, CallPeerScreenTile)
-                ? ScreenShareFocusTarget.Peer
-                : ScreenShareFocusTarget.Auto;
+        _isCallVideoFocusMode = false;
+        var target = GetScreenShareTargetFromStageClick(e);
+        if (target == ScreenShareFocusTarget.Peer && _peerScreenSharing && !_isWatchingPeerScreen)
+        {
+            StartWatchingPeerScreenShareInTile();
+            return;
+        }
+
         FocusScreenShareFromPreview(target);
+    }
+
+    private ScreenShareFocusTarget GetScreenShareTargetFromStageClick(MouseButtonEventArgs e)
+    {
+        if (_isScreenSharing && !_peerScreenSharing)
+        {
+            return ScreenShareFocusTarget.Local;
+        }
+
+        if (_peerScreenSharing && !_isScreenSharing)
+        {
+            return ScreenShareFocusTarget.Peer;
+        }
+
+        if (_screenShareFocusTarget is ScreenShareFocusTarget.Local or ScreenShareFocusTarget.Peer)
+        {
+            return _screenShareFocusTarget;
+        }
+
+        var position = e.GetPosition(CallScreenShareStage);
+        return position.X <= Math.Max(1, CallScreenShareStage.ActualWidth) / 2d
+            ? ScreenShareFocusTarget.Local
+            : ScreenShareFocusTarget.Peer;
+    }
+
+    private void StartWatchingPeerScreenShareInTile()
+    {
+        if (!_peerScreenSharing)
+        {
+            return;
+        }
+
+        _isWatchingPeerScreen = true;
+        _screenShareMiniPlayerDismissed = false;
+        _screenShareMiniPlayerDockedInApp = false;
+        SetScreenShareWebRtcVisible(_screenShareWebRtcActive || _peerScreenShareUsingWebRtc);
+
+        UpdateScreenShareStageVisibility();
+        QueueScreenShareMiniPlayerPreviewUpdate();
+    }
+
+    private void CallVideoStage_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || (!_isLocalCameraOn && !_isPeerCameraOn))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        ToggleCallVideoFocusMode();
+    }
+
+    private void ToggleCallVideoFocusMode()
+    {
+        if (!_isLocalCameraOn && !_isPeerCameraOn)
+        {
+            return;
+        }
+
+        if (_isCallVideoFocusMode)
+        {
+            ExitCallVideoFocusMode();
+        }
+        else
+        {
+            EnterCallVideoFocusMode();
+        }
     }
 
     private void FocusScreenShareFromPreview(ScreenShareFocusTarget target)
@@ -4226,9 +5142,14 @@ public partial class MainWindow : Window
 
     private void CallPanel_OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (_isScreenShareFocusMode)
+        if (_isScreenShareFocusMode || CallScreenShareStage.Visibility == Visibility.Visible)
         {
             UpdateScreenShareStageVisibility();
+        }
+
+        if (_isCallVideoFocusMode || CallVideoStage.Visibility == Visibility.Visible)
+        {
+            UpdateCallVideoControlVisuals();
         }
     }
 
@@ -4422,6 +5343,7 @@ public partial class MainWindow : Window
         AddFriendPanel.Visibility = Visibility.Visible;
         ApplyCustomization();
         StartCallButton.Visibility = Visibility.Collapsed;
+        StartVideoCallButton.Visibility = Visibility.Collapsed;
         ChatSearchInput.Visibility = Visibility.Collapsed;
         ChatSearchInput.Clear();
         GroupMembersButton.Visibility = Visibility.Collapsed;
@@ -4609,6 +5531,7 @@ public partial class MainWindow : Window
     private const string ServerPermissionJoinVoice = "join_voice";
     private const string ServerPermissionSpeak = "speak";
     private const string ServerPermissionStream = "stream";
+    private const string ServerPermissionVideo = "video";
     private const string ServerPermissionCreateInvite = "create_invite";
     private const string ServerPermissionManageChannels = "manage_channels";
     private const string ServerPermissionManageRoles = "manage_roles";
@@ -4626,6 +5549,7 @@ public partial class MainWindow : Window
         new(ServerPermissionJoinVoice, "Join voice", "Join voice channels."),
         new(ServerPermissionSpeak, "Speak", "Use microphone in voice channels."),
         new(ServerPermissionStream, "Stream", "Start screen sharing."),
+        new(ServerPermissionVideo, "Video", "Use camera in voice channels."),
         new(ServerPermissionCreateInvite, "Create invites", "Create server invite codes."),
         new(ServerPermissionManageChannels, "Manage channels", "Create, rename and delete channels."),
         new(ServerPermissionManageRoles, "Manage roles", "Create roles and assign permissions."),
@@ -4655,9 +5579,9 @@ public partial class MainWindow : Window
         =>
         [
             new("owner", "Owner", "#FBBF24", "all", 0, true, ShowSeparately: true),
-            new("admin", "Admin", "#60A5FA", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_server,manage_channels,manage_roles,manage_members,delete_messages", 1, false, ShowSeparately: true),
-            new("moderator", "Moderator", "#34D399", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_members,delete_messages", 2, false, ShowSeparately: true),
-            new("member", "Member", "#9CA3AF", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak", 100, false)
+            new("admin", "Admin", "#60A5FA", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,video,create_invite,manage_server,manage_channels,manage_roles,manage_members,delete_messages", 1, false, ShowSeparately: true),
+            new("moderator", "Moderator", "#34D399", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,video,create_invite,manage_members,delete_messages", 2, false, ShowSeparately: true),
+            new("member", "Member", "#9CA3AF", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,video", 100, false)
         ];
 
     private void EnsureServerMetadata(ContactViewModel group, string templateId = "")
@@ -5841,6 +6765,7 @@ public partial class MainWindow : Window
         SettingsPrivacyTabText.Text = L("settings.privacy");
         SettingsActivityTabText.Text = L("settings.activity");
         SettingsNotificationsTabText.Text = L("settings.notifications");
+        SettingsDataTabText.Text = L("settings.data");
         SettingsSignOutTabText.Text = L("settings.signout");
         SettingsCustomizationTabText.Text = L("settings.customization");
         SettingsCloseSidebarButton.Content = L("settings.close");
@@ -5859,6 +6784,29 @@ public partial class MainWindow : Window
         SettingsActivitySubtitleText.Text = L("settings.activity.subtitle");
         SettingsNotificationsTitleText.Text = L("settings.notifications");
         SettingsNotificationsSubtitleText.Text = L("settings.notifications.subtitle");
+        SettingsDataTitleText.Text = L("settings.data");
+        SettingsDataSubtitleText.Text = L("settings.data.subtitle");
+        SettingsDataStorageTitleText.Text = L("settings.data.storage").ToUpper(CultureInfo.CurrentCulture);
+        SettingsDataChatHistoryTitleText.Text = L("settings.data.chatHistory");
+        SettingsDataChatHistoryBodyText.Text = L("settings.data.chatHistory.body");
+        SettingsDataImagesTitleText.Text = L("settings.data.images");
+        SettingsDataImagesBodyText.Text = L("settings.data.images.body");
+        SettingsDataFilesTitleText.Text = L("settings.data.files");
+        SettingsDataFilesBodyText.Text = L("settings.data.files.body");
+        SettingsChatStorageLocalItem.Content = L("settings.data.localCache");
+        SettingsImageStorageLocalItem.Content = L("settings.data.localCache");
+        SettingsFileStorageLocalItem.Content = L("settings.data.localCache");
+        LocalCacheTitleText.Text = L("settings.data.localCache.title").ToUpper(CultureInfo.CurrentCulture);
+        AutoCleanLocalCacheCheck.Content = L("settings.data.autoClean");
+        LocalMessageCacheAgeText.Text = L("settings.data.messageCacheAge");
+        LocalMediaCacheLimitText.Text = L("settings.data.mediaCacheLimit");
+        LocalFileCacheLimitText.Text = L("settings.data.fileCacheLimit");
+        LocalMessageCache7DaysItem.Content = string.Format(CultureInfo.CurrentCulture, L("settings.data.days"), 7);
+        LocalMessageCache30DaysItem.Content = string.Format(CultureInfo.CurrentCulture, L("settings.data.days"), 30);
+        LocalMessageCache90DaysItem.Content = string.Format(CultureInfo.CurrentCulture, L("settings.data.days"), 90);
+        ClearLocalCacheButton.Content = L("settings.data.clearCache");
+        SettingsReducedMotionTitleText.Text = L("settings.data.reducedMotion");
+        SettingsReducedMotionBodyText.Text = L("settings.data.reducedMotion.body");
         PrivacyContactPermissionsTitleText.Text = L("privacy.contactPermissions").ToUpper(CultureInfo.CurrentCulture);
         PrivacyMessagesLabelText.Text = L("privacy.messages");
         PrivacyCallsLabelText.Text = L("privacy.calls");
@@ -5874,6 +6822,7 @@ public partial class MainWindow : Window
         ActivityCallsCheck.Content = L("activity.calls");
         ActivityScreenShareCheck.Content = L("activity.screenShare.label");
         ActivityVisibilityTitleText.Text = L("activity.visibility").ToUpper(CultureInfo.CurrentCulture);
+        ActivityCallVisibilityTitleText.Text = L("activity.callVisibility").ToUpper(CultureInfo.CurrentCulture);
         ActivityFriendSearchInput.ToolTip = L("activity.searchFriends");
         AutoDndTitleText.Text = L("activity.dnd.title").ToUpper(CultureInfo.CurrentCulture);
         AutoDndBodyText.Text = L("activity.dnd.body");
@@ -5881,6 +6830,17 @@ public partial class MainWindow : Window
         DesktopNotificationsCheck.Content = L("notifications.desktop");
         TaskbarFlashCheck.Content = L("notifications.taskbarFlash");
         FriendRequestNotificationsCheck.Content = L("notifications.friendRequests");
+        NotificationsSoundsTitleText.Text = L("notifications.sounds.title").ToUpper(CultureInfo.CurrentCulture);
+        NotificationsSoundsBodyText.Text = L("notifications.sounds.body");
+        NotificationsCallSoundTitleText.Text = L("notifications.callSound");
+        NotificationsCallSoundHintText.Text = L("notifications.callSound.hint");
+        NotificationsMessageSoundTitleText.Text = L("notifications.messageSound");
+        NotificationsChooseCallSoundButton.Content = L("common.choose");
+        NotificationsPlayCallSoundButton.Content = L("common.play");
+        NotificationsResetCallSoundButton.Content = L("common.reset");
+        NotificationsChooseMessageSoundButton.Content = L("common.choose");
+        NotificationsPlayMessageSoundButton.Content = L("common.play");
+        NotificationsResetMessageSoundButton.Content = L("common.reset");
         LocalizePrivacyCombo(PrivacyMessagesCombo);
         LocalizePrivacyCombo(PrivacyCallsCombo);
         LocalizePrivacyCombo(PrivacyFriendRequestsCombo);
@@ -6098,6 +7058,14 @@ public partial class MainWindow : Window
         try
         {
             var languageCode = AppLanguage.Normalize(_settings.UiLanguage);
+            if (!string.Equals(languageCode, "ru", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(languageCode, "en", StringComparison.OrdinalIgnoreCase))
+            {
+                languageCode = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ru", StringComparison.OrdinalIgnoreCase)
+                    ? "ru"
+                    : "en";
+            }
+
             PopulateLanguageCombo(languageCode);
             foreach (var item in SettingsLanguageCombo.Items.OfType<ComboBoxItem>())
             {
@@ -6108,9 +7076,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            SettingsLanguageStatusText.Text = string.Equals(languageCode, AppLanguage.SystemLanguageCode, StringComparison.OrdinalIgnoreCase)
-                ? L("settings.language.system")
-                : L("settings.language.saved");
+            SettingsLanguageStatusText.Text = L("settings.language.saved");
         }
         finally
         {
@@ -6123,18 +7089,22 @@ public partial class MainWindow : Window
         var selectedItem = SettingsLanguageCombo.Items
             .OfType<ComboBoxItem>()
             .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), selectedCode, StringComparison.OrdinalIgnoreCase));
-        if (selectedItem is not null && SettingsLanguageCombo.Items.Count == AppLanguage.Supported.Count)
+        if (selectedItem is not null && SettingsLanguageCombo.Items.Count == 2)
         {
             return;
         }
 
         SettingsLanguageCombo.Items.Clear();
-        foreach (var (code, displayName) in AppLanguage.Supported)
+        foreach (var (code, displayName) in AppLanguage.Supported.Where(x =>
+                     string.Equals(x.Code, "ru", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(x.Code, "en", StringComparison.OrdinalIgnoreCase)))
         {
             SettingsLanguageCombo.Items.Add(new ComboBoxItem
             {
                 Tag = code,
-                Content = GetLanguageDisplayName(code, displayName)
+                Content = string.Equals(code, "ru", StringComparison.OrdinalIgnoreCase)
+                    ? "\u0420\u0443\u0441\u0441\u043a\u0438\u0439"
+                    : GetLanguageDisplayName(code, displayName)
             });
         }
     }
@@ -6218,12 +7188,15 @@ public partial class MainWindow : Window
 
     private void LocalizeActivityVisibilityCombo()
     {
-        foreach (var item in ActivityVisibilityCombo.Items.OfType<ComboBoxItem>())
+        foreach (var item in ActivityVisibilityCombo.Items.OfType<ComboBoxItem>()
+                     .Concat(ActivityCallVisibilityCombo.Items.OfType<ComboBoxItem>()))
         {
             item.Content = item.Tag?.ToString() switch
             {
                 "Everyone" => L("activity.visibility.everyone"),
                 "Selected" => L("activity.visibility.selected"),
+                "NoOne" => L("activity.visibility.noOne"),
+                "Participants" => L("activity.visibility.participants"),
                 _ => L("activity.visibility.friends")
             };
         }
@@ -6244,7 +7217,10 @@ public partial class MainWindow : Window
             ActivityCallsCheck.IsChecked = _settings.ActivityShowCalls;
             ActivityScreenShareCheck.IsChecked = _settings.ActivityShowScreenShare;
             SelectComboByTag(ActivityVisibilityCombo, _settings.ActivityVisibility);
-            ActivitySelectedFriendsPanel.Visibility = string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
+            SelectComboByTag(ActivityCallVisibilityCombo, _settings.CallActivityVisibility);
+            ActivitySelectedFriendsPanel.Visibility =
+                string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(_settings.CallActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             RefreshActivityAudienceFriends();
@@ -6280,6 +7256,7 @@ public partial class MainWindow : Window
             DesktopNotificationsCheck.IsChecked = _settings.DesktopNotificationsEnabled;
             TaskbarFlashCheck.IsChecked = _settings.TaskbarFlashEnabled;
             FriendRequestNotificationsCheck.IsChecked = _settings.FriendRequestNotificationsEnabled;
+            RefreshNotificationSoundsUi();
         }
         finally
         {
@@ -6349,9 +7326,29 @@ public partial class MainWindow : Window
         }
 
         _settings.ActivityVisibility = GetComboTag(ActivityVisibilityCombo, _settings.ActivityVisibility);
-        ActivitySelectedFriendsPanel.Visibility = string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
+        ActivitySelectedFriendsPanel.Visibility =
+            string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(_settings.CallActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
             ? Visibility.Visible
             : Visibility.Collapsed;
+        RefreshActivityAudienceFriends();
+        await SaveModernSettingsAsync();
+        await SaveAccountPreferencesAsync();
+    }
+
+    private async void ActivityCallVisibilityCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInitializingModernSettings)
+        {
+            return;
+        }
+
+        _settings.CallActivityVisibility = GetComboTag(ActivityCallVisibilityCombo, _settings.CallActivityVisibility);
+        ActivitySelectedFriendsPanel.Visibility =
+            string.Equals(_settings.ActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(_settings.CallActivityVisibility, "Selected", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         RefreshActivityAudienceFriends();
         await SaveModernSettingsAsync();
         await SaveAccountPreferencesAsync();
@@ -6474,6 +7471,20 @@ public partial class MainWindow : Window
         var mode = menuItem.Tag?.ToString() ?? "All";
         _settings.ChatNotificationRules[contact.UserId] = mode;
         contact.NotificationMode = mode;
+        await SaveModernSettingsAsync();
+        RefreshNotificationSettingsUi();
+    }
+
+    private async void ContactNotificationToggleMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as MenuItem)?.DataContext is not ContactViewModel contact)
+        {
+            return;
+        }
+
+        var nextMode = contact.IsNotificationsMuted ? "All" : "Muted";
+        _settings.ChatNotificationRules[contact.UserId] = nextMode;
+        contact.NotificationMode = nextMode;
         await SaveModernSettingsAsync();
         RefreshNotificationSettingsUi();
     }
@@ -6615,6 +7626,7 @@ public partial class MainWindow : Window
             }
 
             _settings.ActivityVisibility = result.Preferences.ActivityVisibility;
+            _settings.CallActivityVisibility = result.Preferences.CallActivityVisibility;
             _settings.ActivitySelectedFriendIds = result.Preferences.ActivitySelectedFriendIds
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.Ordinal)
@@ -6641,7 +7653,8 @@ public partial class MainWindow : Window
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var request = new AccountPreferencesUpdateRequest(
                 _settings.ActivityVisibility,
-                _settings.ActivitySelectedFriendIds);
+                _settings.ActivitySelectedFriendIds,
+                _settings.CallActivityVisibility);
             var result = await new AccountClient(_settings.AccountApiUrl)
                 .SavePreferencesAsync(_settings.AccountSessionToken, request, timeout.Token);
             if (!result.Accepted)
@@ -6802,6 +7815,17 @@ public partial class MainWindow : Window
         RefreshWallpaperRow("GroupChats", CustomizationGroupChatsModeCombo, CustomizationGroupChatsPathText);
         RefreshWallpaperRow("ContactsSidebar", CustomizationContactsSidebarModeCombo, CustomizationContactsSidebarPathText);
         RefreshWallpaperRow("Settings", CustomizationSettingsModeCombo, CustomizationSettingsPathText);
+        _isInitializingCustomizationSettings = false;
+    }
+
+    private void RefreshNotificationSoundsUi()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        _isInitializingCustomizationSettings = true;
         CustomizationSoundsEnabledCheck.IsChecked = _settings.NotificationSoundsEnabled;
         CustomizationCallSoundPathText.Text = FormatLocalFileLabel(_settings.IncomingCallSoundPath, L("common.systemSound"));
         CustomizationMessageSoundPathText.Text = FormatLocalFileLabel(_settings.IncomingMessageSoundPath, L("common.systemSound"));
@@ -6951,7 +7975,7 @@ public partial class MainWindow : Window
         _settings.IncomingCallSoundPath = "";
         await AppSettingsStore.SaveAsync(_settings);
         DeleteCustomizationFileIfOwned(previousPath);
-        RefreshCustomizationSettingsUi();
+        RefreshNotificationSoundsUi();
     }
 
     private async void CustomizationResetMessageSoundButton_OnClick(object sender, RoutedEventArgs e)
@@ -6960,7 +7984,7 @@ public partial class MainWindow : Window
         _settings.IncomingMessageSoundPath = "";
         await AppSettingsStore.SaveAsync(_settings);
         DeleteCustomizationFileIfOwned(previousPath);
-        RefreshCustomizationSettingsUi();
+        RefreshNotificationSoundsUi();
     }
 
     private async Task ChooseNotificationSoundAsync(bool isCall)
@@ -6994,7 +8018,7 @@ public partial class MainWindow : Window
             }
 
             await AppSettingsStore.SaveAsync(_settings);
-            RefreshCustomizationSettingsUi();
+            RefreshNotificationSoundsUi();
             PlayNotificationSound(destination, fallbackSystemSound: false);
             DeleteCustomizationFileIfOwned(previousPath, destination);
         }
@@ -7765,19 +8789,19 @@ public partial class MainWindow : Window
         }
 
         _isInitializingDataSettings = true;
-        SettingsChatStorageCombo.SelectedIndex = _settings.ChatHistoryStorage == DataStorageLocation.GoogleDrive ? 1 : 0;
-        SettingsImageStorageCombo.SelectedIndex = _settings.ImageStorage == DataStorageLocation.GoogleDrive ? 1 : 0;
+        _settings.ChatHistoryStorage = DataStorageLocation.LocalComputer;
+        _settings.ImageStorage = DataStorageLocation.LocalComputer;
+        _settings.FileStorage = DataStorageLocation.LocalComputer;
+        SettingsChatStorageCombo.SelectedIndex = 0;
+        SettingsImageStorageCombo.SelectedIndex = 0;
         SettingsFileStorageCombo.SelectedIndex = 0;
         SettingsReducedMotionCheck.IsChecked = _settings.ReducedMotionEnabled;
-        GoogleDriveClientIdInput.Text = _settings.GoogleDriveClientId;
-        var connected = _googleDrive?.IsConnected == true;
-        GoogleDriveStatusText.Text = connected
-            ? string.IsNullOrWhiteSpace(_settings.GoogleDriveAccountName) ? "Connected" : _settings.GoogleDriveAccountName
-            : "Not connected";
-        GoogleDriveConnectButton.Visibility = connected ? Visibility.Collapsed : Visibility.Visible;
-        GoogleDriveDisconnectButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
-        GoogleDriveBackupButton.IsEnabled = connected;
+        AutoCleanLocalCacheCheck.IsChecked = _settings.AutoCleanLocalCache;
+        SelectComboTag(LocalMessageCacheDaysCombo, _settings.LocalMessageCacheDays.ToString(CultureInfo.InvariantCulture));
+        SelectComboTag(LocalMediaCacheLimitCombo, _settings.LocalMediaCacheMaxBytes.ToString(CultureInfo.InvariantCulture));
+        SelectComboTag(LocalFileCacheLimitCombo, _settings.LocalFileCacheMaxBytes.ToString(CultureInfo.InvariantCulture));
         _isInitializingDataSettings = false;
+        _ = RefreshLocalCacheSizeTextAsync();
     }
 
     private async void SettingsDataStorageCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -7787,15 +8811,90 @@ public partial class MainWindow : Window
             return;
         }
 
-        _settings.ChatHistoryStorage = SettingsChatStorageCombo.SelectedIndex == 1
-            ? DataStorageLocation.GoogleDrive
-            : DataStorageLocation.LocalComputer;
-        _settings.ImageStorage = SettingsImageStorageCombo.SelectedIndex == 1
-            ? DataStorageLocation.GoogleDrive
-            : DataStorageLocation.LocalComputer;
-        _settings.FileStorage = DataStorageLocation.GoogleDrive;
+        _settings.ChatHistoryStorage = DataStorageLocation.LocalComputer;
+        _settings.ImageStorage = DataStorageLocation.LocalComputer;
+        _settings.FileStorage = DataStorageLocation.LocalComputer;
         await AppSettingsStore.SaveAsync(_settings);
     }
+
+    private async void LocalCacheSettings_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializingDataSettings)
+        {
+            return;
+        }
+
+        _settings.AutoCleanLocalCache = AutoCleanLocalCacheCheck.IsChecked == true;
+        _settings.LocalMessageCacheDays = ParseSelectedComboInt(LocalMessageCacheDaysCombo, 30);
+        _settings.LocalMediaCacheMaxBytes = ParseSelectedComboLong(LocalMediaCacheLimitCombo, 1024L * 1024 * 1024);
+        _settings.LocalFileCacheMaxBytes = ParseSelectedComboLong(LocalFileCacheLimitCombo, 1024L * 1024 * 1024);
+        await AppSettingsStore.SaveAsync(_settings);
+    }
+
+    private async void ClearLocalCacheButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await RunLocalCacheCleanupAsync(force: true);
+    }
+
+    private async Task RunLocalCacheCleanupAsync(bool force)
+    {
+        try
+        {
+            var result = await LocalCacheManager.CleanAsync(_settings, _history, force, _stop.Token);
+            if (force)
+            {
+                NetworkStatusText.Text = result.FilesDeleted == 0 && result.MessagesDeleted == 0
+                    ? "Local cache is already clean."
+                    : $"Local cache cleaned: {result.MessagesDeleted} messages, {result.FilesDeleted} files.";
+            }
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or SqliteException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            AppLog.Write(ex, "Local cache cleanup failed");
+            if (force)
+            {
+                NetworkStatusText.Text = "Local cache cleanup failed.";
+            }
+        }
+
+        await RefreshLocalCacheSizeTextAsync();
+    }
+
+    private async Task RefreshLocalCacheSizeTextAsync()
+    {
+        if (!IsInitialized)
+        {
+            return;
+        }
+
+        try
+        {
+            var snapshot = await LocalCacheManager.GetSnapshotAsync(_stop.Token);
+            LocalCacheSizeText.Text =
+                $"Using {FormatFileSize(snapshot.TotalBytes)} locally. History {FormatFileSize(snapshot.HistoryBytes)}, files {FormatFileSize(snapshot.AttachmentsBytes)}, media {FormatFileSize(snapshot.MediaBytes + snapshot.VideoBytes)}.";
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLog.Write(ex, "Local cache size calculation failed");
+            LocalCacheSizeText.Text = "Could not calculate cache size.";
+        }
+    }
+
+    private static int ParseSelectedComboInt(System.Windows.Controls.ComboBox combo, int fallback)
+        => int.TryParse(GetSelectedComboTag(combo, fallback.ToString(CultureInfo.InvariantCulture)), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+
+    private static long ParseSelectedComboLong(System.Windows.Controls.ComboBox combo, long fallback)
+        => long.TryParse(GetSelectedComboTag(combo, fallback.ToString(CultureInfo.InvariantCulture)), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
 
     private async void SettingsReducedMotionCheck_OnChanged(object sender, RoutedEventArgs e)
     {
@@ -7810,88 +8909,17 @@ public partial class MainWindow : Window
 
     private async void GoogleDriveConnectButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if (_googleDrive is null)
-        {
-            return;
-        }
-
-        try
-        {
-            GoogleDriveConnectButton.IsEnabled = false;
-            GoogleDriveStatusText.Text = "Waiting for Google authorization...";
-            _settings.GoogleDriveClientId = GoogleDriveClientIdInput.Text.Trim();
-            await _googleDrive.ConnectAsync(_stop.Token);
-            await AppSettingsStore.SaveAsync(_settings);
-            RefreshDataSettingsUi();
-            GoogleDriveStatusText.Text = "Connected. Files will upload directly to Google Drive.";
-        }
-        catch (OperationCanceledException)
-        {
-            AppLog.Write("Google Drive authorization canceled by user or timed out");
-            if (!_stop.IsCancellationRequested)
-            {
-                GoogleDriveStatusText.Text = "Google Drive authorization was canceled.";
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            AppLog.Write(ex, "Google Drive connect failed");
-            GoogleDriveStatusText.Text = ex.Message;
-        }
-        finally
-        {
-            GoogleDriveConnectButton.IsEnabled = true;
-        }
+        await Task.CompletedTask;
     }
 
     private async void GoogleDriveDisconnectButton_OnClick(object sender, RoutedEventArgs e)
     {
-        _googleDrive?.Disconnect();
-        await AppSettingsStore.SaveAsync(_settings);
-        RefreshDataSettingsUi();
+        await Task.CompletedTask;
     }
 
     private async void GoogleDriveBackupButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if (_googleDrive?.IsConnected != true)
-        {
-            GoogleDriveBackupStatusText.Text = "Connect Google Drive first.";
-            return;
-        }
-
-        var snapshotPath = Path.Combine(Path.GetTempPath(), $"fluxchat-backup-{Guid.NewGuid():N}.zip");
-        try
-        {
-            GoogleDriveBackupButton.IsEnabled = false;
-            GoogleDriveBackupStatusText.Text = "Preparing an encrypted-transport Drive snapshot...";
-            await Task.Run(() => CreateDriveBackupSnapshot(snapshotPath), _stop.Token);
-            var progress = new Progress<double>(value =>
-                GoogleDriveBackupStatusText.Text = $"Uploading private snapshot - {value * 100:0}%");
-            _settings.GoogleDriveBackupFileId = await _googleDrive.UploadPrivateSnapshotAsync(
-                snapshotPath,
-                "FluxChat backup.zip",
-                _settings.GoogleDriveBackupFileId,
-                progress,
-                _stop.Token);
-            await AppSettingsStore.SaveAsync(_settings);
-            GoogleDriveBackupStatusText.Text = $"Backup completed at {DateTime.Now:HH:mm}. It is private in your Drive.";
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            AppLog.Write(ex, "Google Drive backup failed");
-            GoogleDriveBackupStatusText.Text = ex.Message;
-        }
-        finally
-        {
-            GoogleDriveBackupButton.IsEnabled = _googleDrive?.IsConnected == true;
-            try
-            {
-                if (File.Exists(snapshotPath)) File.Delete(snapshotPath);
-            }
-            catch (IOException)
-            {
-            }
-        }
+        await Task.CompletedTask;
     }
 
     private void CreateDriveBackupSnapshot(string destinationPath)
@@ -9302,7 +10330,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await SendCallSignalAsync(_activeCallContact, CallJoinIntent);
+            await SendCallSignalAsync(_activeCallContact, _activeCallContact.IsServer ? ServerVoiceJoinIntent : CallJoinIntent);
             await SendCallAudioStateAsync();
             AppLog.Write($"Call rejoin announced after relay reconnect: contact={_activeCallContact.UserId}");
         }
@@ -9359,14 +10387,15 @@ public partial class MainWindow : Window
         }
 
         var status = GetPublishedStatus();
+        var displayCustomStatus = GetPublishedCustomStatus(_profile.UserId);
         var customStatus = GetPublishedCustomStatus();
         var displayChanged = force ||
                              status != _lastDisplayedPresenceStatus ||
-                             !string.Equals(customStatus, _lastDisplayedCustomStatus, StringComparison.Ordinal);
+                             !string.Equals(displayCustomStatus, _lastDisplayedCustomStatus, StringComparison.Ordinal);
         if (displayChanged)
         {
             _lastDisplayedPresenceStatus = status;
-            _lastDisplayedCustomStatus = customStatus;
+            _lastDisplayedCustomStatus = displayCustomStatus;
             await Dispatcher.InvokeAsync(UpdateProfileStatusVisuals);
         }
 
@@ -9541,10 +10570,6 @@ public partial class MainWindow : Window
             displayName = message.SenderUserId;
         }
 
-        var commonGroupsCount = _contacts
-            .Where(x => x.IsGroup && x.GroupMemberIdsList.Contains(message.SenderUserId, StringComparer.Ordinal))
-            .Count();
-
         var avatarKind = isSelf
             ? _profile?.AvatarKind ?? "color"
             : contact?.AvatarKind ?? groupMember?.AvatarKind ?? message.SenderAvatarKind;
@@ -9555,9 +10580,49 @@ public partial class MainWindow : Window
         var customStatus = isSelf ? _customStatusText : contact?.CustomStatus ?? "";
 
         _activeMiniProfileMessage = message;
+        ShowMiniProfileForUser(
+            message.SenderUserId,
+            displayName,
+            avatarKind,
+            avatarPath ?? "",
+            status,
+            customStatus,
+            anchor,
+            _selectedContact is { IsServer: true } server ? server : null,
+            contact is not null);
+    }
+
+    private void ShowMiniProfileForUser(
+        string userId,
+        string displayName,
+        string avatarKind,
+        string avatarPath,
+        UserPresenceStatus status,
+        string customStatus,
+        FrameworkElement anchor,
+        ContactViewModel? serverContext,
+        bool isKnownContact)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return;
+        }
+
+        var isSelf = _profile is not null && string.Equals(userId, _profile.UserId, StringComparison.Ordinal);
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            displayName = isSelf ? _profile?.DisplayName ?? "You" : FormatShortUserId(userId);
+        }
+
+        var commonGroupsCount = _contacts
+            .Where(x => x.IsGroup && x.GroupMemberIdsList.Contains(userId, StringComparer.Ordinal))
+            .Count();
+
+        _activeMiniProfileServerContext = serverContext is { IsServer: true } ? serverContext : null;
+        _activeMiniProfileUserId = userId;
         _activeMiniProfile = new MiniProfileViewModel
         {
-            UserId = message.SenderUserId,
+            UserId = userId,
             DisplayName = displayName,
             AvatarKind = string.IsNullOrWhiteSpace(avatarKind) ? "color" : avatarKind,
             AvatarPath = avatarPath ?? "",
@@ -9565,13 +10630,19 @@ public partial class MainWindow : Window
             CustomStatus = customStatus,
             CommonGroupsCount = commonGroupsCount,
             IsSelf = isSelf,
-            IsKnownContact = contact is not null,
+            IsKnownContact = isKnownContact,
+            CanManageServerRoles = _activeMiniProfileServerContext is not null &&
+                                   HasServerPermission(_activeMiniProfileServerContext, ServerPermissionManageRoles),
             SelectedEmoji = MiniProfileEmojiChoices[Random.Shared.Next(MiniProfileEmojiChoices.Length)]
         };
 
         MiniProfileCard.DataContext = _activeMiniProfile;
+        MiniProfileRolePicker.DataContext = _activeMiniProfile;
         MiniProfileMessageInput.Clear();
         MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        MiniProfileRolePicker.Visibility = Visibility.Collapsed;
+        MiniProfileRoleSearchInput.Clear();
+        RefreshMiniProfileRoles();
         RefreshMiniProfileEmojiButton(_activeMiniProfile.SelectedEmoji);
         PositionMiniProfile(anchor);
         MiniProfileLayer.Visibility = Visibility.Visible;
@@ -9716,9 +10787,13 @@ public partial class MainWindow : Window
 
         MiniProfileLayer.Visibility = Visibility.Collapsed;
         MiniProfileCard.DataContext = null;
+        MiniProfileRolePicker.DataContext = null;
         MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        MiniProfileRolePicker.Visibility = Visibility.Collapsed;
         _activeMiniProfile = null;
         _activeMiniProfileMessage = null;
+        _activeMiniProfileServerContext = null;
+        _activeMiniProfileUserId = "";
         _miniProfileEmojiTargetActive = false;
         SetPickerPanelVisible(EmojiPanel, false);
     }
@@ -9731,7 +10806,38 @@ public partial class MainWindow : Window
 
     private void MiniProfileCard_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (ReferenceEquals(sender, MiniProfileCard) &&
+            !IsMiniProfileInteractiveElement(e.OriginalSource as DependencyObject))
+        {
+            HideMiniProfileTransientPopups();
+        }
+
         e.Handled = true;
+    }
+
+    private void HideMiniProfileTransientPopups()
+    {
+        MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        MiniProfileRolePicker.Visibility = Visibility.Collapsed;
+        _miniProfileEmojiTargetActive = false;
+    }
+
+    private bool IsMiniProfileInteractiveElement(DependencyObject? source)
+    {
+        while (source is not null && !ReferenceEquals(source, MiniProfileCard))
+        {
+            if (source is System.Windows.Controls.Primitives.ButtonBase or
+                System.Windows.Controls.Primitives.TextBoxBase or
+                System.Windows.Controls.Primitives.ScrollBar or
+                ScrollViewer)
+            {
+                return true;
+            }
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
     }
 
     private async void MiniProfileMessageInput_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -9750,6 +10856,7 @@ public partial class MainWindow : Window
         _miniProfileEmojiTargetActive = true;
         _reactionTarget = null;
         SetPickerPanelVisible(EmojiPanel, false);
+        MiniProfileRolePicker.Visibility = Visibility.Collapsed;
         EnsureMiniProfileEmojiPicker();
         MiniProfileEmojiPopup.Visibility = MiniProfileEmojiPopup.Visibility == Visibility.Visible
             ? Visibility.Collapsed
@@ -9769,6 +10876,96 @@ public partial class MainWindow : Window
         }
 
         MiniProfileMessageInput.Focus();
+        e.Handled = true;
+    }
+
+    private void PositionMiniProfileRolePicker()
+    {
+        const double popupWidth = 240;
+        const double popupHeight = 240;
+        const double margin = 12;
+        var rootWidth = RootGrid.ActualWidth <= 0 ? ActualWidth : RootGrid.ActualWidth;
+        var rootHeight = RootGrid.ActualHeight <= 0 ? ActualHeight : RootGrid.ActualHeight;
+        var cardLeft = Canvas.GetLeft(MiniProfileCard);
+        var cardTop = Canvas.GetTop(MiniProfileCard);
+        if (double.IsNaN(cardLeft))
+        {
+            cardLeft = margin;
+        }
+
+        if (double.IsNaN(cardTop))
+        {
+            cardTop = margin;
+        }
+
+        var x = cardLeft + 68;
+        var y = cardTop + 168;
+        if (x + popupWidth + margin > rootWidth)
+        {
+            x = rootWidth - popupWidth - margin;
+        }
+
+        if (y + popupHeight + margin > rootHeight)
+        {
+            y = Math.Max(margin, cardTop + 100 - popupHeight);
+        }
+
+        Canvas.SetLeft(MiniProfileRolePicker, Math.Clamp(x, margin, Math.Max(margin, rootWidth - popupWidth - margin)));
+        Canvas.SetTop(MiniProfileRolePicker, Math.Clamp(y, margin, Math.Max(margin, rootHeight - popupHeight - margin)));
+    }
+
+    private void MiniProfileAddRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_activeMiniProfile is null || !_activeMiniProfile.CanManageServerRoles)
+        {
+            return;
+        }
+
+        MiniProfileEmojiPopup.Visibility = Visibility.Collapsed;
+        _miniProfileEmojiTargetActive = false;
+        RefreshMiniProfileAvailableRoles();
+        MiniProfileRolePicker.Visibility = MiniProfileRolePicker.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+        if (MiniProfileRolePicker.Visibility == Visibility.Visible)
+        {
+            PositionMiniProfileRolePicker();
+            MiniProfileRolePicker.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            });
+            MiniProfileRoleSearchInput.Focus();
+        }
+
+        e.Handled = true;
+    }
+
+    private void MiniProfileRoleSearchInput_OnTextChanged(object sender, TextChangedEventArgs e)
+        => RefreshMiniProfileAvailableRoles();
+
+    private async void MiniProfileAvailableRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { DataContext: MiniProfileRoleViewModel role })
+        {
+            return;
+        }
+
+        await SetMiniProfileUserRoleAsync(role.Id, add: true);
+        MiniProfileRoleSearchInput.Clear();
+        MiniProfileRolePicker.Visibility = Visibility.Collapsed;
+        e.Handled = true;
+    }
+
+    private async void MiniProfileRemoveRoleButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { DataContext: MiniProfileRoleViewModel role } ||
+            !role.CanRemove)
+        {
+            return;
+        }
+
+        await SetMiniProfileUserRoleAsync(role.Id, add: false);
         e.Handled = true;
     }
 
@@ -9805,6 +11002,143 @@ public partial class MainWindow : Window
             button.Click += MiniProfileInlineEmojiButton_OnClick;
             MiniProfileEmojiGrid.Children.Add(button);
         }
+    }
+
+    private void RefreshMiniProfileRoles()
+    {
+        if (_activeMiniProfile is null)
+        {
+            return;
+        }
+
+        _activeMiniProfile.ServerRoles.Clear();
+        _activeMiniProfile.AvailableServerRoles.Clear();
+        if (_activeMiniProfileServerContext is not { IsServer: true } server ||
+            string.IsNullOrWhiteSpace(_activeMiniProfileUserId))
+        {
+            _activeMiniProfile.NotifyRoleCollectionsChanged();
+            return;
+        }
+
+        var roles = LoadServerRoles(server).OrderBy(x => x.Position).ToArray();
+        var member = LoadGroupMembers(server).FirstOrDefault(x => string.Equals(x.UserId, _activeMiniProfileUserId, StringComparison.Ordinal));
+        if (member is null)
+        {
+            _activeMiniProfile.NotifyRoleCollectionsChanged();
+            return;
+        }
+
+        var isOwner = string.Equals(_activeMiniProfileUserId, server.GroupOwnerUserId, StringComparison.Ordinal);
+        var roleIds = GetMemberServerRoleIds(member, roles, isOwner);
+        foreach (var role in roles.Where(x => roleIds.Contains(x.Id) && !string.Equals(x.Id, "member", StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.Position))
+        {
+            _activeMiniProfile.ServerRoles.Add(new MiniProfileRoleViewModel
+            {
+                Id = role.Id,
+                Name = role.Name,
+                Color = role.Color,
+                IsSystem = role.IsSystem,
+                CanRemove = _activeMiniProfile.CanManageServerRoles && CanManageRoleFromMiniProfile(role)
+            });
+        }
+
+        RefreshMiniProfileAvailableRoles();
+        _activeMiniProfile.NotifyRoleCollectionsChanged();
+    }
+
+    private void RefreshMiniProfileAvailableRoles()
+    {
+        if (_activeMiniProfile is null)
+        {
+            return;
+        }
+
+        _activeMiniProfile.AvailableServerRoles.Clear();
+        if (!_activeMiniProfile.CanManageServerRoles ||
+            _activeMiniProfileServerContext is not { IsServer: true } server ||
+            string.IsNullOrWhiteSpace(_activeMiniProfileUserId))
+        {
+            _activeMiniProfile.NotifyRoleCollectionsChanged();
+            return;
+        }
+
+        var query = MiniProfileRoleSearchInput.Text.Trim();
+        var assignedIds = _activeMiniProfile.ServerRoles
+            .Select(x => x.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var role in LoadServerRoles(server)
+                     .Where(CanManageRoleFromMiniProfile)
+                     .Where(x => !assignedIds.Contains(x.Id))
+                     .Where(x => string.IsNullOrWhiteSpace(query) || x.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                     .OrderBy(x => x.Position))
+        {
+            _activeMiniProfile.AvailableServerRoles.Add(new MiniProfileRoleViewModel
+            {
+                Id = role.Id,
+                Name = role.Name,
+                Color = role.Color,
+                IsSystem = role.IsSystem,
+                CanRemove = false
+            });
+        }
+
+        _activeMiniProfile.NotifyRoleCollectionsChanged();
+    }
+
+    private static bool CanManageRoleFromMiniProfile(ServerRolePayload role)
+        => !string.Equals(role.Id, "owner", StringComparison.OrdinalIgnoreCase) &&
+           !string.Equals(role.Id, "member", StringComparison.OrdinalIgnoreCase);
+
+    private async Task SetMiniProfileUserRoleAsync(string roleId, bool add)
+    {
+        if (_activeMiniProfile is null ||
+            !_activeMiniProfile.CanManageServerRoles ||
+            _activeMiniProfileServerContext is not { IsServer: true } server ||
+            string.IsNullOrWhiteSpace(_activeMiniProfileUserId) ||
+            string.Equals(_activeMiniProfileUserId, server.GroupOwnerUserId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var roles = LoadServerRoles(server).ToList();
+        var roleIndex = roles.FindIndex(x => string.Equals(x.Id, roleId, StringComparison.OrdinalIgnoreCase));
+        if (roleIndex < 0 || !CanManageRoleFromMiniProfile(roles[roleIndex]))
+        {
+            return;
+        }
+
+        var members = LoadGroupMembers(server);
+        var memberIndex = members.FindIndex(x => string.Equals(x.UserId, _activeMiniProfileUserId, StringComparison.Ordinal));
+        if (memberIndex < 0)
+        {
+            return;
+        }
+
+        var roleMemberIds = SplitRoleIds(roles[roleIndex].MemberIds).ToHashSet(StringComparer.Ordinal);
+        var memberRoleIds = SplitRoleIds(members[memberIndex].RoleIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (add)
+        {
+            roleMemberIds.Add(_activeMiniProfileUserId);
+            memberRoleIds.Add(roles[roleIndex].Id);
+        }
+        else
+        {
+            roleMemberIds.Remove(_activeMiniProfileUserId);
+            memberRoleIds.Remove(roles[roleIndex].Id);
+        }
+
+        roles[roleIndex] = roles[roleIndex] with { MemberIds = JoinRoleIds(roleMemberIds) };
+        members[memberIndex] = members[memberIndex] with { RoleIds = JoinRoleIds(memberRoleIds) };
+        SaveServerRoles(server, roles);
+        SaveGroupMembers(server, members);
+        server.GroupVersion++;
+        await _history.SaveContactAsync(server);
+        await SyncContactToServerAsync(server);
+        await BroadcastGroupSnapshotAsync(server);
+        RefreshGroupMembersPanel();
+        RefreshServerRolesOverlay(server);
+        RefreshMiniProfileRoles();
     }
 
     private void RefreshMiniProfileEmojiButton(string emoji)
@@ -9877,9 +11211,7 @@ public partial class MainWindow : Window
 
     private async Task SendMiniProfileDraftAsync()
     {
-        if (_activeMiniProfile is null ||
-            _activeMiniProfileMessage is null ||
-            _activeMiniProfile.IsSelf)
+        if (_activeMiniProfile is null || _activeMiniProfile.IsSelf)
         {
             return;
         }
@@ -9890,7 +11222,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var contact = await EnsureMiniProfileContactAsync(_activeMiniProfileMessage);
+        var contact = await EnsureMiniProfileContactAsync(
+            _activeMiniProfile.UserId,
+            _activeMiniProfile.DisplayName,
+            _activeMiniProfile.AvatarKind,
+            _activeMiniProfile.AvatarPath);
         if (contact is null)
         {
             return;
@@ -9903,32 +11239,32 @@ public partial class MainWindow : Window
         await TrySendCurrentMessageAsync();
     }
 
-    private async Task<ContactViewModel?> EnsureMiniProfileContactAsync(MessageViewModel message)
+    private async Task<ContactViewModel?> EnsureMiniProfileContactAsync(string userId, string displayName, string avatarKind, string avatarPath)
     {
-        var existing = FindDirectContact(message.SenderUserId);
+        var existing = FindDirectContact(userId);
         if (existing is not null)
         {
             return existing;
         }
 
-        var member = FindGroupMemberForUser(message.SenderUserId);
+        var member = FindGroupMemberForUser(userId);
         var contact = member is not null
             ? CreateContactFromGroupMember(member)
             : new ContactViewModel
             {
-                UserId = message.SenderUserId,
-                DisplayName = string.IsNullOrWhiteSpace(message.SenderDisplayName) ? FormatShortUserId(message.SenderUserId) : message.SenderDisplayName,
+                UserId = userId,
+                DisplayName = string.IsNullOrWhiteSpace(displayName) ? FormatShortUserId(userId) : displayName,
                 IpAddress = $"{RelayContactPrefix}{NormalizeRelayServer(_settings.RelayServer)}",
                 MessagePort = FluxChatPorts.Relay,
                 Status = UserPresenceStatus.Offline,
                 LastSeenUtc = DateTimeOffset.UtcNow,
-                AvatarKind = string.IsNullOrWhiteSpace(message.SenderAvatarKind) ? "color" : message.SenderAvatarKind,
-                AvatarPath = message.SenderAvatarPath
+                AvatarKind = string.IsNullOrWhiteSpace(avatarKind) ? "color" : avatarKind,
+                AvatarPath = avatarPath
             };
 
         AddOrUpdateContact(contact);
         await _history.SaveContactAsync(contact);
-        return FindDirectContact(message.SenderUserId) ?? contact;
+        return FindDirectContact(userId) ?? contact;
     }
 
     private static string FormatShortUserId(string userId)
@@ -10195,6 +11531,7 @@ public partial class MainWindow : Window
             ChatSubtitle.Text = "Click a contact to open conversation";
             ComposerPanel.Visibility = Visibility.Collapsed;
             StartCallButton.Visibility = Visibility.Collapsed;
+            StartVideoCallButton.Visibility = Visibility.Collapsed;
             ChatSearchInput.Visibility = Visibility.Collapsed;
             ChatSearchInput.Clear();
             GroupMembersButton.Visibility = Visibility.Collapsed;
@@ -11485,6 +12822,9 @@ public partial class MainWindow : Window
             var member = item.Member;
             var contact = _contacts.FirstOrDefault(x => x.UserId == member.UserId && !x.IsGroup);
             var isOwner = string.Equals(member.UserId, group.GroupOwnerUserId, StringComparison.Ordinal);
+            var baseCustomStatus = string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal)
+                ? GetPublishedCustomStatus(_profile.UserId)
+                : contact?.CustomStatus ?? "";
             _groupMembers.Add(new GroupMemberViewModel
             {
                 UserId = member.UserId,
@@ -11500,9 +12840,7 @@ public partial class MainWindow : Window
                 Status = string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal)
                     ? GetCurrentStatus()
                     : contact?.Status ?? UserPresenceStatus.Offline,
-                CustomStatus = string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal)
-                    ? GetPublishedCustomStatus()
-                    : contact?.CustomStatus ?? "",
+                CustomStatus = BuildGroupMemberActivityText(group, member.UserId, baseCustomStatus),
                 IsOwner = isOwner,
                 IsFriend = contact is not null,
                 IsSelf = string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal),
@@ -11514,6 +12852,27 @@ public partial class MainWindow : Window
                 ShowRoleGroupHeader = item.ShowHeader
             });
         }
+    }
+
+    private string BuildGroupMemberActivityText(ContactViewModel group, string userId, string fallback)
+    {
+        if (group.IsServer && IsServerVoiceParticipant(group, userId))
+        {
+            return L("activity.inCall");
+        }
+
+        return fallback;
+    }
+
+    private bool IsServerVoiceParticipant(ContactViewModel server, string userId)
+    {
+        if (!server.IsServer || string.IsNullOrWhiteSpace(userId))
+        {
+            return false;
+        }
+
+        return GetGroupVoiceRoomEntries(server)
+            .Any(x => string.Equals(x.Key, userId, StringComparison.Ordinal));
     }
 
     private static string BuildMemberDisplayNameColor(IReadOnlyList<ServerRolePayload> roles, GroupMemberPayload member, bool isOwner)
@@ -11578,6 +12937,39 @@ public partial class MainWindow : Window
         }
 
         return roleIds;
+    }
+
+    private void GroupMemberRow_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GroupMemberViewModel member } anchor ||
+            _selectedContact is not { IsGroup: true } group)
+        {
+            return;
+        }
+
+        var isSelf = _profile is not null && string.Equals(member.UserId, _profile.UserId, StringComparison.Ordinal);
+        var contact = FindDirectContact(member.UserId);
+        var avatarKind = isSelf ? _profile?.AvatarKind ?? "color" : contact?.AvatarKind ?? member.AvatarKind;
+        var avatarPath = isSelf ? _profile?.AvatarPath ?? "" : contact?.AvatarPath ?? member.AvatarPath;
+        var status = isSelf ? GetCurrentStatus() : contact?.Status ?? member.Status;
+        var activity = !string.IsNullOrWhiteSpace(member.CustomStatus)
+            ? member.CustomStatus
+            : isSelf
+                ? GetPublishedCustomStatus(_profile?.UserId ?? "")
+                : "";
+
+        _activeMiniProfileMessage = null;
+        ShowMiniProfileForUser(
+            member.UserId,
+            member.DisplayName,
+            avatarKind,
+            avatarPath ?? "",
+            status,
+            activity,
+            anchor,
+            group.IsServer ? group : null,
+            contact is not null);
+        e.Handled = true;
     }
 
     private async void GroupMemberAddFriendMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -11820,7 +13212,7 @@ public partial class MainWindow : Window
 
     private void EmojiButton_OnClick(object sender, RoutedEventArgs e)
     {
-        ForwardPanel.Visibility = Visibility.Collapsed;
+        _ = CloseForwardDialogAsync();
         var show = EmojiPanel.Visibility != Visibility.Visible;
         SetPickerPanelVisible(EmojiPanel, show);
         if (show)
@@ -12548,7 +13940,7 @@ public partial class MainWindow : Window
 
     private void GifButton_OnClick(object sender, RoutedEventArgs e)
     {
-        ForwardPanel.Visibility = Visibility.Collapsed;
+        _ = CloseForwardDialogAsync();
         SetPickerPanelVisible(GifPanel, GifPanel.Visibility != Visibility.Visible);
     }
 
@@ -13318,11 +14710,14 @@ public partial class MainWindow : Window
 
     private void StageFileDraft(string path)
     {
+        _draftOriginalFolderName = "";
         if (Directory.Exists(path))
         {
+            _draftOriginalFolderName = new DirectoryInfo(path).Name;
             path = CreateZipDraftFromDirectory(path);
             if (string.IsNullOrWhiteSpace(path))
             {
+                _draftOriginalFolderName = "";
                 return;
             }
         }
@@ -13334,10 +14729,11 @@ public partial class MainWindow : Window
         }
 
         var file = new FileInfo(path);
-        const long maxServerFileBytes = 25L * 1024 * 1024;
-        if (file.Length <= 0 || file.Length > maxServerFileBytes)
+        const long maxClientFileBytes = 1024L * 1024 * 1024;
+        if (file.Length <= 0 || file.Length > maxClientFileBytes)
         {
-            NetworkStatusText.Text = "Files must be between 1 byte and 25 MB.";
+            NetworkStatusText.Text = "Files must be between 1 byte and 1 GB. The VPS may apply a smaller upload limit.";
+            _draftOriginalFolderName = "";
             return;
         }
 
@@ -13388,6 +14784,7 @@ public partial class MainWindow : Window
         _fileUploadCancellation?.Dispose();
         _fileUploadCancellation = null;
         _draftFilePath = "";
+        _draftOriginalFolderName = "";
         FileDraftNameText.Text = "";
         FileDraftStatusText.Text = "Ready to upload";
         FileDraftProgress.Value = 0;
@@ -13445,7 +14842,8 @@ public partial class MainWindow : Window
                 fileName: file.Name,
                 fileSizeBytes: file.Length,
                 mimeType: mime,
-                storageProvider: "ServerMedia");
+                storageProvider: "ServerMedia",
+                originalFolderName: _draftOriginalFolderName);
             progress.Report(1);
             MessageInput.Clear();
             ClearFileDraft();
@@ -13694,7 +15092,122 @@ public partial class MainWindow : Window
         _forwardTarget = message;
         SetPickerPanelVisible(EmojiPanel, false);
         SetPickerPanelVisible(GifPanel, false);
-        ForwardPanel.Visibility = Visibility.Visible;
+        _isForwardDialogAnimating = false;
+        ForwardOverlay.BeginAnimation(OpacityProperty, null);
+        ForwardDialogScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        ForwardDialogScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        ForwardDialogTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+        ForwardSearchInput.Clear();
+        ForwardCommentInput.Clear();
+        ForwardContactsList.SelectedItem = null;
+        RefreshForwardContacts();
+        ForwardPreviewText.Text = GetForwardPreviewText(message);
+        ForwardSendButton.IsEnabled = false;
+        ForwardOverlay.Visibility = Visibility.Visible;
+        ForwardOverlay.Opacity = 0;
+        ForwardDialogScale.ScaleX = 0.96;
+        ForwardDialogScale.ScaleY = 0.96;
+        ForwardDialogTranslate.Y = 12;
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        ForwardOverlay.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)) { EasingFunction = easing });
+        ForwardDialogScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1, TimeSpan.FromMilliseconds(170)) { EasingFunction = easing });
+        ForwardDialogScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1, TimeSpan.FromMilliseconds(170)) { EasingFunction = easing });
+        ForwardDialogTranslate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(170)) { EasingFunction = easing });
+        Dispatcher.BeginInvoke(ForwardSearchInput.Focus, DispatcherPriority.Input);
+    }
+
+    private void ForwardSearchInput_OnTextChanged(object sender, TextChangedEventArgs e)
+        => RefreshForwardContacts();
+
+    private void RefreshForwardContacts()
+    {
+        var query = ForwardSearchInput?.Text.Trim() ?? "";
+        ForwardContactsList.ItemsSource = _contacts
+            .Where(contact => !contact.IsGroup &&
+                              (string.IsNullOrWhiteSpace(query) ||
+                               contact.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                               contact.ShortId.Contains(query, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+    }
+
+    private static string GetForwardPreviewText(MessageViewModel message)
+    {
+        if (message.IsImageMessage)
+        {
+            return "Изображение";
+        }
+
+        if (message.IsGifMessage)
+        {
+            return "GIF";
+        }
+
+        if (message.IsFileMessage)
+        {
+            return string.IsNullOrWhiteSpace(message.FileName) ? "Файл" : message.FileName;
+        }
+
+        var text = message.PreviewText.Trim();
+        return text.Length <= 120 ? text : $"{text[..117]}...";
+    }
+
+    private void ForwardContactsList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+        => ForwardSendButton.IsEnabled = _forwardTarget is not null && ForwardContactsList.SelectedItem is ContactViewModel { IsGroup: false };
+
+    private async void ForwardCloseButton_OnClick(object sender, RoutedEventArgs e)
+        => await CloseForwardDialogAsync();
+
+    private async void ForwardOverlay_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource == ForwardOverlay)
+        {
+            await CloseForwardDialogAsync();
+        }
+    }
+
+    private async void ReplyPreview_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: MessageViewModel { ReplyToMessageId: Guid messageId } })
+        {
+            return;
+        }
+
+        var original = FindMessage(messageId);
+        if (original is null)
+        {
+            NetworkStatusText.Text = "Оригинальное сообщение недоступно в этой истории.";
+            return;
+        }
+
+        MessagesList.ScrollIntoView(original);
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+        MessagesList.ScrollIntoView(original);
+        original.IsReplyJumpTarget = true;
+        await Task.Delay(1200);
+        original.IsReplyJumpTarget = false;
+    }
+
+    private async Task CloseForwardDialogAsync()
+    {
+        if (ForwardOverlay.Visibility != Visibility.Visible || _isForwardDialogAnimating)
+        {
+            return;
+        }
+
+        _isForwardDialogAnimating = true;
+        var easing = new CubicEase { EasingMode = EasingMode.EaseIn };
+        ForwardOverlay.BeginAnimation(OpacityProperty, new DoubleAnimation(ForwardOverlay.Opacity, 0, TimeSpan.FromMilliseconds(130)) { EasingFunction = easing });
+        ForwardDialogScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(ForwardDialogScale.ScaleX, 0.97, TimeSpan.FromMilliseconds(130)) { EasingFunction = easing });
+        ForwardDialogScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(ForwardDialogScale.ScaleY, 0.97, TimeSpan.FromMilliseconds(130)) { EasingFunction = easing });
+        ForwardDialogTranslate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(ForwardDialogTranslate.Y, 8, TimeSpan.FromMilliseconds(130)) { EasingFunction = easing });
+        await Task.Delay(140);
+        ForwardOverlay.Visibility = Visibility.Collapsed;
+        ForwardOverlay.BeginAnimation(OpacityProperty, null);
+        _forwardTarget = null;
+        ForwardContactsList.SelectedItem = null;
+        ForwardSearchInput.Clear();
+        ForwardCommentInput.Clear();
+        _isForwardDialogAnimating = false;
     }
 
     private void MessageEditMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -13721,7 +15234,7 @@ public partial class MainWindow : Window
         }
 
         _reactionTarget = message;
-        ForwardPanel.Visibility = Visibility.Collapsed;
+        _ = CloseForwardDialogAsync();
         SetPickerPanelVisible(EmojiPanel, true);
         _ = InitializeEmojiWebViewAsync();
     }
@@ -14351,7 +15864,7 @@ public partial class MainWindow : Window
         ImageViewerOverlay.BeginAnimation(OpacityProperty, null);
         ImageViewerOverlay.Opacity = 1;
         ImageViewerOverlay.Visibility = Visibility.Visible;
-        ForwardPanel.Visibility = Visibility.Collapsed;
+        _ = CloseForwardDialogAsync();
         SetPickerPanelVisible(EmojiPanel, false);
         SetPickerPanelVisible(GifPanel, false);
 
@@ -14510,7 +16023,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ForwardContactsList_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private async void ForwardSendButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_forwardTarget is null ||
             ForwardContactsList.SelectedItem is not ContactViewModel contact ||
@@ -14520,10 +16033,22 @@ public partial class MainWindow : Window
             return;
         }
 
+        ForwardSendButton.IsEnabled = false;
+        var comment = ForwardCommentInput.Text.Trim();
+        if (!await EnsureSecureRecipientReadyAsync(contact))
+        {
+            ForwardSendButton.IsEnabled = true;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(comment))
+        {
+            await SendForwardCommentAsync(contact, comment);
+        }
+
         await SendForwardedMessageAsync(contact, _forwardTarget);
-        _forwardTarget = null;
-        ForwardPanel.Visibility = Visibility.Collapsed;
-        NetworkStatusText.Text = $"Forwarded to {contact.DisplayName}";
+        await CloseForwardDialogAsync();
+        NetworkStatusText.Text = $"Переслано: {contact.DisplayName}";
     }
 
     private async Task SearchGifsAsync(string query)
@@ -15008,6 +16533,7 @@ public partial class MainWindow : Window
         var payload = new ChatEditPayload(message.MessageId, text, message.EditedAtUtc.Value);
         var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatEditIntent);
         await SendOverRelayAsync(packet, _selectedContact);
+        await SyncServerArchivedMessageEditAsync(message, text);
         ClearEditingMessage();
     }
 
@@ -15067,7 +16593,70 @@ public partial class MainWindow : Window
         var payload = new ChatDeletePayload(message.MessageId);
         var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatDeleteIntent);
         await SendOverRelayAsync(packet, _selectedContact);
+        await SyncServerArchivedMessageDeleteAsync(message);
         NetworkStatusText.Text = "Message deleted";
+    }
+
+    private async Task SyncServerArchivedMessageEditAsync(MessageViewModel message, string text)
+    {
+        if (_serverHistory is null || _selectedContact is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var replacementPacket = CreateEditedArchivePacket(_selectedContact, message, text);
+            var result = await _serverHistory.EditMessageAsync(message.MessageId, replacementPacket, _stop.Token);
+            if (!result.Accepted)
+            {
+                AppLog.Write($"Server message edit was rejected: messageId={message.MessageId}, reason={result.Message}");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            AppLog.Write(ex, $"Server message edit sync failed: messageId={message.MessageId}");
+        }
+    }
+
+    private async Task SyncServerArchivedMessageDeleteAsync(MessageViewModel message)
+    {
+        if (_serverHistory is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var mediaIds = CollectServerMediaIds(message);
+            var serverId = _selectedContact?.IsServer == true ? _selectedContact.UserId : "";
+            var channelId = _selectedContact?.IsServer == true ? _selectedContact.SelectedServerChannelId : "";
+            var result = await _serverHistory.DeleteMessageAsync(message.MessageId, mediaIds, _stop.Token, serverId, channelId);
+            if (!result.Accepted)
+            {
+                AppLog.Write($"Server message delete was rejected: messageId={message.MessageId}, reason={result.Message}");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            AppLog.Write(ex, $"Server message delete sync failed: messageId={message.MessageId}");
+        }
+    }
+
+    private IReadOnlyList<string> CollectServerMediaIds(MessageViewModel message)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(message.MediaId))
+        {
+            ids.Add(message.MediaId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.ThumbnailMediaId))
+        {
+            ids.Add(message.ThumbnailMediaId);
+        }
+
+        return ids.ToList();
     }
 
     private async Task TrySendCurrentMessageAsync()
@@ -15145,6 +16734,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (await TrySendServerInviteLinkAsCardAsync(_selectedContact, body))
+        {
+            MessageInput.Clear();
+            return;
+        }
+
         if (!await EnsureSecureRecipientReadyAsync(_selectedContact))
         {
             return;
@@ -15164,7 +16759,9 @@ public partial class MainWindow : Window
             SentAtUtc = packet.SentAtUtc,
             Kind = MessageKinds.Text,
             ReplyToMessageId = _replyTarget?.MessageId,
-            ReplyPreview = _replyTarget?.PreviewText ?? ""
+            ReplyPreview = _replyTarget?.PreviewText ?? "",
+            ReplyAuthorUserId = _replyTarget?.SenderUserId ?? "",
+            ReplyAuthorDisplayName = _replyTarget?.SenderDisplayName ?? ""
         };
         PrepareMessageForUi(message);
         ClearReplyTarget();
@@ -15194,6 +16791,169 @@ public partial class MainWindow : Window
             _messages.Add(failedMessage);
             ScrollMessagesToEnd();
         }
+    }
+
+    private async Task<bool> TrySendServerInviteLinkAsCardAsync(ContactViewModel recipient, string body)
+    {
+        if (_profile is null ||
+            recipient.IsGroup ||
+            !TryParseFluxChatServerInviteLink(body, out var serverId, out var channelId, out var linkChannelType, out var linkChannelName))
+        {
+            return false;
+        }
+
+        var server = _contacts.FirstOrDefault(x => x.IsGroup && x.IsServer && string.Equals(x.UserId, serverId, StringComparison.Ordinal));
+        if (server is null)
+        {
+            return false;
+        }
+
+        EnsureServerMetadata(server);
+        var channels = LoadServerChannels(server).ToList();
+        var channel = string.IsNullOrWhiteSpace(channelId)
+            ? null
+            : channels.FirstOrDefault(x => string.Equals(x.Id, channelId, StringComparison.OrdinalIgnoreCase)) ??
+              channels.FirstOrDefault(x => string.Equals(x.Name, channelId, StringComparison.CurrentCultureIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(channelId) && channel is null)
+        {
+            return false;
+        }
+
+        if (!HasServerPermission(server, ServerPermissionCreateInvite, channel?.Id ?? ""))
+        {
+            NetworkStatusText.Text = "You do not have permission to invite members.";
+            return true;
+        }
+
+        var expiresAtUtc = DateTimeOffset.UtcNow.AddDays(GetServerInviteExpiryDays(server));
+        var isVoiceChannel = string.Equals(channel?.Type, "voice", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(linkChannelType, "voice", StringComparison.OrdinalIgnoreCase);
+        var voiceParticipants = isVoiceChannel
+            ? GetActiveGroupVoiceParticipantIds(server, includeSelf: true)
+                .Take(3)
+                .Select(x => CreateGroupVoiceParticipantViewModel(server, x))
+                .Select(x => new ServerInviteVoiceParticipantPayload(x.UserId, x.DisplayName))
+                .ToArray()
+            : [];
+        var payload = new ServerChannelInvitePayload(
+            server.UserId,
+            channel?.Id ?? "",
+            channel?.Name ?? (string.IsNullOrWhiteSpace(linkChannelName) ? channelId : linkChannelName),
+            channel is null ? "server" : isVoiceChannel ? "voice" : "text",
+            _profile.UserId,
+            _profile.DisplayName,
+            expiresAtUtc,
+            CreateGroupSnapshot(server),
+            voiceParticipants);
+        var packet = CreateProfilePacket(recipient.UserId, JsonSerializer.Serialize(payload), ServerChannelInviteIntent, GetRelayServer(recipient));
+        var message = new MessageViewModel
+        {
+            MessageId = packet.MessageId,
+            PeerUserId = recipient.UserId,
+            Body = JsonSerializer.Serialize(payload),
+            IsOutgoing = true,
+            SentAtUtc = packet.SentAtUtc,
+            Kind = MessageKinds.ServerInvite,
+            SenderUserId = _profile.UserId,
+            SenderDisplayName = _profile.DisplayName
+        };
+        PrepareMessageForUi(message);
+        _messages.Add(message);
+        RefreshMessageGrouping();
+        ScrollMessagesToEnd();
+        await _history.SaveAsync(message);
+        TouchContactActivity(recipient);
+
+        try
+        {
+            await SendOverRelayAsync(packet, recipient);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, $"Server invite link send failed: messageId={packet.MessageId}, to={recipient.UserId}");
+            NetworkStatusText.Text = $"Invite failed: {ex.Message}";
+        }
+
+        return true;
+    }
+
+    private static bool TryParseFluxChatServerInviteLink(
+        string text,
+        out string serverId,
+        out string channelId,
+        out string channelType,
+        out string channelName)
+    {
+        serverId = "";
+        channelId = "";
+        channelType = "";
+        channelName = "";
+        var candidates = (text ?? "")
+            .Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim('<', '>', '"', '\'', '(', ')', '[', ']', '{', '}').TrimEnd('.', ',', ';'))
+            .Where(x => !string.IsNullOrWhiteSpace(x));
+
+        foreach (var candidate in candidates)
+        {
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
+                !string.Equals(uri.Scheme, "fluxchat", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(uri.Host, "server", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var segments = uri.AbsolutePath
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.UnescapeDataString)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToArray();
+            if (segments.Length == 0)
+            {
+                continue;
+            }
+
+            serverId = segments[0];
+            channelId = segments.Length > 1 ? segments[1] : "";
+            channelType = GetFluxChatInviteQueryValue(uri.Query, "type");
+            if (string.IsNullOrWhiteSpace(channelType))
+            {
+                channelType = GetFluxChatInviteQueryValue(uri.Query, "kind");
+            }
+
+            channelName = GetFluxChatInviteQueryValue(uri.Query, "name");
+            if (string.IsNullOrWhiteSpace(channelName))
+            {
+                channelName = GetFluxChatInviteQueryValue(uri.Query, "channel");
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string GetFluxChatInviteQueryValue(string query, string key)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return "";
+        }
+
+        var normalized = query.TrimStart('?');
+        foreach (var part in normalized.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = part.IndexOf('=');
+            var name = separator >= 0 ? part[..separator] : part;
+            if (!string.Equals(Uri.UnescapeDataString(name), key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = separator >= 0 ? part[(separator + 1)..] : "";
+            return Uri.UnescapeDataString(value.Replace("+", " ")).Trim();
+        }
+
+        return "";
     }
 
     private async Task SendGroupMessageAsync(ContactViewModel group, string body)
@@ -15259,7 +17019,10 @@ public partial class MainWindow : Window
         string mimeType = "",
         string driveFileId = "",
         string downloadUrl = "",
-        string storageProvider = "")
+        string storageProvider = "",
+        string textPreview = "",
+        bool textPreviewTruncated = false,
+        string originalFolderName = "")
     {
         if (_profile is null || _selectedContact is null || _selectedContact.IsGroup)
         {
@@ -15295,6 +17058,14 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(storedAttachmentPath) && File.Exists(storedAttachmentPath))
             {
                 attachmentFileName = Path.GetFileName(storedAttachmentPath);
+                if (string.Equals(kind, MessageKinds.File, StringComparison.OrdinalIgnoreCase) &&
+                    string.IsNullOrWhiteSpace(textPreview) &&
+                    TryBuildTextFilePreview(storedAttachmentPath, out var builtPreview, out var builtTruncated))
+                {
+                    textPreview = builtPreview;
+                    textPreviewTruncated = builtTruncated;
+                }
+
                 if (_serverHistory is not null)
                 {
                     var bytes = await File.ReadAllBytesAsync(storedAttachmentPath, _stop.Token);
@@ -15303,6 +17074,11 @@ public partial class MainWindow : Window
                     if (!upload.Accepted || string.IsNullOrWhiteSpace(upload.MediaId))
                     {
                         NetworkStatusText.Text = upload.Message;
+                        if (string.Equals(kind, MessageKinds.File, StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidOperationException(upload.Message);
+                        }
+
                         return;
                     }
 
@@ -15324,7 +17100,8 @@ public partial class MainWindow : Window
 
         var payload = CreateRichPayload(
             kind, text, attachmentFileName, attachmentBase64, attachmentUrl, replyTarget, forwardedFrom,
-            fileName, uploadedSizeBytes, uploadedMimeType, driveFileId, downloadUrl, storageProvider, mediaId);
+            fileName, uploadedSizeBytes, uploadedMimeType, driveFileId, downloadUrl, storageProvider, mediaId,
+            textPreview: textPreview, textPreviewTruncated: textPreviewTruncated, originalFolderName: originalFolderName);
         var packet = CreateProfilePacket(_selectedContact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
         var message = new MessageViewModel
         {
@@ -15340,13 +17117,18 @@ public partial class MainWindow : Window
             AttachmentUrl = attachmentUrl,
             ReplyToMessageId = replyTarget?.MessageId,
             ReplyPreview = replyTarget?.PreviewText ?? "",
+            ReplyAuthorUserId = replyTarget?.SenderUserId ?? "",
+            ReplyAuthorDisplayName = replyTarget?.SenderDisplayName ?? "",
             ForwardedFrom = forwardedFrom,
             FileName = fileName,
             FileSizeBytes = uploadedSizeBytes,
             MimeType = uploadedMimeType,
             DriveFileId = driveFileId,
             DownloadUrl = downloadUrl,
-            StorageProvider = storageProvider
+            StorageProvider = storageProvider,
+            TextPreview = textPreview,
+            TextPreviewTruncated = textPreviewTruncated,
+            OriginalFolderName = originalFolderName
         };
         PrepareMessageForUi(message);
 
@@ -15356,6 +17138,39 @@ public partial class MainWindow : Window
         TouchContactActivity(_selectedContact);
         await SendOverRelayAsync(packet, _selectedContact);
         ClearReplyTarget();
+    }
+
+    private async Task SendForwardCommentAsync(ContactViewModel contact, string text)
+    {
+        if (_profile is null || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var payload = CreateRichPayload(MessageKinds.Text, text, "", "", null, null, "");
+        var packet = CreateProfilePacket(contact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
+        var message = new MessageViewModel
+        {
+            MessageId = packet.MessageId,
+            PeerUserId = contact.UserId,
+            Body = text,
+            Text = text,
+            IsOutgoing = true,
+            SentAtUtc = packet.SentAtUtc,
+            Kind = MessageKinds.Text,
+            SenderUserId = _profile.UserId,
+            SenderDisplayName = _profile.DisplayName
+        };
+        PrepareMessageForUi(message);
+        await _history.SaveAsync(message);
+        if (_selectedContact?.UserId == contact.UserId)
+        {
+            _messages.Add(message);
+            ScrollMessagesToEnd();
+        }
+
+        TouchContactActivity(contact);
+        await SendOverRelayAsync(packet, contact);
     }
 
     private async Task SendForwardedMessageAsync(ContactViewModel contact, MessageViewModel source)
@@ -15380,7 +17195,8 @@ public partial class MainWindow : Window
 
         var payload = CreateRichPayload(
             source.Kind, source.Text, attachmentFileName, attachmentBase64, source.AttachmentUrl, null, _profile.DisplayName,
-            source.FileName, source.FileSizeBytes, source.MimeType, source.DriveFileId, source.DownloadUrl, source.StorageProvider, source.MediaId);
+            source.FileName, source.FileSizeBytes, source.MimeType, source.DriveFileId, source.DownloadUrl, source.StorageProvider, source.MediaId,
+            textPreview: source.TextPreview, textPreviewTruncated: source.TextPreviewTruncated, originalFolderName: source.OriginalFolderName);
         var packet = CreateProfilePacket(contact.UserId, JsonSerializer.Serialize(payload), ChatRichIntent);
         var message = new MessageViewModel
         {
@@ -15400,7 +17216,10 @@ public partial class MainWindow : Window
             MimeType = source.MimeType,
             DriveFileId = source.DriveFileId,
             DownloadUrl = source.DownloadUrl,
-            StorageProvider = source.StorageProvider
+            StorageProvider = source.StorageProvider,
+            TextPreview = source.TextPreview,
+            TextPreviewTruncated = source.TextPreviewTruncated,
+            OriginalFolderName = source.OriginalFolderName
         };
         PrepareMessageForUi(message);
 
@@ -15433,7 +17252,10 @@ public partial class MainWindow : Window
         string thumbnailMediaId = "",
         int mediaWidth = 0,
         int mediaHeight = 0,
-        int mediaDurationMs = 0)
+        int mediaDurationMs = 0,
+        string textPreview = "",
+        bool textPreviewTruncated = false,
+        string originalFolderName = "")
         => new(
             kind,
             text,
@@ -15453,7 +17275,117 @@ public partial class MainWindow : Window
             thumbnailMediaId,
             mediaWidth,
             mediaHeight,
-            mediaDurationMs);
+            mediaDurationMs,
+            textPreview,
+            textPreviewTruncated,
+            originalFolderName,
+            replyTarget?.SenderUserId ?? "",
+            replyTarget?.SenderDisplayName ?? "");
+
+    private ChatPacket CreateEditedArchivePacket(ContactViewModel contact, MessageViewModel message, string text)
+    {
+        var payload = new RichChatPayload(
+            message.Kind,
+            text,
+            string.IsNullOrWhiteSpace(message.AttachmentPath) ? "" : Path.GetFileName(message.AttachmentPath),
+            "",
+            message.AttachmentUrl,
+            message.ReplyToMessageId,
+            message.ReplyPreview,
+            message.ForwardedFrom,
+            message.FileName,
+            message.FileSizeBytes,
+            message.MimeType,
+            message.DriveFileId,
+            message.DownloadUrl,
+            message.StorageProvider,
+            message.MediaId,
+            message.ThumbnailMediaId,
+            message.MediaWidth,
+            message.MediaHeight,
+            message.MediaDurationMs,
+            message.TextPreview,
+            message.TextPreviewTruncated,
+            message.OriginalFolderName,
+            message.ReplyAuthorUserId,
+            message.ReplyAuthorDisplayName);
+
+        return CreateProfilePacket(
+            contact.UserId,
+            JsonSerializer.Serialize(payload),
+            ChatRichIntent,
+            GetRelayServer(contact),
+            messageIdOverride: message.MessageId,
+            sentAtUtcOverride: message.SentAtUtc);
+    }
+
+    private static bool TryBuildTextFilePreview(string path, out string preview, out bool truncated)
+    {
+        preview = "";
+        truncated = false;
+        try
+        {
+            if (!IsTextPreviewFile(path))
+            {
+                return false;
+            }
+
+            var file = new FileInfo(path);
+            const long maxPreviewSourceBytes = 256L * 1024;
+            if (!file.Exists || file.Length <= 0 || file.Length > maxPreviewSourceBytes)
+            {
+                return false;
+            }
+
+            var bytes = File.ReadAllBytes(path);
+            var text = DecodeTextPreview(bytes);
+            text = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            var lines = text.Split('\n');
+            truncated = lines.Length > 120 || Encoding.UTF8.GetByteCount(text) > 16 * 1024;
+            preview = string.Join(Environment.NewLine, lines.Take(120));
+            if (Encoding.UTF8.GetByteCount(preview) > 16 * 1024)
+            {
+                preview = preview[..Math.Min(preview.Length, 16 * 1024)];
+                truncated = true;
+            }
+
+            preview = preview.TrimEnd();
+            return !string.IsNullOrWhiteSpace(preview);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
+        {
+            AppLog.Write(ex, $"Text file preview failed: {path}");
+            return false;
+        }
+    }
+
+    private static string DecodeTextPreview(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        {
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        }
+
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        {
+            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+    }
+
+    private static bool IsTextPreviewFile(string path)
+    {
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        return extension is ".txt" or ".md" or ".log" or ".json" or ".xml" or ".yaml" or ".yml" or
+            ".ini" or ".cfg" or ".csv" or ".tsv" or ".cs" or ".xaml" or ".js" or ".ts" or
+            ".html" or ".css" or ".lua" or ".py" or ".bat" or ".ps1" or ".sh";
+    }
 
     private static string CopyAttachmentIntoStore(string sourcePath)
     {
@@ -15648,6 +17580,8 @@ public partial class MainWindow : Window
             AttachmentUrl = payload.AttachmentUrl,
             ReplyToMessageId = payload.ReplyToMessageId,
             ReplyPreview = payload.ReplyPreview,
+            ReplyAuthorUserId = payload.ReplyAuthorUserId,
+            ReplyAuthorDisplayName = payload.ReplyAuthorDisplayName,
             ForwardedFrom = payload.ForwardedFrom,
             FileName = payload.FileName,
             FileSizeBytes = payload.FileSizeBytes,
@@ -15655,6 +17589,9 @@ public partial class MainWindow : Window
             DriveFileId = payload.DriveFileId,
             DownloadUrl = payload.DownloadUrl,
             StorageProvider = payload.StorageProvider,
+            TextPreview = payload.TextPreview,
+            TextPreviewTruncated = payload.TextPreviewTruncated,
+            OriginalFolderName = payload.OriginalFolderName,
             SenderUserId = packet.FromUserId,
             SenderDisplayName = packet.FromDisplayName
         };
@@ -15795,7 +17732,9 @@ public partial class MainWindow : Window
     private void PrepareMessageForUi(MessageViewModel message)
     {
         message.CurrentUserId = _profile?.UserId ?? "";
+        NormalizeServerInviteMessageBody(message);
         ApplyMessageSenderMetadata(message);
+        ApplyReplyAuthorMetadata(message);
         if (message.IsVideoFileMessage)
         {
             var cachedPath = VideoCacheStore.TryGetExistingPath(message);
@@ -15806,6 +17745,38 @@ public partial class MainWindow : Window
             _messageGifDimensions.TryGetValue(gifSource, out var dimensions))
         {
             ApplyMessageGifDimensions(message, dimensions);
+        }
+    }
+
+    private static void NormalizeServerInviteMessageBody(MessageViewModel message)
+    {
+        if (message.Kind == MessageKinds.ServerInvite)
+        {
+            message.Body = ExtractServerInvitePayloadBody(message.Body);
+        }
+    }
+
+    private static string ExtractServerInvitePayloadBody(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) ||
+            !body.StartsWith(ControlBodyPrefix, StringComparison.Ordinal))
+        {
+            return body;
+        }
+
+        try
+        {
+            var controlJson = body[ControlBodyPrefix.Length..];
+            var control = JsonSerializer.Deserialize<ControlBody>(controlJson);
+            var controlBody = control?.Body;
+            return string.Equals(control?.Intent, ServerChannelInviteIntent, StringComparison.OrdinalIgnoreCase) &&
+                   !string.IsNullOrWhiteSpace(controlBody)
+                ? controlBody
+                : body;
+        }
+        catch (JsonException)
+        {
+            return body;
         }
     }
 
@@ -15958,10 +17929,13 @@ public partial class MainWindow : Window
     }
 
     private async Task SendCallSignalAsync(ContactViewModel contact, string intent)
+        => await SendCallSignalAsync(contact, intent, "");
+
+    private async Task SendCallSignalAsync(ContactViewModel contact, string intent, string body)
     {
         try
         {
-            await SendCallControlAsync(contact, intent, "", log: true);
+            await SendCallControlAsync(contact, intent, body, log: true);
         }
         catch (Exception ex) when (!_stop.IsCancellationRequested)
         {
@@ -16100,6 +18074,10 @@ public partial class MainWindow : Window
             null);
     }
 
+    private static bool IsDirectWebRtcScreenShareSource(ScreenShareSourceItem source)
+        => source.WindowHandle == IntPtr.Zero &&
+           string.Equals(source.Title, "Screen picker", StringComparison.Ordinal);
+
     private ScreenShareSourceItem CreateScreenShareSource(
         string title,
         string description,
@@ -16138,7 +18116,6 @@ public partial class MainWindow : Window
         _isScreenSharing = true;
         _isWatchingPeerScreen = _peerScreenSharing;
         _screenShareMiniPlayerDockedInApp = false;
-        var ffmpegPath = FindFfmpegExecutable();
         _screenShareAdaptiveHeight = GetInitialScreenShareAdaptiveHeight();
         Interlocked.Exchange(ref _sentScreenShareFrames, 0);
         Interlocked.Exchange(ref _sentEncodedScreenShareChunks, 0);
@@ -16146,12 +18123,12 @@ public partial class MainWindow : Window
         Interlocked.Exchange(ref _pendingNativeWebRtcWebViewFrame, 0);
         Interlocked.Exchange(ref _screenShareJpegLoopStarted, 0);
         Interlocked.Exchange(ref _lastSelfScreenSharePreviewTicks, 0);
-        Interlocked.Exchange(ref _lastEncodedScreenSharePreviewTicks, 0);
         _lastScreenShareFrameHash = 0;
         _lastScreenShareFrameHashSentTicks = 0;
         _screenShareUsingNativeWebRtc = false;
         _screenShareUsingEncodedWebRtc = false;
         _screenShareEncodedChannelOpen = false;
+        _screenShareCapturePromptVisible = false;
         _screenShareStartSignalSent = false;
         _screenShareStop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
 
@@ -16166,6 +18143,37 @@ public partial class MainWindow : Window
 
         if (useWebRtc)
         {
+            if (IsDirectWebRtcScreenShareSource(source))
+            {
+                _screenShareUsingNativeWebRtc = true;
+                var directTargetHeight = _screenShareResolution;
+                var directTargetWidth = GetScreenShareTargetWidth(source.Bounds, directTargetHeight);
+                NetworkStatusText.Text = "Choose a screen or app window to share.";
+                _ = Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        UpdateScreenShareStageVisibility();
+                        PostScreenShareWebRtcMessage(new
+                        {
+                            type = "start-share",
+                            iceServers = GetScreenShareWebRtcIceServers(),
+                            polite = IsPoliteScreenSharePeer(),
+                            title = source.Title,
+                            width = directTargetWidth,
+                            height = directTargetHeight,
+                            frameRate = _screenShareFrameRate,
+                            maxBitrate = GetScreenShareWebRtcMaxBitrate(),
+                            contentHint = "detail",
+                            audioMuted = _screenShareMuteAudio
+                        });
+                    }),
+                    DispatcherPriority.Loaded);
+                AppLog.Write($"Screen share direct WebRTC track requested: resolution={directTargetHeight}p, fps={_screenShareFrameRate}, maxBitrate={GetScreenShareWebRtcMaxBitrate()}, audioMuted={_screenShareMuteAudio}");
+                SetScreenShareRuntimeStatus($"Direct WebRTC track: {directTargetHeight}p {_screenShareFrameRate} fps");
+                return;
+            }
+
+            var ffmpegPath = FindFfmpegExecutable();
             if (ScreenSharePreferEncodedWebRtc && !string.IsNullOrWhiteSpace(ffmpegPath))
             {
                 _screenShareUsingEncodedWebRtc = true;
@@ -16302,14 +18310,13 @@ public partial class MainWindow : Window
         {
             PostScreenShareWebRtcMessage(new { type = "stop-local" });
             _screenShareWebRtcActive = _peerScreenShareUsingWebRtc;
-            SetScreenShareWebRtcVisible(_screenShareWebRtcActive);
+            SetScreenShareWebRtcVisible(_peerScreenShareUsingWebRtc && _isWatchingPeerScreen);
         }
 
         Interlocked.Exchange(ref _pendingScreenShareFrame, 0);
         Interlocked.Exchange(ref _pendingNativeWebRtcWebViewFrame, 0);
         Interlocked.Exchange(ref _screenShareJpegLoopStarted, 0);
         Interlocked.Exchange(ref _lastSelfScreenSharePreviewTicks, 0);
-        Interlocked.Exchange(ref _lastEncodedScreenSharePreviewTicks, 0);
         CallSelfScreenSharePreview.Source = null;
 
         UpdateScreenShareControlVisuals();
@@ -16590,7 +18597,6 @@ public partial class MainWindow : Window
                 var chunk = new byte[read];
                 Buffer.BlockCopy(buffer, 0, chunk, 0, read);
                 await PostEncodedScreenShareChunkAsync(chunk, cancellationToken);
-                PostEncodedScreenShareLocalPreview(source);
             }
 
             if (!process.HasExited)
@@ -16690,48 +18696,6 @@ public partial class MainWindow : Window
         AppLog.Write("Screen share H.264 flow resumed: WebRTC data channel is ready");
     }
 
-    private void PostEncodedScreenShareLocalPreview(ScreenShareSourceItem source)
-    {
-        if (!_screenShareUsingEncodedWebRtc)
-        {
-            return;
-        }
-
-        var nowTicks = DateTimeOffset.UtcNow.Ticks;
-        var lastTicks = Interlocked.Read(ref _lastEncodedScreenSharePreviewTicks);
-        if (nowTicks - lastTicks < ScreenShareEncodedLocalPreviewInterval.Ticks ||
-            Interlocked.CompareExchange(ref _lastEncodedScreenSharePreviewTicks, nowTicks, lastTicks) != lastTicks)
-        {
-            return;
-        }
-
-        // The encoder already owns the high-resolution stream. Keep the local preview cheap
-        // so it cannot compete with a game for GPU/CPU time.
-        var jpeg = CaptureScreenShareFrame(source, 180);
-        if (jpeg is null)
-        {
-            return;
-        }
-
-        var base64 = Convert.ToBase64String(jpeg);
-        var image = CreateBitmapImage(jpeg, 180);
-        _ = Dispatcher.BeginInvoke(
-            new Action(() =>
-            {
-                if (!_screenShareUsingEncodedWebRtc)
-                {
-                    return;
-                }
-
-                CallSelfScreenSharePreview.Source = image;
-                if (_peerScreenShareUsingWebRtc)
-                {
-                    PostScreenShareWebRtcMessage(new { type = "local-preview", jpegBase64 = base64 });
-                }
-            }),
-            DispatcherPriority.Background);
-    }
-
     private async Task ReadScreenShareEncoderLogAsync(Process process, CancellationToken cancellationToken)
     {
         try
@@ -16812,7 +18776,7 @@ public partial class MainWindow : Window
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof",
             "-frag_duration",
-            "100000",
+            "50000",
             "-flush_packets",
             "1",
             "-f",
@@ -16866,7 +18830,9 @@ public partial class MainWindow : Window
             "-bufsize",
             $"{bitrateKbps * 2}k",
             "-g",
-            fps.ToString(CultureInfo.InvariantCulture),
+            Math.Max(15, fps / 2).ToString(CultureInfo.InvariantCulture),
+            "-keyint_min",
+            Math.Max(15, fps / 2).ToString(CultureInfo.InvariantCulture),
             "-pix_fmt",
             "yuv420p"
         ]);
@@ -17875,6 +19841,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.ClickCount >= 2)
+        {
+            e.Handled = true;
+            _ = NavigateToActiveCallContextAsync();
+            return;
+        }
+
         _isDraggingScreenShareMiniPlayer = true;
         _screenShareMiniDragStart = e.GetPosition(this);
         _screenShareMiniDragStartMargin = ScreenShareMiniPlayer.Margin;
@@ -18069,6 +20042,10 @@ public partial class MainWindow : Window
             {
                 _screenShareMiniPlayerDismissed = true;
                 UpdateScreenShareMiniPlayerVisibility();
+            },
+            () =>
+            {
+                _ = Dispatcher.InvokeAsync(async () => await NavigateToActiveCallContextAsync());
             });
         _externalScreenShareMiniPlayer.UpdatePreview(
             _lastScreenShareMiniPreview,
@@ -18131,24 +20108,46 @@ public partial class MainWindow : Window
 
         var stageSuppressed = IsScreenShareStageSuppressedByOverlay();
         var stageDockedToMiniPlayer = _screenShareMiniPlayerDockedInApp && HasWatchableScreenShare();
-        var shouldShow = hasScreenShare && !_screenSharePickerSuppressesStage && !stageSuppressed && !stageDockedToMiniPlayer;
-        var showSelectedOnly = _isScreenShareFullscreenMode && _screenShareFocusTarget != ScreenShareFocusTarget.Auto;
+        var shouldShow = hasScreenShare && !_isCallVideoFocusMode && !_screenSharePickerSuppressesStage && !stageSuppressed && !stageDockedToMiniPlayer;
+        var showSelectedOnly = _isScreenShareFocusMode && _screenShareFocusTarget != ScreenShareFocusTarget.Auto;
         var showSelfTile = shouldShow && _isScreenSharing && (!showSelectedOnly || _screenShareFocusTarget == ScreenShareFocusTarget.Local);
         var showPeerTile = shouldShow && _peerScreenSharing && (!showSelectedOnly || _screenShareFocusTarget == ScreenShareFocusTarget.Peer);
         var visibleTileCount = (showSelfTile ? 1 : 0) + (showPeerTile ? 1 : 0);
         var isPeerJoinPending = _peerScreenSharing && !_isWatchingPeerScreen;
+        var hasCameraStage = _selfInCall && (_isLocalCameraOn || _isPeerCameraOn);
 
         CallScreenShareStage.Visibility = shouldShow
             ? Visibility.Visible
             : Visibility.Collapsed;
         CallSelfScreenTile.Visibility = showSelfTile ? Visibility.Visible : Visibility.Collapsed;
         CallPeerScreenTile.Visibility = showPeerTile ? Visibility.Visible : Visibility.Collapsed;
+        CallSelfScreenShareLabel.Text = string.IsNullOrWhiteSpace(_profile?.DisplayName)
+            ? "Your screen"
+            : _profile.DisplayName;
+        CallPeerScreenShareLabel.Text = string.IsNullOrWhiteSpace(_activeCallPeerContact?.DisplayName)
+            ? "Friend"
+            : _activeCallPeerContact.DisplayName;
         CallScreenShareJoinOverlay.Visibility = showPeerTile && isPeerJoinPending
             ? Visibility.Visible
             : Visibility.Collapsed;
-        CallScreenShareGrid.Columns = visibleTileCount > 1 ? 2 : 1;
-        CallScreenShareFullscreenControlButton.Visibility = shouldShow && !isPeerJoinPending ? Visibility.Visible : Visibility.Collapsed;
-        SetScreenShareWebRtcVisible(_screenShareWebRtcActive || _peerScreenShareUsingWebRtc);
+        CallScreenShareGrid.Columns = Math.Max(1, visibleTileCount);
+        CallScreenShareFullscreenControlButton.Visibility = Visibility.Collapsed;
+        var shouldShowWebRtc =
+            shouldShow &&
+            ((_isScreenSharing && _screenShareWebRtcActive) ||
+             (!isPeerJoinPending && _peerScreenShareUsingWebRtc && _isWatchingPeerScreen));
+        SetScreenShareWebRtcVisible(shouldShowWebRtc);
+
+        if (_isCallVideoFocusMode)
+        {
+            CallPanel.MaxHeight = double.PositiveInfinity;
+            CallPanel.Height = double.NaN;
+            CallContentPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
+            UpdateScreenShareActionButtons();
+            UpdateScreenShareMiniPlayerVisibility();
+            UpdateCallMediaTrayLayout();
+            return;
+        }
 
         if (_isScreenShareFocusMode && shouldShow && visibleTileCount > 0)
         {
@@ -18156,35 +20155,47 @@ public partial class MainWindow : Window
             CallPanel.Height = double.NaN;
             CallContentPanel.VerticalAlignment = System.Windows.VerticalAlignment.Top;
             var availableWidth = GetAvailableScreenShareStageWidth(minWidth: 420);
-            var reservedHeight = _isScreenShareFullscreenMode ? 0 : 112;
+            var reservedHeight = _isScreenShareFullscreenMode ? CallFocusedToolbarReserveHeight : 104;
             var availableHeight = Math.Max(280, CallPanel.ActualHeight - reservedHeight);
-            var aspect = visibleTileCount > 1 ? 32d / 9d : 16d / 9d;
-            var targetWidth = availableWidth;
-            var targetHeight = targetWidth / aspect;
-            if (targetHeight > availableHeight)
+            if (_isScreenShareFullscreenMode)
             {
-                targetHeight = availableHeight;
-                targetWidth = targetHeight * aspect;
+                CallScreenShareStage.Width = Math.Max(1, availableWidth);
+                CallScreenShareStage.Height = Math.Max(1, availableHeight);
+            }
+            else
+            {
+                const double aspect = 16d / 9d;
+                var targetWidth = availableWidth;
+                var targetHeight = targetWidth / aspect;
+                if (targetHeight > availableHeight)
+                {
+                    targetHeight = availableHeight;
+                    targetWidth = targetHeight * aspect;
+                }
+
+                CallScreenShareStage.Width = Math.Max(1, Math.Min(availableWidth, targetWidth));
+                CallScreenShareStage.Height = Math.Max(1, Math.Min(availableHeight, targetHeight));
             }
 
-            CallScreenShareStage.Width = Math.Max(1, Math.Min(availableWidth, targetWidth));
-            CallScreenShareStage.Height = Math.Max(1, Math.Min(availableHeight, targetHeight));
-            CallScreenShareStage.HorizontalAlignment = _isScreenShareFullscreenMode
-                ? System.Windows.HorizontalAlignment.Center
-                : System.Windows.HorizontalAlignment.Left;
-            CallScreenShareFocusExitButton.Visibility = Visibility.Visible;
-            CallScreenShareFullscreenButton.Visibility = Visibility.Visible;
+            CallScreenShareStage.MaxWidth = double.PositiveInfinity;
+            CallScreenShareStage.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+            CallScreenShareFocusExitButton.Visibility = Visibility.Collapsed;
+            CallScreenShareFullscreenButton.Visibility = Visibility.Collapsed;
             UpdateScreenShareActionButtons();
             UpdateScreenShareMiniPlayerVisibility();
+            UpdateCallMediaTrayLayout();
             return;
         }
 
-        CallPanel.MaxHeight = 260;
-        CallPanel.Height = shouldShow ? 260 : 150;
-        CallContentPanel.VerticalAlignment = System.Windows.VerticalAlignment.Center;
-        var compactWidth = visibleTileCount > 1 ? 536 : 268;
-        CallScreenShareStage.Width = Math.Min(compactWidth, GetAvailableScreenShareStageWidth(minWidth: 220));
-        CallScreenShareStage.Height = ScreenShareMaxCompactHeight;
+        CallPanel.MaxHeight = 620;
+        CallPanel.Height = double.NaN;
+        CallContentPanel.VerticalAlignment = System.Windows.VerticalAlignment.Stretch;
+        var compactTileCount = Math.Max(1, visibleTileCount);
+        var (tileWidth, tileHeight) = GetCompactCallMediaTileSize(compactTileCount);
+        var compactWidth = (tileWidth * compactTileCount) + (CallMediaTileGap * Math.Max(0, compactTileCount - 1)) + 12;
+        CallScreenShareStage.Width = compactWidth;
+        CallScreenShareStage.MaxWidth = compactWidth;
+        CallScreenShareStage.Height = tileHeight + 12;
         CallScreenShareStage.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
         CallScreenShareFocusExitButton.Visibility = Visibility.Collapsed;
         CallScreenShareFocusExitButton.Opacity = 0;
@@ -18192,6 +20203,31 @@ public partial class MainWindow : Window
         CallScreenShareFullscreenButton.Opacity = 0;
         UpdateScreenShareActionButtons();
         UpdateScreenShareMiniPlayerVisibility();
+        UpdateCallMediaTrayLayout();
+    }
+
+    private void UpdateCallMediaTrayLayout()
+    {
+        var showVideo = CallVideoStage.Visibility == Visibility.Visible;
+        var showScreen = CallScreenShareStage.Visibility == Visibility.Visible;
+        CallMediaTray.Visibility = showVideo || showScreen
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CallMediaTray.HorizontalAlignment = _isScreenShareFocusMode || _isCallVideoFocusMode
+            ? System.Windows.HorizontalAlignment.Center
+            : System.Windows.HorizontalAlignment.Left;
+        CallVideoStage.Margin = showVideo && showScreen && !_isCallVideoFocusMode && !_isScreenShareFocusMode
+            ? new Thickness(0, 0, CallMediaTileGap, 0)
+            : new Thickness(0);
+    }
+
+    private (double Width, double Height) GetCompactCallMediaTileSize(int tileCount)
+    {
+        var availableWidth = GetAvailableScreenShareStageWidth(minWidth: CallMediaTileMinWidth);
+        var gaps = CallMediaTileGap * Math.Max(0, tileCount - 1) + 12;
+        var width = Math.Min(CallMediaTileWidth, Math.Max(CallMediaTileMinWidth, (availableWidth - gaps) / Math.Max(1, tileCount)));
+        var height = Math.Round(width * 9d / 16d);
+        return (width, height);
     }
 
     private double GetAvailableScreenShareStageWidth(double minWidth)
@@ -18209,12 +20245,65 @@ public partial class MainWindow : Window
             return Math.Max(minWidth, panelWidth);
         }
 
-        var controlsWidth = CallControlsPanel.Visibility == Visibility.Visible
-            && !_isScreenShareFullscreenMode
-            ? CallControlsPanel.ActualWidth
-            : 0;
-        var availableWidth = panelWidth - controlsWidth - 56;
+        var availableWidth = panelWidth - 44;
         return Math.Max(1, availableWidth);
+    }
+
+    private void EnterCallVideoFocusMode()
+    {
+        if (_isCallVideoFocusMode || (!_isLocalCameraOn && !_isPeerCameraOn))
+        {
+            return;
+        }
+
+        if (_isScreenShareFocusMode)
+        {
+            ExitScreenShareFocusMode();
+        }
+
+        _isCallVideoFocusMode = true;
+        ChatHeaderRow.Height = new GridLength(0);
+        ChatHeaderLineRow.Height = new GridLength(0);
+        ComposerRow.Height = new GridLength(0);
+        CallPanelRow.Height = new GridLength(1, GridUnitType.Star);
+        CallPanelSplitterRow.Height = new GridLength(0);
+        MessagesRow.Height = new GridLength(0);
+        ChatHeaderPanel.Visibility = Visibility.Collapsed;
+        ChatHeaderLine.Visibility = Visibility.Collapsed;
+        ComposerPanel.Visibility = Visibility.Collapsed;
+        MessagesList.Visibility = Visibility.Collapsed;
+        CallPanelSplitter.Visibility = Visibility.Collapsed;
+        CallPanel.Margin = new Thickness(0);
+
+        PostCallVideoWebRtcMessage(new { type = "set-focus-mode", enabled = true });
+        SetScreenShareFullscreenMode(true);
+        UpdateCallVideoControlVisuals();
+        _ = Dispatcher.BeginInvoke(new Action(UpdateCallVideoControlVisuals), DispatcherPriority.Loaded);
+    }
+
+    private void ExitCallVideoFocusMode()
+    {
+        if (!_isCallVideoFocusMode)
+        {
+            return;
+        }
+
+        SetScreenShareFullscreenMode(false);
+        _isCallVideoFocusMode = false;
+        ChatHeaderRow.Height = new GridLength(58);
+        ChatHeaderLineRow.Height = new GridLength(1);
+        ComposerRow.Height = GridLength.Auto;
+        CallPanelRow.Height = GridLength.Auto;
+        CallPanelSplitterRow.Height = GridLength.Auto;
+        MessagesRow.Height = new GridLength(1, GridUnitType.Star);
+        ChatHeaderPanel.Visibility = Visibility.Visible;
+        ChatHeaderLine.Visibility = Visibility.Visible;
+        ComposerPanel.Visibility = _selectedContact is null ? Visibility.Collapsed : Visibility.Visible;
+        MessagesList.Visibility = Visibility.Visible;
+        CallPanelSplitter.Visibility = CallPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+        CallPanel.Margin = new Thickness(-20, -16, -20, 10);
+        PostCallVideoWebRtcMessage(new { type = "set-focus-mode", enabled = false });
+        UpdateCallVideoControlVisuals();
     }
 
     private void EnterScreenShareFocusMode()
@@ -18224,6 +20313,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _isCallVideoFocusMode = false;
         _screenShareMiniPlayerDockedInApp = false;
         _isScreenShareFocusMode = true;
         ChatHeaderRow.Height = new GridLength(0);
@@ -18264,33 +20354,26 @@ public partial class MainWindow : Window
         ChatSubtitle.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         CallTitleText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
         CallStatusText.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
-        CallParticipantsPanel.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
-        if (enabled)
-        {
-            CallNetworkPopup.IsOpen = false;
-            CallNetworkButton.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            UpdateCallNetworkButtonVisibility();
-        }
+        CallParticipantsScroll.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        UpdateCallNetworkButtonVisibility();
         ChatBodyPanel.Margin = enabled ? new Thickness(0) : new Thickness(20, 16, 20, 8);
-        CallPanel.Padding = enabled ? new Thickness(0) : new Thickness(14);
-        CallPanel.BorderThickness = enabled ? new Thickness(0) : new Thickness(1);
-        CallPanel.CornerRadius = enabled ? new CornerRadius(0) : new CornerRadius(8);
-        CallPanel.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(enabled ? "#0b0c0f" : "#25272d"));
-        CallScreenShareStage.Margin = enabled ? new Thickness(0) : new Thickness(0, 12, 0, 0);
+        CallContentPanel.Margin = enabled ? new Thickness(0, 0, 0, CallFocusedToolbarReserveHeight) : new Thickness(0, 0, 0, 70);
+        CallPanel.Padding = enabled ? new Thickness(0) : new Thickness(18);
+        CallPanel.BorderThickness = enabled ? new Thickness(0) : new Thickness(0, 0, 0, 1);
+        CallPanel.CornerRadius = new CornerRadius(0);
+        CallPanel.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(enabled ? "#0b0c0f" : "#F20D0F14"));
+        CallScreenShareStage.Margin = enabled ? new Thickness(0) : new Thickness(0, 10, 0, 0);
         CallScreenShareStage.BorderThickness = enabled ? new Thickness(0) : new Thickness(1);
-        CallScreenShareStage.CornerRadius = enabled ? new CornerRadius(0) : new CornerRadius(6);
+        CallScreenShareStage.CornerRadius = enabled ? new CornerRadius(0) : new CornerRadius(10);
         CallScreenShareGrid.Margin = enabled ? new Thickness(0) : new Thickness(6);
         ScreenShareWebView.Margin = enabled ? new Thickness(0) : new Thickness(6);
 
         if (enabled)
         {
-            if (CallContentPanel.Children.Contains(CallParticipantsPanel))
+            if (CallContentPanel.Children.Contains(CallParticipantsScroll))
             {
-                CallContentPanel.Children.Remove(CallParticipantsPanel);
-                CallContentPanel.Children.Add(CallParticipantsPanel);
+                CallContentPanel.Children.Remove(CallParticipantsScroll);
+                CallContentPanel.Children.Add(CallParticipantsScroll);
             }
 
             Grid.SetColumn(CallControlsPanel, 0);
@@ -18301,10 +20384,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (CallContentPanel.Children.Contains(CallParticipantsPanel))
+        if (CallContentPanel.Children.Contains(CallParticipantsScroll))
         {
-            CallContentPanel.Children.Remove(CallParticipantsPanel);
-            CallContentPanel.Children.Insert(2, CallParticipantsPanel);
+            CallContentPanel.Children.Remove(CallParticipantsScroll);
+            CallContentPanel.Children.Insert(2, CallParticipantsScroll);
         }
 
         Grid.SetColumn(CallControlsPanel, 1);
@@ -18363,7 +20446,7 @@ public partial class MainWindow : Window
 
         SetScreenShareFullscreenMode(false);
         _isScreenShareFocusMode = false;
-        _screenShareMiniPlayerDockedInApp = HasWatchableScreenShare();
+        _screenShareMiniPlayerDockedInApp = false;
         ChatHeaderRow.Height = new GridLength(58);
         ChatHeaderLineRow.Height = new GridLength(1);
         ComposerRow.Height = GridLength.Auto;
@@ -18376,44 +20459,27 @@ public partial class MainWindow : Window
         ComposerPanel.Visibility = _selectedContact is null ? Visibility.Collapsed : Visibility.Visible;
         MessagesList.Visibility = Visibility.Visible;
         CallPanelSplitter.Visibility = CallPanel.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
-        CallPanel.Margin = new Thickness(0, 0, 0, 10);
+        CallPanel.Margin = new Thickness(-20, -16, -20, 10);
 
         FadeFocusExitButton(show: false);
+        UpdateCallVideoControlVisuals();
         UpdateScreenShareStageVisibility();
     }
 
     private void FadeFocusExitButton(bool show)
     {
-        if (show)
-        {
-            CallScreenShareFocusExitButton.Visibility = Visibility.Visible;
-            CallScreenShareFullscreenButton.Visibility = Visibility.Visible;
-        }
-
-        var animation = new DoubleAnimation(show ? 1 : 0, TimeSpan.FromMilliseconds(show ? 180 : 120))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-
-        if (!show)
-        {
-            animation.Completed += (_, _) =>
-            {
-                if (!_isScreenShareFocusMode)
-                {
-                    CallScreenShareFocusExitButton.Visibility = Visibility.Collapsed;
-                    CallScreenShareFullscreenButton.Visibility = Visibility.Collapsed;
-                }
-            };
-        }
-
-        CallScreenShareFocusExitButton.BeginAnimation(OpacityProperty, animation);
-        CallScreenShareFullscreenButton.BeginAnimation(OpacityProperty, animation.Clone());
+        CallScreenShareFocusExitButton.BeginAnimation(OpacityProperty, null);
+        CallScreenShareFullscreenButton.BeginAnimation(OpacityProperty, null);
+        CallScreenShareFocusExitButton.Opacity = 0;
+        CallScreenShareFullscreenButton.Opacity = 0;
+        CallScreenShareFocusExitButton.Visibility = Visibility.Collapsed;
+        CallScreenShareFullscreenButton.Visibility = Visibility.Collapsed;
     }
 
     private void UpdateScreenShareControlVisuals()
     {
         ScreenShareButton.ToolTip = _isScreenSharing ? "Stop screen share" : "Share screen";
+        ScreenShareButton.Tag = _isScreenSharing ? "Stop sharing" : "Share screen";
         ScreenShareButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_isScreenSharing ? "#2f4938" : "#3a3c43"));
         ScreenShareIcon.Fill = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_isScreenSharing ? "#b7f7c8" : "#f2f3f5"));
     }
@@ -18881,6 +20947,97 @@ public partial class MainWindow : Window
         return "Call ended";
     }
 
+    private static string CreateCallInviteBody(bool isVideoRequested)
+        => isVideoRequested ? JsonSerializer.Serialize(new CallInvitePayload(true)) : "";
+
+    private static string CreateCallAcceptBody(bool acceptWithVideo)
+        => acceptWithVideo ? JsonSerializer.Serialize(new CallAcceptPayload(true)) : "";
+
+    private static bool TryReadCallInviteVideoRequested(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<CallInvitePayload>(body)?.IsVideoRequested == true;
+        }
+        catch (JsonException)
+        {
+            return body.Contains("video", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void ApplyReplyAuthorMetadata(MessageViewModel message)
+    {
+        if (!message.HasReply)
+        {
+            return;
+        }
+
+        var original = message.ReplyToMessageId is { } originalId ? FindMessage(originalId) : null;
+        if (original is not null)
+        {
+            if (string.IsNullOrWhiteSpace(message.ReplyAuthorUserId))
+            {
+                message.ReplyAuthorUserId = original.SenderUserId;
+            }
+
+            if (string.IsNullOrWhiteSpace(message.ReplyAuthorDisplayName))
+            {
+                message.ReplyAuthorDisplayName = original.SenderDisplayName;
+            }
+
+            message.ReplyAuthorAvatarKind = original.SenderAvatarKind;
+            message.ReplyAuthorAvatarPath = original.SenderAvatarPath;
+            return;
+        }
+
+        var authorId = message.ReplyAuthorUserId;
+        if (_profile is not null && string.Equals(authorId, _profile.UserId, StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(message.ReplyAuthorDisplayName))
+            {
+                message.ReplyAuthorDisplayName = _profile.DisplayName;
+            }
+
+            message.ReplyAuthorAvatarKind = _profile.AvatarKind;
+            message.ReplyAuthorAvatarPath = _profile.AvatarPath;
+            return;
+        }
+
+        var contact = _contacts.FirstOrDefault(x => !x.IsGroup && string.Equals(x.UserId, authorId, StringComparison.Ordinal));
+        if (contact is not null)
+        {
+            if (string.IsNullOrWhiteSpace(message.ReplyAuthorDisplayName))
+            {
+                message.ReplyAuthorDisplayName = contact.DisplayName;
+            }
+
+            message.ReplyAuthorAvatarKind = contact.AvatarKind;
+            message.ReplyAuthorAvatarPath = contact.AvatarPath;
+        }
+    }
+
+    private static bool TryReadCallAcceptVideo(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<CallAcceptPayload>(body)?.AcceptWithVideo == true;
+        }
+        catch (JsonException)
+        {
+            return body.Contains("video", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     private void BeginConnectedCallSession()
     {
         _callConnectedAtUtc = DateTimeOffset.UtcNow;
@@ -18943,8 +21100,17 @@ public partial class MainWindow : Window
         if (_callSelfLimitTriggered ||
             !_selfInCall ||
             _activeCallState != "connected" ||
+            contact.IsServer ||
             _callConnectedAtUtc == DateTimeOffset.MinValue ||
             DateTimeOffset.UtcNow - _callConnectedAtUtc < CallSelfSessionLimit)
+        {
+            return;
+        }
+
+        var hasRemoteParticipant = contact.IsGroup
+            ? HasRemoteGroupVoiceParticipants(contact)
+            : _peerInCall;
+        if (hasRemoteParticipant)
         {
             return;
         }
@@ -18952,14 +21118,7 @@ public partial class MainWindow : Window
         _callSelfLimitTriggered = true;
         StopAudioCall();
         _selfInCall = false;
-        _activeCallState = _peerInCall ? "left" : "";
-        if (contact.IsServer)
-        {
-            ShowCallPanel(contact, BuildGroupVoiceStatus(contact), showIncomingActions: false);
-            NetworkStatusText.Text = "You were disconnected from voice after 5 minutes. The voice channel stays joined.";
-            RefreshServerChannelsPanel();
-            return;
-        }
+        _activeCallState = "";
 
         if (contact.IsGroup)
         {
@@ -18967,14 +21126,7 @@ public partial class MainWindow : Window
         }
 
         await SendCallSignalAsync(contact, CallLeaveIntent);
-        if (_peerInCall)
-        {
-            ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
-        }
-        else
-        {
-            HideCallPanel();
-        }
+        HideCallPanel();
     }
 
     private string BuildGroupCallNotificationText(ContactViewModel group, ContactViewModel caller)
@@ -18998,6 +21150,13 @@ public partial class MainWindow : Window
         _ = _history.SaveContactAsync(senderContact);
 
         var contact = ResolveCallContact(packet, senderContact, out packet, out var callChannelId);
+        var callIntent = packet.Intent ?? "";
+        if (contact.IsServer && (IsServerVoiceIntent(callIntent) || IsLegacyServerVoiceIntent(callIntent)))
+        {
+            HandleServerVoiceSignalPacket(packet, senderContact, contact, callChannelId);
+            return;
+        }
+
         TouchActiveCallPeerSignal(packet.FromUserId);
         if (!contact.IsGroup || packet.Intent is CallInviteIntent or CallAcceptIntent or CallJoinIntent)
         {
@@ -19016,6 +21175,7 @@ public partial class MainWindow : Window
         switch (packet.Intent)
         {
             case CallInviteIntent:
+                _isVideoCallRequested = TryReadCallInviteVideoRequested(packet.Body);
                 if (contact.IsGroup && _activeCallContact?.UserId == contact.UserId && _selfInCall)
                 {
                     _peerInCall = HasRemoteGroupVoiceParticipants(contact);
@@ -19035,7 +21195,7 @@ public partial class MainWindow : Window
                     _activeCallState = "connected";
                     BeginConnectedCallSession();
                     ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
-                    _ = SendCallSignalAsync(contact, CallAcceptIntent);
+                    _ = SendCallSignalAsync(contact, CallAcceptIntent, CreateCallAcceptBody(false));
                     StartAudioCall(contact);
                     break;
                 }
@@ -19056,6 +21216,7 @@ public partial class MainWindow : Window
                 ShowIncomingCallSurface(contact, senderContact);
                 break;
             case CallAcceptIntent:
+                var acceptedWithVideo = TryReadCallAcceptVideo(packet.Body);
                 StopCallRingtone();
                 CloseIncomingCallMiniWindow(contact);
                 _activeCallContact = contact;
@@ -19065,6 +21226,10 @@ public partial class MainWindow : Window
                 BeginConnectedCallSession();
                 ShowCallPanel(contact, contact.IsGroup ? BuildGroupVoiceStatus(contact) : BuildDirectVoiceStatus(contact), showIncomingActions: false);
                 StartAudioCall(contact);
+                if (_isVideoCallRequested || acceptedWithVideo)
+                {
+                    _ = StartCallVideoAsync(enableLocalCamera: _isLocalCameraOn);
+                }
                 NetworkStatusText.Text = $"{senderContact.DisplayName} accepted the call";
                 break;
             case CallDeclineIntent:
@@ -19207,7 +21372,47 @@ public partial class MainWindow : Window
             case CallScreenWebRtcFallbackIntent:
                 HandleScreenShareWebRtcFallbackRequest(packet);
                 break;
+            case CallVideoStateIntent:
+                ApplyPeerCallVideoState(packet);
+                break;
+            case CallVideoWebRtcOfferIntent:
+            case CallVideoWebRtcAnswerIntent:
+            case CallVideoWebRtcIceIntent:
+                HandleCallVideoWebRtcSignal(packet);
+                break;
         }
+    }
+
+    private static bool IsServerVoiceIntent(string intent)
+        => intent is ServerVoiceJoinIntent or ServerVoiceLeaveIntent or ServerVoiceStateIntent;
+
+    private static bool IsLegacyServerVoiceIntent(string intent)
+        => intent is CallInviteIntent or CallAcceptIntent or CallJoinIntent or CallLeaveIntent or CallEndIntent;
+
+    private void HandleServerVoiceSignalPacket(ChatPacket packet, ContactViewModel senderContact, ContactViewModel server, string channelId)
+    {
+        var effectiveChannelId = string.IsNullOrWhiteSpace(channelId)
+            ? string.IsNullOrWhiteSpace(server.SelectedServerChannelId) ? "general" : server.SelectedServerChannelId
+            : channelId;
+        var joined = packet.Intent is not ServerVoiceLeaveIntent and not CallLeaveIntent and not CallEndIntent;
+
+        SetGroupVoiceParticipant(server, senderContact, joined, effectiveChannelId);
+        RefreshServerChannelsPanel();
+        if (_selectedContact?.UserId == server.UserId && GroupMembersPanel.Visibility == Visibility.Visible)
+        {
+            RefreshGroupMembersPanel();
+        }
+
+        if (_activeCallContact?.UserId == server.UserId && _selfInCall)
+        {
+            _peerInCall = HasRemoteGroupVoiceParticipants(server);
+            _activeCallState = "connected";
+            ShowCallPanel(server, BuildGroupVoiceStatus(server), showIncomingActions: false);
+        }
+
+        NetworkStatusText.Text = joined
+            ? $"{senderContact.DisplayName} joined voice"
+            : $"{senderContact.DisplayName} left voice";
     }
 
     private ContactViewModel ResolveCallContact(ChatPacket packet, ContactViewModel senderContact, out ChatPacket effectivePacket, out string channelId)
@@ -19297,6 +21502,19 @@ public partial class MainWindow : Window
         }
 
         var activeVoiceMemberIds = GetActiveGroupVoiceParticipantIds(contact, includeSelf: false);
+        if (contact.IsServer)
+        {
+            foreach (var memberId in activeVoiceMemberIds)
+            {
+                _activeCallPeerUserIds.Add(memberId);
+            }
+
+            _activeCallTargetUserIds = activeVoiceMemberIds
+                .Where(x => !string.Equals(x, _profile.UserId, StringComparison.Ordinal))
+                .ToArray();
+            return;
+        }
+
         var memberIds = activeVoiceMemberIds.Count > 0
             ? activeVoiceMemberIds.ToArray()
             : LoadGroupMembers(contact)
@@ -19385,6 +21603,7 @@ public partial class MainWindow : Window
         }
 
         _pendingCallPings.Clear();
+        _recentCallPingSamples.Clear();
         Interlocked.Exchange(ref _callPingSequence, 0);
         Interlocked.Exchange(ref _lastCallPingSentTicks, 0);
         Interlocked.Exchange(ref _callAudioSendSequence, 0);
@@ -19434,6 +21653,7 @@ public partial class MainWindow : Window
 
         _callNetworkMetricsTimer.Stop();
         _pendingCallPings.Clear();
+        _recentCallPingSamples.Clear();
         CallNetworkPopup.IsOpen = false;
         UpdateCallNetworkButtonVisibility();
     }
@@ -19473,13 +21693,14 @@ public partial class MainWindow : Window
         var visible = _activeCallContact is not null &&
                       _activeCallState == "connected" &&
                       _selfInCall &&
-                      !_isScreenShareFullscreenMode &&
                       CallPanel.Visibility == Visibility.Visible;
         CallNetworkButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         if (!visible)
         {
             CallNetworkPopup.IsOpen = false;
         }
+
+        UpdateCallToolbarSeparators();
     }
 
     private async Task SendCallNetworkPingIfDueAsync(ContactViewModel contact, bool force = false)
@@ -19495,6 +21716,12 @@ public partial class MainWindow : Window
         }
 
         var now = DateTimeOffset.UtcNow;
+        PruneExpiredCallPings();
+        if (_pendingCallPings.Count > 0)
+        {
+            return;
+        }
+
         var lastTicks = Interlocked.Read(ref _lastCallPingSentTicks);
         if (!force &&
             lastTicks > 0 &&
@@ -19575,8 +21802,14 @@ public partial class MainWindow : Window
 
             ApplyPeerAudioSendReport(packet.FromUserId, payload.AudioFramesSent);
             _currentCallPingMs = Math.Max(0, (DateTimeOffset.UtcNow - sentAtUtc).TotalMilliseconds);
-            _callPingSamples++;
-            _averageCallPingMs += (_currentCallPingMs - _averageCallPingMs) / _callPingSamples;
+            _recentCallPingSamples.Enqueue(_currentCallPingMs);
+            while (_recentCallPingSamples.Count > 8)
+            {
+                _recentCallPingSamples.Dequeue();
+            }
+
+            _callPingSamples = _recentCallPingSamples.Count;
+            _averageCallPingMs = _callPingSamples == 0 ? 0 : _recentCallPingSamples.Average();
             UpdateCallNetworkMetrics();
         }
         catch (JsonException ex)
@@ -19829,6 +22062,162 @@ public partial class MainWindow : Window
             : $"Check: {string.Join(", ", hints)}.";
     }
 
+    private bool ShouldShowCallPanelFor(ContactViewModel contact)
+    {
+        if (_selectedContact is null ||
+            !string.Equals(_selectedContact.UserId, contact.UserId, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!contact.IsServer)
+        {
+            return true;
+        }
+
+        var activeChannelId = string.IsNullOrWhiteSpace(_activeCallServerChannelId)
+            ? (_selfServerVoiceChannels.TryGetValue(contact.UserId, out var selfChannelId) ? selfChannelId : "")
+            : _activeCallServerChannelId;
+        return !string.IsNullOrWhiteSpace(activeChannelId) &&
+               string.Equals(_selectedContact.SelectedServerChannelId, activeChannelId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool HasNavigableActiveCallContext()
+        => _activeCallContact is not null &&
+           !string.IsNullOrWhiteSpace(_activeCallState) &&
+           (_selfInCall || _peerInCall || _isScreenSharing || _isWatchingPeerScreen || _peerScreenSharing);
+
+    private async void ProfileActivityChip_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || !HasNavigableActiveCallContext())
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await NavigateToActiveCallContextAsync();
+    }
+
+    private async Task NavigateToActiveCallContextAsync()
+    {
+        var contact = _activeCallContact;
+        if (contact is null || !HasNavigableActiveCallContext())
+        {
+            return;
+        }
+
+        _suppressHeaderCallButtonsForActiveCallNavigation = true;
+        UpdateHeaderCallButtonsVisibility();
+
+        try
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            Show();
+            Activate();
+            Topmost = true;
+            Topmost = false;
+            Focus();
+
+            if (contact.IsServer)
+            {
+                var activeChannelId = !string.IsNullOrWhiteSpace(_activeCallServerChannelId)
+                    ? _activeCallServerChannelId
+                    : _selfServerVoiceChannels.TryGetValue(contact.UserId, out var selfChannelId)
+                        ? selfChannelId
+                        : GetSelectedServerVoiceChannelId(contact);
+                if (!string.IsNullOrWhiteSpace(activeChannelId))
+                {
+                    contact.SelectedServerChannelId = activeChannelId;
+                    await _history.SaveContactAsync(contact);
+                }
+            }
+
+            await OpenContactAsync(contact);
+            RefreshServerChannelsPanel();
+            RefreshActiveCallPanelVisibility();
+        }
+        finally
+        {
+            _suppressHeaderCallButtonsForActiveCallNavigation = false;
+            RefreshActiveCallPanelVisibility();
+            UpdateHeaderCallButtonsVisibility();
+        }
+    }
+
+    private void SetCallPanelUiVisible(bool visible)
+    {
+        var wasVisible = CallPanel.Visibility == Visibility.Visible;
+        CallPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        CallPanelSplitter.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (visible && !wasVisible)
+        {
+            CallPanel.BeginAnimation(OpacityProperty, null);
+            CallPanelScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            CallPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            if (_settings.ReducedMotionEnabled)
+            {
+                CallPanel.Opacity = 1;
+                CallPanelScale.ScaleX = 1;
+                CallPanelScale.ScaleY = 1;
+            }
+            else
+            {
+                CallPanel.Opacity = 0;
+                CallPanelScale.ScaleX = 0.96;
+                CallPanelScale.ScaleY = 0.96;
+                var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+                CallPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180)) { EasingFunction = ease });
+                CallPanelScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+                CallPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+            }
+        }
+
+        if (!visible)
+        {
+            SoundboardPopup.IsOpen = false;
+            CallNetworkPopup.IsOpen = false;
+            EndCallActionPopup.IsOpen = false;
+            _screenShareMiniPlayerDockedInApp = _isWatchingPeerScreen;
+        }
+
+        UpdateScreenShareStageVisibility();
+        UpdateHeaderCallButtonsVisibility();
+    }
+
+    private void UpdateHeaderCallButtonsVisibility()
+    {
+        if (_selectedContact is null ||
+            AddFriendPanel.Visibility == Visibility.Visible ||
+            _suppressHeaderCallButtonsForActiveCallNavigation)
+        {
+            StartCallButton.Visibility = Visibility.Collapsed;
+            StartVideoCallButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var selectedIsActiveCall = _activeCallContact is not null &&
+                                   !string.IsNullOrWhiteSpace(_activeCallState) &&
+                                   string.Equals(_activeCallContact.UserId, _selectedContact.UserId, StringComparison.Ordinal);
+        var show = !_selectedContact.IsServer && CallPanel.Visibility != Visibility.Visible && !selectedIsActiveCall;
+        StartCallButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        StartVideoCallButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RefreshActiveCallPanelVisibility()
+    {
+        if (_activeCallContact is null || string.IsNullOrWhiteSpace(_activeCallState))
+        {
+            SetCallPanelUiVisible(false);
+            return;
+        }
+
+        SetCallPanelUiVisible(ShouldShowCallPanelFor(_activeCallContact));
+    }
+
     private void ShowCallPanel(ContactViewModel contact, string status, bool showIncomingActions)
     {
         RefreshActiveCallPeerCache(contact);
@@ -19841,33 +22230,90 @@ public partial class MainWindow : Window
         MicMuteButton.Visibility = !showIncomingActions && _selfInCall ? Visibility.Visible : Visibility.Collapsed;
         HeadphonesMuteButton.Visibility = !showIncomingActions && _selfInCall ? Visibility.Visible : Visibility.Collapsed;
         SoundboardButton.Visibility = !showIncomingActions && _selfInCall && _activeCallState == "connected" ? Visibility.Visible : Visibility.Collapsed;
-        ScreenShareButton.Visibility = !showIncomingActions && _selfInCall && _activeCallState == "connected" && !contact.IsGroup ? Visibility.Visible : Visibility.Collapsed;
+        var canShareScreen = !contact.IsGroup ||
+                             (contact.IsServer && HasServerPermission(contact, ServerPermissionStream, _activeCallServerChannelId));
+        ScreenShareButton.Visibility = !showIncomingActions && _selfInCall && _activeCallState == "connected" && canShareScreen ? Visibility.Visible : Visibility.Collapsed;
+        CameraToggleButton.Visibility = !showIncomingActions && _selfInCall && _activeCallState == "connected" ? Visibility.Visible : Visibility.Collapsed;
         EndCallButton.Visibility = showIncomingActions || !_selfInCall ? Visibility.Collapsed : Visibility.Visible;
-        CallPanel.Visibility = Visibility.Visible;
-        CallPanelSplitter.Visibility = Visibility.Visible;
+        SetCallPanelUiVisible(ShouldShowCallPanelFor(contact));
         UpdateCallNetworkButtonVisibility();
         UpdateCallAudioControlVisuals(animate: false);
+        UpdateCallVideoControlVisuals();
         UpdateCallNetworkMetrics();
         UpdateScreenShareControlVisuals();
         UpdateScreenShareStageVisibility();
+        UpdateCallToolbarSeparators();
     }
 
     private void UpdateScreenShareActionButtons()
     {
         var canLeaveScreen = _peerScreenSharing && _isWatchingPeerScreen;
-        var showEndCall = EndCallButton.Visibility == Visibility.Visible;
-        LeaveScreenViewButton.Visibility = showEndCall && canLeaveScreen
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        EndCallMenuButton.Visibility = Visibility.Collapsed;
+        var showCallEndActions = _activeCallContact is not null &&
+                                 _activeCallState == "connected" &&
+                                 _selfInCall;
+        if (showCallEndActions && canLeaveScreen)
+        {
+            EndCallButton.Visibility = Visibility.Collapsed;
+            LeaveScreenViewButton.Visibility = Visibility.Visible;
+            EndCallMenuButton.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            LeaveScreenViewButton.Visibility = Visibility.Collapsed;
+            EndCallMenuButton.Visibility = Visibility.Collapsed;
+            EndCallButton.Visibility = showCallEndActions ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         EndCallMenuLeaveScreenButton.Visibility = canLeaveScreen
             ? Visibility.Visible
             : Visibility.Collapsed;
-        EndCallButton.Content = "\u260e";
         EndCallButton.ToolTip = "End call";
+        EndCallButton.Tag = "End call";
         if (!canLeaveScreen)
         {
             EndCallActionPopup.IsOpen = false;
+        }
+
+        UpdateCallToolbarSeparators();
+    }
+
+    private void UpdateCallToolbarSeparators()
+    {
+        var hasAudioActions =
+            MicMuteButton.Visibility == Visibility.Visible ||
+            HeadphonesMuteButton.Visibility == Visibility.Visible;
+        var hasMediaActions =
+            CameraToggleButton.Visibility == Visibility.Visible ||
+            ScreenShareButton.Visibility == Visibility.Visible ||
+            CallScreenShareFullscreenControlButton.Visibility == Visibility.Visible;
+        var hasUtilityActions =
+            SoundboardButton.Visibility == Visibility.Visible ||
+            CallNetworkButton.Visibility == Visibility.Visible;
+
+        SetCallToolbarSeparator(CallControlsLeftSeparator, 2, hasAudioActions && hasMediaActions);
+        SetCallToolbarSeparator(CallControlsMiddleSeparator, 5, hasMediaActions && hasUtilityActions);
+
+        var hasDangerAction =
+            EndCallButton.Visibility == Visibility.Visible ||
+            LeaveScreenViewButton.Visibility == Visibility.Visible ||
+            EndCallMenuButton.Visibility == Visibility.Visible;
+        var hasLeftActions =
+            MicMuteButton.Visibility == Visibility.Visible ||
+            HeadphonesMuteButton.Visibility == Visibility.Visible ||
+            CameraToggleButton.Visibility == Visibility.Visible ||
+            ScreenShareButton.Visibility == Visibility.Visible ||
+            SoundboardButton.Visibility == Visibility.Visible ||
+            CallNetworkButton.Visibility == Visibility.Visible;
+
+        SetCallToolbarSeparator(CallControlsDangerSeparator, 8, hasDangerAction && hasLeftActions);
+    }
+
+    private void SetCallToolbarSeparator(FrameworkElement separator, int columnIndex, bool visible)
+    {
+        separator.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (columnIndex >= 0 && columnIndex < CallControlsPanel.ColumnDefinitions.Count)
+        {
+            CallControlsPanel.ColumnDefinitions[columnIndex].Width = new GridLength(visible ? 14 : 0);
         }
     }
 
@@ -19879,6 +22325,8 @@ public partial class MainWindow : Window
                 ? $"Push-to-talk: hold {GetPushToTalkKeyLabel()}"
                 : "Mute microphone";
         HeadphonesMuteButton.ToolTip = _isHeadphonesMuted ? "Undeafen" : "Deafen";
+        MicMuteButton.Tag = _isMicrophoneMuted ? "Mic off" : "Microphone";
+        HeadphonesMuteButton.Tag = _isHeadphonesMuted ? "Sound off" : "Headphones";
 
         MicMuteButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_isMicrophoneMuted ? "#4a2d31" : "#3a3c43"));
         HeadphonesMuteButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_isHeadphonesMuted ? "#4a2d31" : "#3a3c43"));
@@ -19890,16 +22338,58 @@ public partial class MainWindow : Window
 
         CallSelfMicIndicator.Visibility = _isMicrophoneMuted && _selfInCall ? Visibility.Visible : Visibility.Collapsed;
         CallSelfHeadphonesIndicator.Visibility = _isHeadphonesMuted && _selfInCall ? Visibility.Visible : Visibility.Collapsed;
-        CallSelfAudioIndicators.Visibility = (_isMicrophoneMuted || _isHeadphonesMuted) && _selfInCall ? Visibility.Visible : Visibility.Collapsed;
+        SetCallAudioIndicatorPill(
+            CallSelfAudioIndicators,
+            CallSelfAudioIndicatorsTranslate,
+            (_isMicrophoneMuted || _isHeadphonesMuted) && _selfInCall,
+            animate);
 
         var peerPreference = _activeCallContact is { IsGroup: false }
             ? _callAudioPreferences.Get(_activeCallContact.UserId)
             : null;
         var locallyMuted = peerPreference?.IsMuted == true;
         CallPeerMicIndicator.Visibility = (_peerMicrophoneMuted || locallyMuted) && _peerInCall ? Visibility.Visible : Visibility.Collapsed;
-        CallPeerMicIndicator.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(locallyMuted ? "#6d6f78" : "#e5484d"));
+        CallPeerMicIndicator.Opacity = locallyMuted && !_peerMicrophoneMuted ? 0.68 : 1;
         CallPeerHeadphonesIndicator.Visibility = _peerHeadphonesMuted && _peerInCall ? Visibility.Visible : Visibility.Collapsed;
-        CallPeerAudioIndicators.Visibility = (_peerMicrophoneMuted || _peerHeadphonesMuted || locallyMuted) && _peerInCall ? Visibility.Visible : Visibility.Collapsed;
+        SetCallAudioIndicatorPill(
+            CallPeerAudioIndicators,
+            CallPeerAudioIndicatorsTranslate,
+            (_peerMicrophoneMuted || _peerHeadphonesMuted || locallyMuted) && _peerInCall,
+            animate);
+    }
+
+    private void SetCallAudioIndicatorPill(Border pill, TranslateTransform translate, bool show, bool animate)
+    {
+        pill.BeginAnimation(OpacityProperty, null);
+        translate.BeginAnimation(TranslateTransform.YProperty, null);
+
+        if (_settings.ReducedMotionEnabled || !animate)
+        {
+            pill.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            pill.Opacity = show ? 1 : 0;
+            translate.Y = show ? 0 : 6;
+            return;
+        }
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        if (show)
+        {
+            pill.Visibility = Visibility.Visible;
+            pill.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease });
+            translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(170)) { EasingFunction = ease });
+            return;
+        }
+
+        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(120)) { EasingFunction = ease };
+        fade.Completed += (_, _) =>
+        {
+            if (pill.Opacity <= 0.01)
+            {
+                pill.Visibility = Visibility.Collapsed;
+            }
+        };
+        pill.BeginAnimation(OpacityProperty, fade);
+        translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(6, TimeSpan.FromMilliseconds(140)) { EasingFunction = ease });
     }
 
     private bool IsPushToTalkTransmitting()
@@ -20036,6 +22526,10 @@ public partial class MainWindow : Window
 
     private void ApplyCallAvatarVisuals(ContactViewModel contact)
     {
+        RefreshCallParticipantsCollection(contact);
+        var useCompactList = _callParticipants.Count > 2;
+        CallParticipantsPanel.Visibility = useCompactList ? Visibility.Collapsed : Visibility.Visible;
+        CallParticipantsList.Visibility = useCompactList ? Visibility.Visible : Visibility.Collapsed;
         CallSelfParticipant.Visibility = _selfInCall ? Visibility.Visible : Visibility.Collapsed;
         CallPeerParticipant.Visibility = _peerInCall ? Visibility.Visible : Visibility.Collapsed;
 
@@ -20045,6 +22539,129 @@ public partial class MainWindow : Window
 
         ApplyCallProfileAvatar();
         ApplyCallContactAvatar(peerContact);
+        UpdateCallParticipantsLayout();
+    }
+
+    private void RefreshCallParticipantsCollection(ContactViewModel contact)
+    {
+        _callParticipants.Clear();
+        foreach (var participant in BuildCallParticipantTiles(contact))
+        {
+            _callParticipants.Add(participant);
+        }
+    }
+
+    private IEnumerable<CallParticipantTileViewModel> BuildCallParticipantTiles(ContactViewModel contact)
+    {
+        var participants = new List<(string UserId, string DisplayName, string Color, bool MicMuted, bool HeadphonesMuted, bool VoiceActive)>();
+        if (_profile is not null && _selfInCall)
+        {
+            participants.Add((
+                _profile.UserId,
+                _profile.DisplayName,
+                _profile.AvatarColor,
+                _isMicrophoneMuted,
+                _isHeadphonesMuted,
+                IsRecentActivity(_lastLocalVoiceActivityTicks, TimeSpan.FromMilliseconds(900))));
+        }
+
+        if (contact.IsGroup)
+        {
+            var activeIds = GetActiveGroupVoiceParticipantIds(contact, includeSelf: false);
+            foreach (var userId in activeIds)
+            {
+                var participant = CreateGroupVoiceParticipantViewModel(contact, userId);
+                participants.Add((
+                    participant.UserId,
+                    participant.DisplayName,
+                    "#4e5058",
+                    false,
+                    false,
+                    IsRecentActivity(_lastPeerVoiceActivityTicks, TimeSpan.FromMilliseconds(900)) &&
+                    string.Equals(participant.UserId, _activeCallPeerContact?.UserId, StringComparison.Ordinal)));
+            }
+        }
+        else if (_peerInCall)
+        {
+            var peerContact = _activeCallPeerContact ?? contact;
+            participants.Add((
+                peerContact.UserId,
+                peerContact.DisplayName,
+                "#4e5058",
+                _peerMicrophoneMuted,
+                _peerHeadphonesMuted,
+                IsRecentActivity(_lastPeerVoiceActivityTicks, TimeSpan.FromMilliseconds(900))));
+        }
+
+        foreach (var participant in participants)
+        {
+            yield return CreateCallParticipantTile(
+                participant.UserId,
+                participant.DisplayName,
+                participant.Color,
+                participant.MicMuted,
+                participant.HeadphonesMuted,
+                participant.VoiceActive,
+                participants.Count);
+        }
+    }
+
+    private CallParticipantTileViewModel CreateCallParticipantTile(
+        string userId,
+        string displayName,
+        string avatarColor,
+        bool microphoneMuted,
+        bool headphonesMuted,
+        bool voiceActive,
+        int totalParticipants)
+    {
+        var avatarSize = totalParticipants <= 6 ? 80 : totalParticipants <= 16 ? 62 : 46;
+        var itemSize = totalParticipants <= 6 ? 92 : totalParticipants <= 16 ? 74 : 58;
+        return new CallParticipantTileViewModel(
+            userId,
+            string.IsNullOrWhiteSpace(displayName) ? FormatShortUserId(userId) : displayName,
+            GetInitials(displayName),
+            CreateBrush(avatarColor, "#4e5058"),
+            itemSize,
+            avatarSize,
+            microphoneMuted,
+            headphonesMuted,
+            voiceActive);
+    }
+
+    private void UpdateCallParticipantsLayout()
+    {
+        var visibleParticipants = Math.Max(_callParticipants.Count, (_selfInCall ? 1 : 0) + (_peerInCall ? 1 : 0));
+        if (visibleParticipants <= 0)
+        {
+            return;
+        }
+
+        var itemSize = visibleParticipants <= 6 ? 92 : visibleParticipants <= 16 ? 74 : 58;
+        var avatarSize = visibleParticipants <= 6 ? 80 : visibleParticipants <= 16 ? 62 : 46;
+        var itemHeight = visibleParticipants <= 6 ? 92 : visibleParticipants <= 16 ? 74 : 58;
+        ResizeCallParticipant(CallSelfParticipant, CallSelfAvatarClip, CallSelfVoiceActivityRing, CallSelfNoiseActivityRing, avatarSize, itemHeight);
+        ResizeCallParticipant(CallPeerParticipant, CallPeerAvatarClip, CallPeerVoiceActivityRing, CallPeerNoiseActivityRing, avatarSize, itemHeight);
+        CallParticipantsScroll.MaxHeight = visibleParticipants > 16 ? 210 : 190;
+    }
+
+    private static void ResizeCallParticipant(
+        FrameworkElement container,
+        FrameworkElement avatar,
+        FrameworkElement voiceRing,
+        FrameworkElement noiseRing,
+        double avatarSize,
+        double itemHeight)
+    {
+        container.Width = avatarSize;
+        container.Height = itemHeight;
+        avatar.Width = avatarSize;
+        avatar.Height = avatarSize;
+        voiceRing.Width = avatarSize;
+        voiceRing.Height = avatarSize;
+        noiseRing.Width = Math.Max(1, avatarSize - 8);
+        noiseRing.Height = Math.Max(1, avatarSize - 8);
+        noiseRing.Margin = new Thickness(4);
     }
 
     private void ApplyCallProfileAvatar()
@@ -20115,11 +22732,13 @@ public partial class MainWindow : Window
         SoundboardPopup.IsOpen = false;
         StopActiveSoundboard();
         StopScreenShare(sendSignal: false);
+        StopCallVideo(notifyPeer: false);
         StopAudioCall();
         StopCallNetworkMetrics();
         _activeCallContact = null;
         _activeCallPeerContact = null;
         _activeCallState = "";
+        _activeCallServerChannelId = "";
         _callConnectedAtUtc = DateTimeOffset.MinValue;
         _lastCallPeerSignalUtc = DateTimeOffset.MinValue;
         _callPeerReconnecting = false;
@@ -20149,8 +22768,7 @@ public partial class MainWindow : Window
         UpdateCallAudioControlVisuals(animate: false);
         UpdateScreenShareControlVisuals();
         UpdateScreenShareStageVisibility();
-        CallPanel.Visibility = Visibility.Collapsed;
-        CallPanelSplitter.Visibility = Visibility.Collapsed;
+        SetCallPanelUiVisible(false);
     }
 
     private void LeaveActiveCall(ContactViewModel contact)
@@ -20159,6 +22777,7 @@ public partial class MainWindow : Window
         SoundboardPopup.IsOpen = false;
         StopActiveSoundboard();
         StopScreenShare(sendSignal: true);
+        StopCallVideo(notifyPeer: true);
         StopAudioCall();
         StopCallNetworkMetrics();
         _activeCallState = _peerInCall ? "left" : "";
@@ -20236,6 +22855,138 @@ public partial class MainWindow : Window
         {
             NetworkStatusText.Text = $"Missed call from {contact.DisplayName}";
         }
+    }
+
+    private bool HasVideoPermissionForCall(ContactViewModel? contact)
+        => contact is not { IsServer: true } ||
+           HasServerPermission(contact, ServerPermissionVideo, _activeCallServerChannelId);
+
+    private bool CanUseVideoForActiveCall(out string reason)
+    {
+        reason = "";
+        if (!_selfInCall || _activeCallContact is null || _activeCallState != "connected")
+        {
+            reason = "Join the call first.";
+            return false;
+        }
+
+        if (!HasVideoPermissionForCall(_activeCallContact))
+        {
+            reason = "Your role cannot use video in this voice channel.";
+            return false;
+        }
+
+        if (!_canUseCamera)
+        {
+            reason = string.IsNullOrWhiteSpace(_cameraUnavailableReason)
+                ? "Camera unavailable."
+                : _cameraUnavailableReason;
+            return false;
+        }
+
+        return true;
+    }
+
+    private void UpdateCallVideoControlVisuals()
+    {
+        var hasVideoStage = _isLocalCameraOn || _isPeerCameraOn;
+        if (_isScreenShareFullscreenMode && !_isScreenShareFocusMode && !_isCallVideoFocusMode)
+        {
+            _isCallVideoFocusMode = true;
+            ExitCallVideoFocusMode();
+            return;
+        }
+
+        if (!hasVideoStage && _isCallVideoFocusMode)
+        {
+            ExitCallVideoFocusMode();
+            return;
+        }
+
+        var showVideoStage = hasVideoStage && _selfInCall && !_isScreenShareFocusMode;
+        CallVideoStage.Visibility = showVideoStage ? Visibility.Visible : Visibility.Collapsed;
+        CallVideoWebView.Visibility = showVideoStage ? Visibility.Visible : Visibility.Collapsed;
+        CallVideoWebView.IsHitTestVisible = showVideoStage;
+        CallVideoHitOverlay.Visibility = Visibility.Collapsed;
+        CallVideoStatusOverlay.Visibility = Visibility.Collapsed;
+        if (showVideoStage)
+        {
+            if (_isCallVideoFocusMode)
+            {
+                var availableStageWidth = GetAvailableScreenShareStageWidth(minWidth: 420);
+                var availableHeight = Math.Max(280, CallPanel.ActualHeight - CallFocusedToolbarReserveHeight);
+                CallVideoStage.Width = Math.Max(1, availableStageWidth);
+                CallVideoStage.MaxWidth = double.PositiveInfinity;
+                CallVideoStage.Height = Math.Max(1, availableHeight);
+                CallVideoStage.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+                CallVideoStage.BorderThickness = new Thickness(0);
+                CallVideoStage.CornerRadius = new CornerRadius(0);
+            }
+            else
+            {
+                var (tileWidth, tileHeight) = GetCompactCallMediaTileSize(1);
+                var framedWidth = tileWidth + 12;
+                var framedHeight = tileHeight + 12;
+                CallVideoStage.Width = framedWidth;
+                CallVideoStage.MaxWidth = framedWidth;
+                CallVideoStage.Height = framedHeight;
+                CallVideoStage.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
+                CallVideoStage.BorderThickness = new Thickness(1);
+                CallVideoStage.CornerRadius = new CornerRadius(10);
+            }
+        }
+
+        UpdateCallVideoStatusText();
+
+        if (CameraToggleButton.Visibility == Visibility.Visible)
+        {
+            var canUseVideo = CanUseVideoForActiveCall(out var reason);
+            CameraToggleButton.IsEnabled = canUseVideo || _isLocalCameraOn;
+            CameraToggleButton.ToolTip = _isLocalCameraOn
+                ? "Turn camera off"
+                : canUseVideo
+                    ? "Turn camera on"
+                    : reason;
+            CameraToggleButton.Tag = _isLocalCameraOn ? "Camera on" : "Camera";
+            CameraToggleButton.Background = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_isLocalCameraOn ? "#2d4637" : "#3a3c43"));
+            CameraToggleIcon.Fill = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(_isLocalCameraOn ? "#57f287" : "#f2f3f5"));
+            SetSlashState(CameraToggleSlash, CameraToggleIconScale, !_isLocalCameraOn, animate: false);
+        }
+
+        UpdateScreenShareStageVisibility();
+    }
+
+    private void UpdateCallVideoStatusText()
+    {
+        if (!_canUseCamera)
+        {
+            CallVideoStatusText.Text = string.IsNullOrWhiteSpace(_cameraUnavailableReason)
+                ? "Camera unavailable"
+                : _cameraUnavailableReason;
+            return;
+        }
+
+        if (_isLocalCameraOn && _isPeerCameraOn)
+        {
+            CallVideoStatusText.Text = "Both cameras are on";
+            return;
+        }
+
+        if (_isLocalCameraOn)
+        {
+            CallVideoStatusText.Text = "Your camera is on";
+            return;
+        }
+
+        if (_isPeerCameraOn)
+        {
+            CallVideoStatusText.Text = "Friend camera is on";
+            return;
+        }
+
+        CallVideoStatusText.Text = string.IsNullOrWhiteSpace(_callVideoRuntimeStatus)
+            ? "Camera ready"
+            : _callVideoRuntimeStatus;
     }
 
     private void StartAudioCall(ContactViewModel contact)
@@ -20341,6 +23092,7 @@ public partial class MainWindow : Window
 
             _ = Task.Run(() => SendCallAudioLoopAsync(contact, sendLoopStop.Token));
             _ = Task.Run(() => PlayCallAudioLoopAsync(playbackLoopStop.Token));
+            _ = ReconnectCallAudioRelayAsync(contact, "call-audio-start");
             _ = SendCallAudioPingAsync(contact, CancellationToken.None);
             _ = SendCallAudioStateAsync();
             AppLog.Write($"Call audio started: peer={contact.UserId}, input={_settings.AudioInputDeviceId}, output={_settings.AudioOutputDeviceId}");
@@ -20612,7 +23364,8 @@ public partial class MainWindow : Window
                 Interlocked.Read(ref _relayReceivedAudioFrames) == 0 &&
                 Interlocked.Exchange(ref _udpAudioWarningShown, 1) == 0)
             {
-                AppLog.Write($"Call audio relay not receiving: to={contact.UserId}, sentFrames={sent}. Check updated VPS server and audio relay connection.");
+                AppLog.Write($"Call audio relay not receiving: to={contact.UserId}, sentFrames={sent}. Re-registering audio relay route.");
+                _ = ReconnectCallAudioRelayAsync(contact, "relay-receive-zero-after-send");
                 Dispatcher.Invoke(() => NetworkStatusText.Text = "Call audio relay is not receiving from peer.");
             }
         }
@@ -20632,6 +23385,37 @@ public partial class MainWindow : Window
         {
             Interlocked.Exchange(ref _pendingAudioFrame, 0);
             Interlocked.Exchange(ref _pendingAudioFrameStartedUtcTicks, 0);
+        }
+    }
+
+    private async Task ReconnectCallAudioRelayAsync(ContactViewModel contact, string reason)
+    {
+        if (_relayClient is null ||
+            !_relayClient.IsConnected ||
+            _activeCallContact?.UserId != contact.UserId ||
+            _activeCallState != "connected" ||
+            Interlocked.Exchange(ref _audioRelayReconnectInProgress, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            await _relayClient.ReconnectAudioTcpAsync(reason, _stop.Token);
+            if (_activeCallContact?.UserId == contact.UserId &&
+                _activeCallState == "connected")
+            {
+                await SendCallAudioPingAsync(contact, CancellationToken.None);
+                await SendCallAudioStateAsync();
+            }
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            AppLog.Write(ex, $"Call audio relay re-register failed: to={contact.UserId}, reason={reason}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _audioRelayReconnectInProgress, 0);
         }
     }
 
@@ -21750,7 +24534,13 @@ public partial class MainWindow : Window
         Focus();
     }
 
-    private ChatPacket CreateProfilePacket(string toUserId, string body, string? intent = null, string? relayServerOverride = null)
+    private ChatPacket CreateProfilePacket(
+        string toUserId,
+        string body,
+        string? intent = null,
+        string? relayServerOverride = null,
+        Guid? messageIdOverride = null,
+        DateTimeOffset? sentAtUtcOverride = null)
     {
         if (_profile is null)
         {
@@ -21789,7 +24579,16 @@ public partial class MainWindow : Window
             fromAvatarOffsetX: _profile.AvatarOffsetX,
             fromAvatarOffsetY: _profile.AvatarOffsetY,
             fromAvatarVideoStartSeconds: _profile.AvatarVideoStartSeconds,
-            fromAvatarVideoDurationSeconds: _profile.AvatarVideoDurationSeconds);
+            fromAvatarVideoDurationSeconds: _profile.AvatarVideoDurationSeconds,
+            fromCustomStatus: shareStatus ? GetPublishedCustomStatus(toUserId) : "");
+        if (messageIdOverride is not null || sentAtUtcOverride is not null)
+        {
+            packet = packet with
+            {
+                MessageId = messageIdOverride ?? packet.MessageId,
+                SentAtUtc = sentAtUtcOverride ?? packet.SentAtUtc
+            };
+        }
 
         if (intent is ChatRichIntent or GroupMessageIntent or ChatEditIntent or ChatReactionIntent or ChatDeleteIntent)
         {
@@ -21857,7 +24656,7 @@ public partial class MainWindow : Window
             toRelayServer: toRelayServer,
             intent: intent,
             fromStatus: GetPublishedStatus().ToString(),
-            fromCustomStatus: GetPublishedCustomStatus());
+            fromCustomStatus: GetPublishedCustomStatus(contact.UserId));
     }
 
     private ChatPacket CreatePresencePacket(
@@ -21904,7 +24703,7 @@ public partial class MainWindow : Window
             fromAvatarOffsetY: _profile.AvatarOffsetY,
             fromAvatarVideoStartSeconds: shareAvatar ? _profile.AvatarVideoStartSeconds : 0,
             fromAvatarVideoDurationSeconds: shareAvatar ? _profile.AvatarVideoDurationSeconds : 0,
-            fromCustomStatus: publishedStatus == UserPresenceStatus.Offline ? "" : GetPublishedCustomStatus());
+            fromCustomStatus: publishedStatus == UserPresenceStatus.Offline ? "" : GetPublishedCustomStatus(contact.UserId));
     }
 
     private static string CreateControlBody(
@@ -22001,7 +24800,12 @@ public partial class MainWindow : Window
         string ThumbnailMediaId = "",
         int MediaWidth = 0,
         int MediaHeight = 0,
-        int MediaDurationMs = 0);
+        int MediaDurationMs = 0,
+        string TextPreview = "",
+        bool TextPreviewTruncated = false,
+        string OriginalFolderName = "",
+        string ReplyAuthorUserId = "",
+        string ReplyAuthorDisplayName = "");
 
     private sealed record ChatEditPayload(Guid MessageId, string Text, DateTimeOffset EditedAtUtc);
 
@@ -22063,7 +24867,12 @@ public partial class MainWindow : Window
         string InviterUserId,
         string InviterDisplayName,
         DateTimeOffset ExpiresAtUtc,
-        GroupSnapshotPayload Snapshot);
+        GroupSnapshotPayload Snapshot,
+        IReadOnlyList<ServerInviteVoiceParticipantPayload>? VoiceParticipants = null);
+
+    private sealed record ServerInviteVoiceParticipantPayload(
+        string UserId,
+        string DisplayName);
 
     private sealed record ServerModerationPayload(
         bool AuditEnabled = false,
@@ -22097,6 +24906,12 @@ public partial class MainWindow : Window
     private sealed record GroupMessagePayload(string GroupId, string Text, string ChannelId = "general");
 
     private sealed record CallGroupSignalPayload(string GroupId, string Body = "", string ChannelId = "");
+
+    private sealed record CallInvitePayload(bool IsVideoRequested);
+
+    private sealed record CallAcceptPayload(bool AcceptWithVideo);
+
+    private sealed record CallVideoStatePayload(bool CameraOn, bool Ended = false, string Reason = "");
 
     private sealed record CallAudioState(bool MicrophoneMuted, bool HeadphonesMuted);
 
@@ -22154,6 +24969,418 @@ public partial class MainWindow : Window
         public string SourceMetaText => $"{(IsScreen ? "Screen" : "App")} · {Description}";
     }
 
+    private const string CallVideoWebRtcHtml = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#0a0c12; color:#f4f6fb; font-family:"Segoe UI",system-ui,sans-serif; }
+    #stage { width:100%; height:100%; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0; padding:0; box-sizing:border-box; background:#0a0c12; }
+    #stage.single { grid-template-columns:minmax(0,1fr); }
+    .tile { position:relative; min-width:0; min-height:0; overflow:hidden; border:0; border-radius:0; background:#0a0c12; }
+    video { width:100%; height:100%; object-fit:cover; background:#0d0f14; }
+    body.focus-mode video { object-fit:contain; }
+    .label { position:absolute; left:10px; bottom:9px; padding:4px 8px; border-radius:999px; background:rgba(0,0,0,.48); color:#e8edf8; font-size:12px; font-weight:600; backdrop-filter:blur(10px); }
+    .hidden { display:none; }
+    #empty { display:grid; place-items:center; height:100%; color:#9aa3b5; font-size:13px; text-align:center; padding:18px; box-sizing:border-box; }
+  </style>
+</head>
+<body>
+  <div id="stage" class="single">
+    <div id="empty" class="hidden"></div>
+    <div id="localTile" class="tile hidden"><video id="localVideo" autoplay muted playsinline></video><div class="label">You</div></div>
+    <div id="remoteTile" class="tile hidden"><video id="remoteVideo" autoplay muted playsinline></video><div class="label">Friend</div></div>
+  </div>
+  <script>
+    const stage = document.getElementById('stage');
+    const empty = document.getElementById('empty');
+    const localTile = document.getElementById('localTile');
+    const remoteTile = document.getElementById('remoteTile');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    let pc = null;
+    let localStream = null;
+    let remoteStream = null;
+    let rtcConfig = { iceServers: [] };
+    let polite = false;
+    let makingOffer = false;
+    let ignoringOffer = false;
+    let negotiationPending = false;
+    let cameraWanted = false;
+    let cameraGeneration = 0;
+    let cameraStartPromise = null;
+    let remotePlaybackRetry = null;
+    const cameraProfiles = [
+      {
+        name: '1080p30',
+        minWidth: 1280,
+        minHeight: 720,
+        constraints: { video: { width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 }, frameRate: { ideal: 30, max: 30 } }, audio: false }
+      },
+      {
+        name: '720p30',
+        minWidth: 960,
+        minHeight: 540,
+        constraints: { video: { width: { min: 960, ideal: 1280 }, height: { min: 540, ideal: 720 }, frameRate: { ideal: 30, max: 30 } }, audio: false }
+      },
+      {
+        name: 'compatible30',
+        minWidth: 0,
+        minHeight: 0,
+        constraints: { video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }, audio: false }
+      }
+    ];
+    function post(message) { try { window.chrome.webview.postMessage(message); } catch {} }
+    function setStatus(value) { post({ type: 'state', value }); }
+    stage.addEventListener('click', event => {
+      event.preventDefault();
+      post({ type: 'focus-request' });
+    });
+    function hasRemoteVideoFrame() {
+      return remoteVideo.readyState >= 2 && remoteVideo.videoWidth > 0 && remoteVideo.videoHeight > 0;
+    }
+    function notifyRemoteVideo(type) {
+      post({
+        type,
+        width: Number(remoteVideo.videoWidth || 0),
+        height: Number(remoteVideo.videoHeight || 0),
+        readyState: Number(remoteVideo.readyState || 0)
+      });
+    }
+    function playRemoteVideo() {
+      remoteVideo.muted = true;
+      remoteVideo.autoplay = true;
+      remoteVideo.playsInline = true;
+      const play = remoteVideo.play();
+      if (play && typeof play.catch === 'function') {
+        play.catch(error => setStatus('Remote camera play retry: ' + String(error && error.message ? error.message : error)));
+      }
+    }
+    function armRemotePlaybackRetry(stream, attempt = 1) {
+      if (remotePlaybackRetry) clearTimeout(remotePlaybackRetry);
+      remotePlaybackRetry = setTimeout(() => {
+        if (remoteVideo.srcObject !== stream || hasRemoteVideoFrame()) return;
+        setStatus('Remote camera waiting for frame, retry ' + attempt);
+        remoteVideo.srcObject = null;
+        requestAnimationFrame(() => {
+          remoteVideo.srcObject = stream;
+          playRemoteVideo();
+          if (attempt < 5) armRemotePlaybackRetry(stream, attempt + 1);
+        });
+      }, attempt === 1 ? 900 : 1800);
+    }
+    function updateLayout() {
+      const hasLocal = !!localStream && localStream.getVideoTracks().some(track => track.readyState === 'live');
+      const hasRemote = !!remoteStream && remoteStream.getVideoTracks().some(track => track.readyState === 'live');
+      localTile.classList.toggle('hidden', !hasLocal);
+      remoteTile.classList.toggle('hidden', !hasRemote);
+      empty.classList.add('hidden');
+      stage.classList.toggle('single', !(hasLocal && hasRemote));
+    }
+    async function openCameraWithBestProfile() {
+      let lastError = null;
+      for (const profile of cameraProfiles) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(profile.constraints);
+          const track = stream.getVideoTracks()[0];
+          const settings = track && track.getSettings ? track.getSettings() : {};
+          const width = Number(settings.width || 0);
+          const height = Number(settings.height || 0);
+          if ((profile.minWidth && width && width < profile.minWidth) ||
+              (profile.minHeight && height && height < profile.minHeight)) {
+            for (const candidateTrack of stream.getTracks()) { try { candidateTrack.stop(); } catch {} }
+            throw new Error('Camera selected ' + width + 'x' + height + ' for ' + profile.name);
+          }
+          return { stream, profileName: profile.name, settings };
+        } catch (error) {
+          lastError = error;
+          setStatus('Camera profile skipped: ' + profile.name);
+        }
+      }
+      throw lastError || new Error('Camera could not start');
+    }
+    async function applyCameraSenderParameters(sender) {
+      try {
+        const parameters = sender.getParameters();
+        if (!parameters.encodings || parameters.encodings.length === 0) parameters.encodings = [{}];
+        parameters.encodings[0].maxBitrate = 4500000;
+        parameters.encodings[0].maxFramerate = 30;
+        parameters.encodings[0].priority = 'high';
+        parameters.degradationPreference = 'maintain-resolution';
+        await sender.setParameters(parameters);
+      } catch (error) {
+        setStatus('Camera sender parameters skipped: ' + String(error && error.message ? error.message : error));
+      }
+    }
+    async function negotiate() {
+      if (!pc || negotiationPending || makingOffer || pc.signalingState !== 'stable') return;
+      negotiationPending = true;
+      try {
+        makingOffer = true;
+        await pc.setLocalDescription();
+        post({ type: 'offer', sdp: pc.localDescription });
+      } catch (error) {
+        post({ type: 'error', message: String(error && error.message ? error.message : error) });
+      } finally {
+        makingOffer = false;
+        negotiationPending = false;
+      }
+    }
+    function ensurePeerConnection() {
+      if (pc) return pc;
+      pc = new RTCPeerConnection(rtcConfig);
+      pc.onicecandidate = event => { if (event.candidate) post({ type: 'ice', candidate: event.candidate }); };
+      pc.ontrack = event => {
+        remoteStream = event.streams && event.streams[0] ? event.streams[0] : remoteStream || new MediaStream();
+        if (!event.streams || !event.streams[0]) remoteStream.addTrack(event.track);
+        event.track.onended = () => {
+          if (remoteStream) {
+            for (const track of remoteStream.getVideoTracks()) {
+              if (track.readyState !== 'live') remoteStream.removeTrack(track);
+            }
+          }
+          if (!remoteStream || !remoteStream.getVideoTracks().some(track => track.readyState === 'live')) {
+            stopRemote();
+          } else {
+            updateLayout();
+          }
+        };
+        event.track.onunmute = () => {
+          remoteVideo.srcObject = remoteStream;
+          playRemoteVideo();
+          armRemotePlaybackRetry(remoteStream);
+        };
+        remoteVideo.srcObject = remoteStream;
+        playRemoteVideo();
+        armRemotePlaybackRetry(remoteStream);
+        updateLayout();
+        post({ type: 'remote-started' });
+        setStatus('Remote camera is on');
+      };
+      pc.onnegotiationneeded = negotiate;
+      pc.onconnectionstatechange = () => setStatus('Video connection: ' + pc.connectionState);
+      pc.oniceconnectionstatechange = () => setStatus('Video ICE: ' + pc.iceConnectionState);
+      return pc;
+    }
+    remoteVideo.onloadedmetadata = () => {
+      notifyRemoteVideo('remote-video-ready');
+      playRemoteVideo();
+    };
+    remoteVideo.oncanplay = playRemoteVideo;
+    remoteVideo.onplaying = () => {
+      if (remotePlaybackRetry) clearTimeout(remotePlaybackRetry);
+      remotePlaybackRetry = null;
+      notifyRemoteVideo('remote-playing');
+    };
+    remoteVideo.onwaiting = () => setStatus('Remote camera buffering');
+    remoteVideo.onstalled = () => setStatus('Remote camera stalled');
+    remoteVideo.onerror = () => setStatus('Remote camera video error ' + String(remoteVideo.error ? remoteVideo.error.code : 0));
+    async function probeCamera() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          post({ type: 'camera-unavailable', message: 'Camera API unavailable' });
+          return;
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasCamera = devices.some(device => device.kind === 'videoinput');
+        post(hasCamera ? { type: 'camera-available' } : { type: 'camera-unavailable', message: 'No camera found' });
+      } catch (error) {
+        post({ type: 'camera-unavailable', message: String(error && error.message ? error.message : error) });
+      }
+    }
+    async function startCamera() {
+      cameraWanted = true;
+      ensurePeerConnection();
+      if (localStream && localStream.getVideoTracks().some(track => track.readyState === 'live')) {
+        updateLayout();
+        post({ type: 'local-started' });
+        return;
+      }
+      if (cameraStartPromise) {
+        await cameraStartPromise;
+        if (cameraWanted && (!localStream || !localStream.getVideoTracks().some(track => track.readyState === 'live'))) {
+          return startCamera();
+        }
+        return;
+      }
+      const generation = ++cameraGeneration;
+      cameraStartPromise = (async () => {
+        try {
+          const camera = await openCameraWithBestProfile();
+          const stream = camera.stream;
+          if (!cameraWanted || generation !== cameraGeneration) {
+            for (const track of stream.getTracks()) { try { track.stop(); } catch {} }
+            return;
+          }
+          localStream = stream;
+          localVideo.srcObject = localStream;
+          await localVideo.play().catch(() => {});
+          for (const sender of pc.getSenders()) {
+            if (sender.track && sender.track.kind === 'video') {
+              try { pc.removeTrack(sender); } catch {}
+            }
+          }
+          for (const track of localStream.getVideoTracks()) {
+            track.contentHint = 'detail';
+            track.onended = () => {
+              if (!localStream || !localStream.getTracks().includes(track)) return;
+              cameraWanted = false;
+              localStream = null;
+              localVideo.srcObject = null;
+              updateLayout();
+              post({ type: 'local-ended' });
+            };
+            const sender = pc.addTrack(track, localStream);
+            await applyCameraSenderParameters(sender);
+          }
+          updateLayout();
+          post({
+            type: 'local-started',
+            profile: camera.profileName,
+            width: Number(camera.settings.width || 0),
+            height: Number(camera.settings.height || 0),
+            frameRate: Number(camera.settings.frameRate || 0)
+          });
+          setStatus('Your camera is on');
+        } catch (error) {
+          if (generation !== cameraGeneration || !cameraWanted) return;
+          localStream = null;
+          localVideo.srcObject = null;
+          updateLayout();
+          post({ type: 'camera-unavailable', message: String(error && error.message ? error.message : error) });
+          post({ type: 'local-stopped' });
+        }
+      })();
+      try { await cameraStartPromise; } finally { cameraStartPromise = null; }
+    }
+    async function stopLocal() {
+      cameraWanted = false;
+      cameraGeneration++;
+      if (localStream) {
+        for (const track of localStream.getTracks()) {
+          try { track.stop(); } catch {}
+        }
+      }
+      localStream = null;
+      localVideo.srcObject = null;
+      if (pc) {
+        for (const sender of pc.getSenders()) {
+          if (sender.track && sender.track.kind === 'video') {
+            try { pc.removeTrack(sender); } catch {}
+          }
+        }
+      }
+      updateLayout();
+      post({ type: 'local-stopped' });
+      setStatus('Camera off');
+    }
+    function stopRemote() {
+      if (remotePlaybackRetry) clearTimeout(remotePlaybackRetry);
+      remotePlaybackRetry = null;
+      if (remoteStream) {
+        for (const track of remoteStream.getTracks()) {
+          try { track.stop(); } catch {}
+        }
+      }
+      remoteStream = null;
+      remoteVideo.srcObject = null;
+      updateLayout();
+      post({ type: 'remote-stopped' });
+    }
+    function stopAll() {
+      if (remotePlaybackRetry) clearTimeout(remotePlaybackRetry);
+      remotePlaybackRetry = null;
+      cameraWanted = false;
+      cameraGeneration++;
+      if (localStream) {
+        for (const track of localStream.getTracks()) {
+          try { track.stop(); } catch {}
+        }
+      }
+      localStream = null;
+      remoteStream = null;
+      localVideo.srcObject = null;
+      remoteVideo.srcObject = null;
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      updateLayout();
+      setStatus('Camera off');
+    }
+    async function handleRemoteOffer(signal) {
+      ensurePeerConnection();
+      const offer = signal.sdp || signal;
+      const offerCollision = makingOffer || pc.signalingState !== 'stable';
+      ignoringOffer = !polite && offerCollision;
+      if (ignoringOffer) return;
+      await pc.setRemoteDescription(offer);
+      await pc.setLocalDescription();
+      post({ type: 'answer', sdp: pc.localDescription });
+    }
+    async function handleRemoteAnswer(signal) {
+      if (!pc) return;
+      const answer = signal.sdp || signal;
+      if (pc.signalingState !== 'stable') await pc.setRemoteDescription(answer);
+    }
+    async function handleRemoteIce(signal) {
+      if (!pc || !signal.candidate) return;
+      try {
+        await pc.addIceCandidate(signal.candidate);
+      } catch (error) {
+        if (!ignoringOffer) throw error;
+      }
+    }
+    window.chrome.webview.addEventListener('message', async event => {
+      const message = event.data || {};
+      try {
+        switch (message.type) {
+          case 'configure':
+            rtcConfig = { iceServers: Array.isArray(message.iceServers) ? message.iceServers : [], bundlePolicy: 'max-bundle', iceTransportPolicy: 'all' };
+            polite = !!message.polite;
+            ensurePeerConnection();
+            break;
+          case 'probe-camera':
+            await probeCamera();
+            break;
+          case 'start-camera':
+            await startCamera();
+            break;
+          case 'stop-local':
+            await stopLocal();
+            break;
+          case 'stop-remote':
+            stopRemote();
+            break;
+          case 'remote-offer':
+            await handleRemoteOffer(message.signal || {});
+            break;
+          case 'remote-answer':
+            await handleRemoteAnswer(message.signal || {});
+            break;
+          case 'remote-ice':
+            await handleRemoteIce(message.signal || {});
+            break;
+          case 'stop':
+            stopAll();
+            break;
+          case 'set-focus-mode':
+            document.body.classList.toggle('focus-mode', Boolean(message.enabled));
+            break;
+        }
+      } catch (error) {
+        post({ type: 'error', message: String(error && error.message ? error.message : error) });
+      }
+    });
+    updateLayout();
+    post({ type: 'ready' });
+  </script>
+</body>
+</html>
+""";
+
     private const string ScreenShareWebRtcHtml = """
 <!doctype html>
 <html>
@@ -22170,6 +25397,10 @@ public partial class MainWindow : Window
     #localTile.hidden, #remoteTile.hidden { display: none; }
     .preview.hidden, video.hidden { display: none; }
     #status { position: absolute; left: 12px; bottom: 10px; padding: 5px 8px; border-radius: 4px; background: rgba(0,0,0,.62); font-size: 11px; color: #b5bac1; pointer-events: none; }
+    #capturePrompt { position: absolute; inset: 0; display: grid; place-items: center; background: #0b0c0f; z-index: 10; }
+    #capturePrompt.hidden { display: none; }
+    #capturePromptButton { border: 0; border-radius: 6px; padding: 12px 18px; color: #fff; background: #5865f2; font: 600 14px Segoe UI, sans-serif; cursor: pointer; }
+    #capturePromptButton:hover { background: #4752c4; }
   </style>
 </head>
 <body>
@@ -22177,6 +25408,7 @@ public partial class MainWindow : Window
     <div id="localTile" class="tile hidden"><video id="localVideo" autoplay playsinline muted></video><img id="localPreviewImage" class="preview hidden" alt=""><div class="label">Your screen</div></div>
     <div id="remoteTile" class="tile hidden"><video id="remoteVideo" autoplay playsinline></video><div class="label">Friend WebRTC screen</div></div>
   </div>
+  <div id="capturePrompt" class="hidden"><button id="capturePromptButton" type="button">Choose screen or window</button></div>
   <div id="status">WebRTC ready</div>
   <script>
     const stage = document.getElementById('stage');
@@ -22185,6 +25417,8 @@ public partial class MainWindow : Window
     const localVideo = document.getElementById('localVideo');
     const localPreviewImage = document.getElementById('localPreviewImage');
     const remoteVideo = document.getElementById('remoteVideo');
+    const capturePrompt = document.getElementById('capturePrompt');
+    const capturePromptButton = document.getElementById('capturePromptButton');
     const statusBox = document.getElementById('status');
     const defaultIceServers = [
       { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
@@ -22227,8 +25461,19 @@ public partial class MainWindow : Window
     let encodedLiveEdgeTimer = null;
     let screenShareFocusTarget = 'auto';
     let localPreviewActive = false;
+    let localEncodedPreviewActive = false;
+    let localEncodedMediaSource = null;
+    let localEncodedSourceBuffer = null;
+    let localEncodedAppendQueue = [];
+    let localEncodedObjectUrl = null;
+    let localEncodedLiveEdgeTimer = null;
     let remoteAudioMuted = false;
     let remoteAudioVolume = 1;
+    let pendingDirectShareOptions = null;
+    const encodedTargetLagSeconds = 0.36;
+    const encodedCatchupLagSeconds = 0.8;
+    const encodedJumpLagSeconds = 1.4;
+    const encodedTrimBehindSeconds = 4.0;
 
     function post(message) {
       if (window.chrome && chrome.webview) chrome.webview.postMessage(message);
@@ -22237,11 +25482,30 @@ public partial class MainWindow : Window
       statusBox.textContent = value;
       post({ type: 'state', value });
     }
-    stage.addEventListener('dblclick', event => {
+    function requestFocusFromPointerEvent(event) {
       event.preventDefault();
       const tile = event.target && event.target.closest ? event.target.closest('.tile') : null;
+      if (!tile || tile.classList.contains('hidden')) return;
       const target = tile === localTile ? 'local' : tile === remoteTile ? 'remote' : 'auto';
       post({ type: 'focus-request', target });
+    }
+    function showCapturePrompt(options) {
+      pendingDirectShareOptions = options;
+      capturePrompt.classList.remove('hidden');
+      post({ type: 'capture-gesture-required' });
+    }
+    function hideCapturePrompt() {
+      capturePrompt.classList.add('hidden');
+    }
+    capturePromptButton.addEventListener('click', () => {
+      const options = pendingDirectShareOptions;
+      pendingDirectShareOptions = null;
+      hideCapturePrompt();
+      if (options) startShare(options, true);
+    });
+    stage.addEventListener('click', requestFocusFromPointerEvent);
+    stage.addEventListener('dblclick', event => {
+      requestFocusFromPointerEvent(event);
     });
     stage.addEventListener('contextmenu', event => {
       event.preventDefault();
@@ -22281,13 +25545,13 @@ public partial class MainWindow : Window
     }
     function updateLayout() {
       const hasLocalStream = localStream && localStream.getTracks().some(t => t.readyState === 'live');
-      const hasLocal = hasLocalStream || localPreviewActive;
+      const hasLocal = hasLocalStream || localPreviewActive || localEncodedPreviewActive;
       const wantsLocal = screenShareFocusTarget === 'local';
       const wantsRemote = screenShareFocusTarget === 'remote';
       const showLocal = hasLocal && !(wantsRemote && remoteStarted);
       const showRemote = remoteStarted && !(wantsLocal && hasLocal);
-      localVideo.classList.toggle('hidden', !hasLocalStream);
-      localPreviewImage.classList.toggle('hidden', hasLocalStream || !localPreviewActive);
+      localVideo.classList.toggle('hidden', !hasLocalStream && !localEncodedPreviewActive);
+      localPreviewImage.classList.toggle('hidden', hasLocalStream || localEncodedPreviewActive || !localPreviewActive);
       localTile.classList.toggle('hidden', !showLocal);
       remoteTile.classList.toggle('hidden', !showRemote);
       stage.classList.toggle('both', showLocal && showRemote);
@@ -22296,6 +25560,99 @@ public partial class MainWindow : Window
       localPreviewActive = false;
       localPreviewImage.removeAttribute('src');
       updateLayout();
+    }
+    function getBufferedLiveState(video) {
+      if (!video || video.buffered.length === 0) return null;
+      const lastRange = video.buffered.length - 1;
+      const rangeStart = video.buffered.start(lastRange);
+      const liveEdge = video.buffered.end(lastRange);
+      const lag = liveEdge - Number(video.currentTime || 0);
+      return { lastRange, rangeStart, liveEdge, lag };
+    }
+    function trimOldBufferedRanges(sourceBuffer, video) {
+      if (!sourceBuffer || sourceBuffer.updating || !video || video.buffered.length === 0) return;
+      try {
+        const trimEnd = Math.max(0, Number(video.currentTime || 0) - encodedTrimBehindSeconds);
+        if (trimEnd <= 0) return;
+        const firstStart = video.buffered.start(0);
+        const firstEnd = video.buffered.end(0);
+        if (firstEnd < trimEnd || trimEnd - firstStart > encodedTrimBehindSeconds) {
+          sourceBuffer.remove(firstStart, Math.min(firstEnd, trimEnd));
+        }
+      } catch {}
+    }
+    function resetLocalEncodedPreview() {
+      if (localEncodedLiveEdgeTimer) clearInterval(localEncodedLiveEdgeTimer);
+      localEncodedLiveEdgeTimer = null;
+      localEncodedAppendQueue = [];
+      localEncodedSourceBuffer = null;
+      if (localEncodedMediaSource && localEncodedMediaSource.readyState === 'open') {
+        try { localEncodedMediaSource.endOfStream(); } catch {}
+      }
+      localEncodedMediaSource = null;
+      localEncodedPreviewActive = false;
+      localVideo.pause();
+      localVideo.removeAttribute('src');
+      if (localEncodedObjectUrl) URL.revokeObjectURL(localEncodedObjectUrl);
+      localEncodedObjectUrl = null;
+      try { localVideo.load(); } catch {}
+      updateLayout();
+    }
+    function keepLocalEncodedPreviewLive() {
+      if (!localEncodedSourceBuffer || localVideo.buffered.length === 0) return;
+      try {
+        const state = getBufferedLiveState(localVideo);
+        if (!state) return;
+        if (state.lag > encodedJumpLagSeconds) {
+          localVideo.currentTime = Math.max(state.rangeStart, state.liveEdge - encodedTargetLagSeconds);
+        }
+        localVideo.playbackRate = state.lag > encodedCatchupLagSeconds && state.lag <= encodedJumpLagSeconds ? 1.06 : 1;
+        if (localVideo.paused) localVideo.play().catch(() => {});
+        trimOldBufferedRanges(localEncodedSourceBuffer, localVideo);
+      } catch {}
+    }
+    function flushLocalEncodedPreviewQueue() {
+      if (!localEncodedSourceBuffer || localEncodedSourceBuffer.updating || localEncodedAppendQueue.length === 0) return;
+      try {
+        localEncodedSourceBuffer.appendBuffer(localEncodedAppendQueue.shift());
+      } catch (error) {
+        setStatus('Local H.264 preview skipped: ' + String(error && error.message ? error.message : error));
+        localEncodedAppendQueue = [];
+      }
+    }
+    function startLocalEncodedPreview(mimeType) {
+      resetLocalEncodedPreview();
+      encodedMimeType = mimeType || encodedMimeType;
+      localEncodedMediaSource = new MediaSource();
+      localEncodedObjectUrl = URL.createObjectURL(localEncodedMediaSource);
+      localVideo.muted = true;
+      localVideo.autoplay = true;
+      localVideo.playsInline = true;
+      localVideo.srcObject = null;
+      localVideo.src = localEncodedObjectUrl;
+      localEncodedPreviewActive = true;
+      updateLayout();
+      localEncodedLiveEdgeTimer = setInterval(keepLocalEncodedPreviewLive, 200);
+      localEncodedMediaSource.addEventListener('sourceopen', () => {
+        try {
+          if (!MediaSource.isTypeSupported(encodedMimeType)) throw new Error('Unsupported local preview stream: ' + encodedMimeType);
+          localEncodedSourceBuffer = localEncodedMediaSource.addSourceBuffer(encodedMimeType);
+          localEncodedSourceBuffer.mode = 'segments';
+          localEncodedSourceBuffer.addEventListener('updateend', () => {
+            keepLocalEncodedPreviewLive();
+            flushLocalEncodedPreviewQueue();
+          });
+          flushLocalEncodedPreviewQueue();
+          localVideo.play().catch(() => {});
+        } catch (error) {
+          setStatus('Local H.264 preview unavailable: ' + String(error && error.message ? error.message : error));
+        }
+      }, { once: true });
+    }
+    function appendLocalEncodedPreviewChunk(bytes) {
+      if (!localEncodedPreviewActive || !bytes) return;
+      localEncodedAppendQueue.push(bytes.slice());
+      flushLocalEncodedPreviewQueue();
     }
     function handleLocalPreview(message) {
       const base64 = message.jpegBase64 || message.JpegBase64 || '';
@@ -22410,8 +25767,14 @@ public partial class MainWindow : Window
       clearRemoteDecodeWatchdog();
       notifyRemotePlaying();
     };
-    remoteVideo.onwaiting = () => post({ type: 'state', value: 'WebRTC remote video waiting' });
-    remoteVideo.onstalled = () => post({ type: 'state', value: 'WebRTC remote video stalled' });
+    remoteVideo.onwaiting = () => {
+      const state = getBufferedLiveState(remoteVideo);
+      post({ type: 'state', value: 'WebRTC remote video waiting; mediaLag=' + (state ? state.lag.toFixed(3) : '0') + '; appendQueue=' + encodedAppendQueue.length + '; bufferedAmount=' + (encodedSendChannel ? encodedSendChannel.bufferedAmount : 0) });
+    };
+    remoteVideo.onstalled = () => {
+      const state = getBufferedLiveState(remoteVideo);
+      post({ type: 'state', value: 'WebRTC remote video stalled; mediaLag=' + (state ? state.lag.toFixed(3) : '0') + '; appendQueue=' + encodedAppendQueue.length });
+    };
     remoteVideo.onerror = () => {
       const error = remoteVideo.error;
       notifyRemoteDecodeFailed('HTML video error code=' + String(error ? error.code : 0));
@@ -22491,14 +25854,38 @@ public partial class MainWindow : Window
       try {
         const parameters = sender.getParameters();
         if (!parameters.encodings || parameters.encodings.length === 0) parameters.encodings = [{}];
-        parameters.encodings[0].maxBitrate = Number(options.maxBitrate || 12000000);
-        parameters.encodings[0].maxFramerate = Number(options.frameRate || 60);
-        parameters.encodings[0].priority = 'high';
+        const encoding = parameters.encodings[0];
+        encoding.maxBitrate = Number(options.maxBitrate || 12000000);
+        encoding.maxFramerate = Number(options.frameRate || 60);
+        encoding.priority = 'high';
+        const settings = sender.track && sender.track.getSettings ? sender.track.getSettings() : {};
+        const sourceHeight = Number(settings.height || 0);
+        const targetHeight = Number(options.height || 0);
+        if (sourceHeight > 0 && targetHeight > 0 && sourceHeight > targetHeight) {
+          encoding.scaleResolutionDownBy = Math.max(1, sourceHeight / targetHeight);
+        }
         parameters.degradationPreference = Number(options.frameRate || 60) >= 45 ? 'maintain-framerate' : 'maintain-resolution';
         await sender.setParameters(parameters);
       } catch (error) {
         post({ type: 'state', value: 'WebRTC sender parameters skipped: ' + String(error && error.message ? error.message : error) });
       }
+    }
+
+    async function configureDisplayTrack(track, options) {
+      const frameRate = Number(options.frameRate || 60);
+      const width = Number(options.width || 2560);
+      const height = Number(options.height || 1440);
+      track.contentHint = options.contentHint || 'detail';
+      try {
+        await track.applyConstraints({
+          width: { ideal: width },
+          height: { ideal: height, max: height },
+          frameRate: { ideal: frameRate, max: frameRate }
+        });
+      } catch (error) {
+        post({ type: 'state', value: 'Display track constraints skipped: ' + String(error && error.message ? error.message : error) });
+      }
+      return track.getSettings ? track.getSettings() : {};
     }
     function removeLocalSenders() {
       if (!pc) return;
@@ -22528,6 +25915,7 @@ public partial class MainWindow : Window
     function resetEncodedSender() {
       encodedSendQueue = [];
       encodedSendBusy = false;
+      resetLocalEncodedPreview();
       reportEncodedPressure(false);
       if (encodedSendChannel) {
         const channel = encodedSendChannel;
@@ -22701,15 +26089,14 @@ public partial class MainWindow : Window
     function keepEncodedPlaybackLive() {
       if (!encodedSourceBuffer || remoteVideo.buffered.length === 0) return;
       try {
-        const lastRange = remoteVideo.buffered.length - 1;
-        const rangeStart = remoteVideo.buffered.start(lastRange);
-        const liveEdge = remoteVideo.buffered.end(lastRange);
-        const lag = liveEdge - Number(remoteVideo.currentTime || 0);
-        if (lag > 0.55) {
-          remoteVideo.currentTime = Math.max(rangeStart, liveEdge - 0.12);
+        const state = getBufferedLiveState(remoteVideo);
+        if (!state) return;
+        if (state.lag > encodedJumpLagSeconds) {
+          remoteVideo.currentTime = Math.max(state.rangeStart, state.liveEdge - encodedTargetLagSeconds);
         }
-        remoteVideo.playbackRate = lag > 0.22 && lag <= 0.55 ? 1.08 : 1;
+        remoteVideo.playbackRate = state.lag > encodedCatchupLagSeconds && state.lag <= encodedJumpLagSeconds ? 1.06 : 1;
         if (remoteVideo.paused) playRemoteVideo();
+        trimOldBufferedRanges(encodedSourceBuffer, remoteVideo);
       } catch {}
     }
     function reportEncodedPressure(high) {
@@ -22721,7 +26108,9 @@ public partial class MainWindow : Window
     function enqueueEncodedLocalChunk(message) {
       const base64 = message.dataBase64 || message.DataBase64 || '';
       if (!base64) return;
-      encodedSendQueue.push(base64ToBytes(base64));
+      const bytes = base64ToBytes(base64);
+      encodedSendQueue.push(bytes);
+      appendLocalEncodedPreviewChunk(bytes);
       if (encodedSendQueue.length >= 8) reportEncodedPressure(true);
       flushEncodedSendQueue();
     }
@@ -22871,6 +26260,7 @@ public partial class MainWindow : Window
         resetEncodedSender();
         clearLocalPreview();
         setupEncodedChannel(pc.createDataChannel('screen-h264', { ordered: true }), true, options);
+        startLocalEncodedPreview(options.mimeType || encodedMimeType);
         updateLayout();
         post({ type: 'encoded-local-started' });
         await createAndSendOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false }, 'Encoded WebRTC offer sent');
@@ -22880,7 +26270,7 @@ public partial class MainWindow : Window
         setStatus('Encoded WebRTC error');
       }
     }
-    async function startShare(options) {
+    async function startShare(options, fromGesture) {
       try {
         if (options.iceServers) configure(options);
         await ensurePeerConnection();
@@ -22898,10 +26288,13 @@ public partial class MainWindow : Window
           },
           audio: options.audioMuted ? false : true
         });
+        pendingDirectShareOptions = null;
+        hideCapturePrompt();
         localVideo.srcObject = localStream;
         localVideo.play().catch(() => {});
+        let displaySettings = {};
         for (const track of localStream.getVideoTracks()) {
-          track.contentHint = options.contentHint || 'detail';
+          displaySettings = await configureDisplayTrack(track, options);
           const sender = pc.addTrack(track, localStream);
           await applySenderParameters(sender, options);
           track.onended = () => post({ type: 'local-ended' });
@@ -22910,9 +26303,23 @@ public partial class MainWindow : Window
           pc.addTrack(track, localStream);
         }
         updateLayout();
-        post({ type: 'local-started' });
+        post({
+          type: 'local-started',
+          mode: 'direct-track',
+          width: Number(displaySettings.width || 0),
+          height: Number(displaySettings.height || 0),
+          frameRate: Number(displaySettings.frameRate || 0),
+          displaySurface: displaySettings.displaySurface || ''
+        });
         await createAndSendOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true }, 'WebRTC offer sent');
       } catch (error) {
+        const name = String(error && error.name ? error.name : '');
+        const message = String(error && error.message ? error.message : error);
+        if (!fromGesture && (name === 'InvalidStateError' || message.toLowerCase().includes('user gesture'))) {
+          showCapturePrompt(options);
+          setStatus('Confirm screen selection');
+          return;
+        }
         post({ type: 'error', message: String(error && error.message ? error.message : error) });
         setStatus('WebRTC error');
       }
@@ -22962,6 +26369,8 @@ public partial class MainWindow : Window
       }
     }
     function stopLocalTracks(notify) {
+      pendingDirectShareOptions = null;
+      hideCapturePrompt();
       if (localStream) {
         for (const track of localStream.getTracks()) {
           if (!notify) track.onended = null;
@@ -23042,6 +26451,7 @@ public partial class MainWindow : Window
             bitrateKbps = Math.max(0, ((bytes - previous.bytes) * 8) / seconds / 1000);
             if (!fps && frames >= previous.frames) fps = (frames - previous.frames) / seconds;
           }
+          const mediaState = getBufferedLiveState(remoteVideo);
           previousStats.set(report.id, { timestamp, bytes, frames });
           post({
             type: 'stats',
@@ -23052,7 +26462,11 @@ public partial class MainWindow : Window
             packetsLost: Number(report.packetsLost || 0),
             rttMs,
             packetLoss,
-            qualityLimitationReason: report.qualityLimitationReason || ''
+            qualityLimitationReason: report.qualityLimitationReason || '',
+            mediaLag: mediaState ? Number(mediaState.lag || 0) : 0,
+            appendQueue: encodedAppendQueue.length,
+            sendQueue: encodedSendQueue.length,
+            bufferedAmount: encodedSendChannel ? Number(encodedSendChannel.bufferedAmount || 0) : 0
           });
         });
       } catch (error) {
@@ -23889,7 +27303,7 @@ public partial class MainWindow : Window
         if (ShouldUseInlineIncomingCall(contact))
         {
             CloseIncomingCallMiniWindow(contact);
-            ShowCallPanel(contact, "Incoming call", showIncomingActions: true);
+            ShowCallPanel(contact, _isVideoCallRequested ? "Incoming video call" : "Incoming call", showIncomingActions: true);
             return;
         }
 
@@ -23925,7 +27339,7 @@ public partial class MainWindow : Window
             if (_incomingCallMiniContact is not null &&
                 string.Equals(_incomingCallMiniContact.UserId, contact.UserId, StringComparison.Ordinal))
             {
-                _incomingCallMiniWindow.UpdateCall(contact, caller);
+                _incomingCallMiniWindow.UpdateCall(contact, caller, _isVideoCallRequested, _canUseCamera, _cameraUnavailableReason);
                 return true;
             }
 
@@ -23933,10 +27347,11 @@ public partial class MainWindow : Window
         }
 
         var window = new IncomingCallMiniWindow();
-        window.AcceptRequested += IncomingCallMiniWindow_OnAcceptRequested;
+        window.AcceptAudioRequested += IncomingCallMiniWindow_OnAcceptAudioRequested;
+        window.AcceptVideoRequested += IncomingCallMiniWindow_OnAcceptVideoRequested;
         window.DeclineRequested += IncomingCallMiniWindow_OnDeclineRequested;
         window.Closed += IncomingCallMiniWindow_OnClosed;
-        window.UpdateCall(contact, caller);
+        window.UpdateCall(contact, caller, _isVideoCallRequested, _canUseCamera, _cameraUnavailableReason);
         window.PlaceNearWorkArea();
         _incomingCallMiniWindow = window;
         _incomingCallMiniContact = contact;
@@ -23944,7 +27359,18 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private async void IncomingCallMiniWindow_OnAcceptRequested(object? sender, EventArgs e)
+    private void UpdateIncomingCallMiniWindow()
+    {
+        if (_incomingCallMiniWindow is null || _incomingCallMiniContact is null)
+        {
+            return;
+        }
+
+        var caller = _activeCallPeerContact;
+        _incomingCallMiniWindow.UpdateCall(_incomingCallMiniContact, caller, _isVideoCallRequested, _canUseCamera, _cameraUnavailableReason);
+    }
+
+    private async void IncomingCallMiniWindow_OnAcceptAudioRequested(object? sender, EventArgs e)
     {
         var contact = _incomingCallMiniContact;
         if (contact is null)
@@ -23953,7 +27379,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        await AcceptIncomingCallFromMiniWindowAsync(contact);
+        await AcceptIncomingCallFromMiniWindowAsync(contact, acceptWithVideo: false);
+    }
+
+    private async void IncomingCallMiniWindow_OnAcceptVideoRequested(object? sender, EventArgs e)
+    {
+        var contact = _incomingCallMiniContact;
+        if (contact is null)
+        {
+            CloseIncomingCallMiniWindow();
+            return;
+        }
+
+        await AcceptIncomingCallFromMiniWindowAsync(contact, acceptWithVideo: true);
     }
 
     private async void IncomingCallMiniWindow_OnDeclineRequested(object? sender, EventArgs e)
@@ -23976,14 +27414,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        window.AcceptRequested -= IncomingCallMiniWindow_OnAcceptRequested;
+        window.AcceptAudioRequested -= IncomingCallMiniWindow_OnAcceptAudioRequested;
+        window.AcceptVideoRequested -= IncomingCallMiniWindow_OnAcceptVideoRequested;
         window.DeclineRequested -= IncomingCallMiniWindow_OnDeclineRequested;
         window.Closed -= IncomingCallMiniWindow_OnClosed;
         _incomingCallMiniWindow = null;
         _incomingCallMiniContact = null;
     }
 
-    private async Task AcceptIncomingCallFromMiniWindowAsync(ContactViewModel contact)
+    private async Task AcceptIncomingCallFromMiniWindowAsync(ContactViewModel contact, bool acceptWithVideo)
     {
         if (_activeCallContact is null ||
             !string.Equals(_activeCallContact.UserId, contact.UserId, StringComparison.Ordinal) ||
@@ -23997,7 +27436,7 @@ public partial class MainWindow : Window
         StopCallRingtone();
         RestoreWindowForIncomingCall();
         await OpenContactAsync(contact);
-        await AcceptCallAsync(contact);
+        await AcceptCallAsync(contact, acceptWithVideo);
     }
 
     private async Task DeclineIncomingCallFromMiniWindowAsync(ContactViewModel contact)
@@ -24034,7 +27473,8 @@ public partial class MainWindow : Window
         }
 
         var window = _incomingCallMiniWindow;
-        window.AcceptRequested -= IncomingCallMiniWindow_OnAcceptRequested;
+        window.AcceptAudioRequested -= IncomingCallMiniWindow_OnAcceptAudioRequested;
+        window.AcceptVideoRequested -= IncomingCallMiniWindow_OnAcceptVideoRequested;
         window.DeclineRequested -= IncomingCallMiniWindow_OnDeclineRequested;
         window.Closed -= IncomingCallMiniWindow_OnClosed;
         _incomingCallMiniWindow = null;
@@ -24299,7 +27739,7 @@ public partial class MainWindow : Window
     private UserPresenceStatus GetPublishedStatus()
         => GetCurrentStatus();
 
-    private string GetPublishedCustomStatus()
+    private string GetPublishedCustomStatus(string? targetUserId = null)
     {
         if (GetCurrentStatus() == UserPresenceStatus.Offline)
         {
@@ -24308,23 +27748,30 @@ public partial class MainWindow : Window
 
         var explicitStatus = _customStatusText.Trim();
         return string.IsNullOrWhiteSpace(explicitStatus)
-            ? BuildActivityText()
+            ? BuildActivityText(targetUserId: targetUserId)
             : explicitStatus;
     }
 
-    private string BuildActivityText(bool compact = false)
+    private string BuildActivityText(bool compact = false, string? targetUserId = null)
     {
         if (!_settings.ActivityEnabled)
         {
             return "";
         }
 
-        if (_settings.ActivityShowCalls && _activeCallContact is not null && !string.IsNullOrWhiteSpace(_activeCallState))
+        var canPublishCallScopedActivity = CanPublishCallActivityTo(targetUserId);
+        if (canPublishCallScopedActivity &&
+            _settings.ActivityShowCalls &&
+            _selfInCall &&
+            _activeCallContact is not null &&
+            string.Equals(_activeCallState, "connected", StringComparison.OrdinalIgnoreCase))
         {
             return L("activity.inCall");
         }
 
-        if (_settings.ActivityShowScreenShare && (_isWatchingPeerScreen || _isScreenSharing))
+        if (canPublishCallScopedActivity &&
+            _settings.ActivityShowScreenShare &&
+            (_isWatchingPeerScreen || _isScreenSharing))
         {
             return L("activity.screenShare");
         }
@@ -24342,6 +27789,47 @@ public partial class MainWindow : Window
         return "";
     }
 
+    private bool CanPublishCallActivityTo(string? targetUserId)
+    {
+        if (string.IsNullOrWhiteSpace(targetUserId))
+        {
+            return _settings.CallActivityVisibility is "Everyone" or "Friends";
+        }
+
+        return _settings.CallActivityVisibility switch
+        {
+            "Everyone" => true,
+            "Friends" => IsKnownDirectFriend(targetUserId),
+            "Selected" => _settings.ActivitySelectedFriendIds.Any(x => string.Equals(x, targetUserId, StringComparison.Ordinal)),
+            "Participants" => IsActiveCallParticipant(targetUserId),
+            _ => false
+        };
+    }
+
+    private bool IsKnownDirectFriend(string userId)
+        => _contacts.Any(x => !x.IsGroup && string.Equals(x.UserId, userId, StringComparison.Ordinal));
+
+    private bool IsActiveCallParticipant(string userId)
+    {
+        if (_profile is not null && string.Equals(_profile.UserId, userId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (_activeCallContact is null || string.IsNullOrWhiteSpace(_activeCallState))
+        {
+            return false;
+        }
+
+        if (!_activeCallContact.IsGroup)
+        {
+            return string.Equals(_activeCallContact.UserId, userId, StringComparison.Ordinal);
+        }
+
+        RefreshActiveCallPeerCache(_activeCallContact);
+        return _activeCallTargetUserIds.Any(x => string.Equals(x, userId, StringComparison.Ordinal));
+    }
+
     private string GetOwnActivityChipText()
     {
         if (GetCurrentStatus() == UserPresenceStatus.Offline)
@@ -24351,7 +27839,7 @@ public partial class MainWindow : Window
 
         var explicitStatus = _customStatusText.Trim();
         return string.IsNullOrWhiteSpace(explicitStatus)
-            ? BuildActivityText(compact: true)
+            ? BuildActivityText(compact: true, targetUserId: _profile?.UserId)
             : explicitStatus;
     }
 
@@ -24377,7 +27865,7 @@ public partial class MainWindow : Window
     private string FormatOwnStatusText()
     {
         var status = GetCurrentStatusText();
-        var customStatus = GetPublishedCustomStatus();
+        var customStatus = GetPublishedCustomStatus(_profile?.UserId);
         return string.IsNullOrWhiteSpace(customStatus)
             ? status
             : $"{customStatus} · {status}";
@@ -24822,7 +28310,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var (avatarPath, startSeconds) = GetAvatarPlaybackInfo(element.DataContext);
+        var (avatarPath, startSeconds) = GetAvatarPlaybackInfo(element.DataContext, element.Tag);
 
         if (element.Source is null && !string.IsNullOrWhiteSpace(avatarPath))
         {
@@ -24855,12 +28343,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        var (_, startSeconds) = GetAvatarPlaybackInfo(element.DataContext);
+        var (_, startSeconds) = GetAvatarPlaybackInfo(element.DataContext, element.Tag);
         TryRestartAvatarVideo(element, TimeSpan.FromSeconds(startSeconds));
     }
 
-    private static (string? Path, double StartSeconds) GetAvatarPlaybackInfo(object? dataContext)
-        => dataContext switch
+    private static (string? Path, double StartSeconds) GetAvatarPlaybackInfo(object? dataContext, object? tag = null)
+    {
+        if (tag is string { } marker &&
+            string.Equals(marker, "ReplyAuthor", StringComparison.Ordinal) &&
+            dataContext is MessageViewModel replyMessage)
+        {
+            return (replyMessage.ReplyAuthorAvatarPath, 0);
+        }
+
+        return dataContext switch
         {
             ContactViewModel contact => (contact.AvatarPath, Math.Max(0, contact.AvatarVideoStartSeconds)),
             FriendRequestViewModel request => (request.AvatarPath, Math.Max(0, request.AvatarVideoStartSeconds)),
@@ -24869,6 +28365,7 @@ public partial class MainWindow : Window
             MiniProfileViewModel miniProfile => (miniProfile.AvatarPath, 0),
             _ => (null, 0)
         };
+    }
 
     private static void TryRestartAvatarVideo(MediaElement element, TimeSpan position)
     {
@@ -24948,16 +28445,76 @@ public partial class MainWindow : Window
         return initials.Length <= 2 ? initials : initials[..2];
     }
 
+    private sealed class CallParticipantTileViewModel
+    {
+        public CallParticipantTileViewModel(
+            string userId,
+            string displayName,
+            string initials,
+            SolidColorBrush avatarBrush,
+            double itemSize,
+            double avatarSize,
+            bool microphoneMuted,
+            bool headphonesMuted,
+            bool voiceActive)
+        {
+            UserId = userId;
+            DisplayName = displayName;
+            Initials = string.IsNullOrWhiteSpace(initials) ? "?" : initials;
+            AvatarBrush = avatarBrush;
+            ItemSize = itemSize;
+            AvatarSize = avatarSize;
+            AvatarRadius = avatarSize / 2d;
+            AvatarCenter = new System.Windows.Point(AvatarRadius, AvatarRadius);
+            CornerRadius = new CornerRadius(AvatarRadius);
+            InitialsFontSize = avatarSize <= 46 ? 11 : avatarSize <= 62 ? 12 : 14;
+            VoiceActivityOpacity = voiceActive ? 1 : 0;
+            AudioIndicatorVisibility = microphoneMuted || headphonesMuted ? Visibility.Visible : Visibility.Collapsed;
+            MicOffVisibility = microphoneMuted ? Visibility.Visible : Visibility.Collapsed;
+            HeadphonesOffVisibility = headphonesMuted ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public string UserId { get; }
+
+        public string DisplayName { get; }
+
+        public string Initials { get; }
+
+        public SolidColorBrush AvatarBrush { get; }
+
+        public double ItemSize { get; }
+
+        public double AvatarSize { get; }
+
+        public double AvatarRadius { get; }
+
+        public System.Windows.Point AvatarCenter { get; }
+
+        public CornerRadius CornerRadius { get; }
+
+        public double InitialsFontSize { get; }
+
+        public double VoiceActivityOpacity { get; }
+
+        public Visibility AudioIndicatorVisibility { get; }
+
+        public Visibility MicOffVisibility { get; }
+
+        public Visibility HeadphonesOffVisibility { get; }
+    }
+
     private sealed class ScreenShareMiniPlayerWindow : Window
     {
         private readonly Action _dismissRequested;
+        private readonly Action _openRequested;
         private readonly System.Windows.Controls.Image _image;
         private readonly Border _placeholder;
         private readonly TextBlock _title;
 
-        public ScreenShareMiniPlayerWindow(Action dismissRequested)
+        public ScreenShareMiniPlayerWindow(Action dismissRequested, Action openRequested)
         {
             _dismissRequested = dismissRequested;
+            _openRequested = openRequested;
             Width = ScreenShareMiniPlayerWidth;
             Height = ScreenShareMiniPlayerHeight;
             WindowStyle = WindowStyle.None;
@@ -25030,6 +28587,12 @@ public partial class MainWindow : Window
             MouseLeftButtonDown += (_, e) =>
             {
                 e.Handled = true;
+                if (e.ClickCount >= 2)
+                {
+                    _openRequested();
+                    return;
+                }
+
                 try
                 {
                     DragMove();

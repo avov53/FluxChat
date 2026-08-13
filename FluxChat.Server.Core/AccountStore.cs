@@ -20,23 +20,29 @@ public sealed class AccountStore
     private const int MaxArchivedPacketBytes = 2 * 1024 * 1024;
     private const long MaxArchiveBytesPerUser = 1024L * 1024 * 1024;
     private const int MaxPendingPacketsPerRecipient = 5000;
-    private const int MaxMediaBytes = 25 * 1024 * 1024;
+    private const int MaxMediaBytes = 1024 * 1024 * 1024;
     private const int MaxAvatarBytes = 8 * 1024 * 1024;
     private const int DefaultMaxServersPerVps = 5;
     private const int MinMaxServersPerVps = 1;
     private const int MaxMaxServersPerVps = 1000;
+    private const long DefaultMaxFileUploadBytes = 10L * 1024 * 1024;
+    private const long MinMaxFileUploadBytes = 1L * 1024 * 1024;
+    private const long MaxMaxFileUploadBytes = 1024L * 1024 * 1024;
     private const string MaxServersPerVpsSettingKey = "max_servers_per_vps";
+    private const string MaxFileUploadBytesSettingKey = "max_file_upload_bytes";
     private const string ServerPermissionViewChannel = "view_channel";
     private const string ServerPermissionReadHistory = "read_history";
     private const string ServerPermissionSendMessages = "send_messages";
     private const string ServerPermissionAddReactions = "add_reactions";
     private const string ServerPermissionJoinVoice = "join_voice";
     private const string ServerPermissionSpeak = "speak";
+    private const string ServerPermissionVideo = "video";
     private const string ServerPermissionCreateInvite = "create_invite";
     private const string ServerPermissionManageChannels = "manage_channels";
     private const string ServerPermissionManageRoles = "manage_roles";
     private const string ServerPermissionManageMembers = "manage_members";
     private const string ServerPermissionManageServer = "manage_server";
+    private const string ServerPermissionDeleteMessages = "delete_messages";
     private readonly string _connectionString;
     private readonly ServerDataProtector _protector;
     private readonly string _serverId;
@@ -193,11 +199,16 @@ public sealed class AccountStore
             CREATE TABLE IF NOT EXISTS fc_account_preferences (
                 account_id TEXT PRIMARY KEY REFERENCES fc_accounts(user_id) ON DELETE CASCADE,
                 activity_visibility TEXT NOT NULL DEFAULT 'Friends',
+                call_activity_visibility TEXT NOT NULL DEFAULT 'Participants',
                 activity_selected_friend_ids_json TEXT NOT NULL DEFAULT '[]',
                 updated_at_utc TIMESTAMPTZ NOT NULL
             );
             """, connection);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var preferencesMigration = new NpgsqlCommand("""
+            ALTER TABLE fc_account_preferences ADD COLUMN IF NOT EXISTS call_activity_visibility TEXT NOT NULL DEFAULT 'Participants';
+            """, connection);
+        await preferencesMigration.ExecuteNonQueryAsync(cancellationToken);
         await using var migration = new NpgsqlCommand("ALTER TABLE fc_accounts ADD COLUMN IF NOT EXISTS is_login_conflicted BOOLEAN NOT NULL DEFAULT FALSE;", connection);
         await migration.ExecuteNonQueryAsync(cancellationToken);
         await using var avatarMigration = new NpgsqlCommand("""
@@ -582,6 +593,23 @@ public sealed class AccountStore
         return await CountCreatedServersAsync(connection, "", cancellationToken);
     }
 
+    public async Task<long> GetMaxFileUploadBytesAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        return await GetMaxFileUploadBytesAsync(connection, cancellationToken);
+    }
+
+    public async Task SetMaxFileUploadBytesAsync(long value, CancellationToken cancellationToken = default)
+    {
+        if (value is < MinMaxFileUploadBytes or > MaxMaxFileUploadBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "File upload limit must be between 1 MB and 1024 MB.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await UpsertServerSettingAsync(connection, MaxFileUploadBytesSettingKey, value.ToString(CultureInfo.InvariantCulture), cancellationToken);
+    }
+
     public async Task<AccountResult> UpsertContactAsync(AccountSession current, AccountSyncedContact contact, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(contact.UserId))
@@ -633,6 +661,15 @@ public sealed class AccountStore
                parsed is >= MinMaxServersPerVps and <= MaxMaxServersPerVps
             ? parsed
             : DefaultMaxServersPerVps;
+    }
+
+    private async Task<long> GetMaxFileUploadBytesAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var value = await GetServerSettingAsync(connection, MaxFileUploadBytesSettingKey, cancellationToken);
+        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+               parsed is >= MinMaxFileUploadBytes and <= MaxMaxFileUploadBytes
+            ? parsed
+            : DefaultMaxFileUploadBytes;
     }
 
     private async Task<string> GetServerSettingAsync(NpgsqlConnection connection, string key, CancellationToken cancellationToken)
@@ -783,6 +820,11 @@ public sealed class AccountStore
                                       HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
                 ? AccountResult.Success("Server voice signal accepted.")
                 : AccountResult.Denied("Sender cannot join this server voice channel."),
+            ServerPacketKind.Video => HasServerPermission(server, packet.FromUserId, ServerPermissionJoinVoice, request.ChannelId) &&
+                                      HasServerPermission(server, packet.FromUserId, ServerPermissionVideo, request.ChannelId) &&
+                                      HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
+                ? AccountResult.Success("Server video signal accepted.")
+                : AccountResult.Denied("Sender cannot use video in this server voice channel."),
             ServerPacketKind.Invite => IsServerInviteStillValid(packet.Body) &&
                                        HasServerPermission(server, packet.FromUserId, ServerPermissionCreateInvite, request.ChannelId) &&
                                        HasServerPermission(server, packet.FromUserId, ServerPermissionViewChannel, request.ChannelId)
@@ -1074,7 +1116,12 @@ public sealed class AccountStore
             messages = await command.ExecuteNonQueryAsync(cancellationToken);
         }
         var storageKeys = new List<string>();
-        await using (var selectMedia = new NpgsqlCommand("SELECT storage_key FROM fc_media_objects WHERE created_at_utc < @cutoff;", connection, transaction))
+        await using (var selectMedia = new NpgsqlCommand("""
+            SELECT storage_key
+            FROM fc_media_objects
+            WHERE created_at_utc < @cutoff
+              AND media_kind IN ('message', 'image', 'gif', 'file');
+            """, connection, transaction))
         {
             selectMedia.Parameters.AddWithValue("cutoff", cutoff);
             await using var reader = await selectMedia.ExecuteReaderAsync(cancellationToken);
@@ -1084,7 +1131,11 @@ public sealed class AccountStore
             }
         }
         long media;
-        await using (var command = new NpgsqlCommand("DELETE FROM fc_media_objects WHERE created_at_utc < @cutoff;", connection, transaction))
+        await using (var command = new NpgsqlCommand("""
+            DELETE FROM fc_media_objects
+            WHERE created_at_utc < @cutoff
+              AND media_kind IN ('message', 'image', 'gif', 'file');
+            """, connection, transaction))
         {
             command.Parameters.AddWithValue("cutoff", cutoff);
             media = await command.ExecuteNonQueryAsync(cancellationToken);
@@ -1358,6 +1409,183 @@ public sealed class AccountStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<AccountResult> DeleteArchivedMessageAsync(AccountSession current, AccountMessageDeleteRequest request, CancellationToken cancellationToken = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var mediaIds = (request.MediaIds ?? [])
+            .Select(x => Guid.TryParse(x, out var id) ? id : Guid.Empty)
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToList();
+        var storageKeysToDelete = new List<string>();
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        string? senderUserId = null;
+        string? recipientUserId = null;
+        string? conversationId = null;
+        await using (var select = new NpgsqlCommand("""
+            SELECT sender_user_id, recipient_user_id, conversation_id
+            FROM fc_message_archive
+            WHERE message_id=@messageId AND deleted_at_utc IS NULL
+            FOR UPDATE;
+            """, connection, transaction))
+        {
+            select.Parameters.AddWithValue("messageId", request.MessageId);
+            await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                senderUserId = reader.GetString(0);
+                recipientUserId = reader.GetString(1);
+                conversationId = reader.GetString(2);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(senderUserId))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return AccountResult.Success("Message already deleted.");
+        }
+
+        var isAuthor = string.Equals(senderUserId, current.UserId, StringComparison.Ordinal);
+        if (!isAuthor && !await CanDeleteServerMessageAsync(connection, transaction, request, recipientUserId ?? "", conversationId ?? "", current.UserId, cancellationToken))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return AccountResult.Denied("Only the sender or a server moderator can delete this message.");
+        }
+
+        await using (var deleteArchive = new NpgsqlCommand("DELETE FROM fc_message_archive WHERE message_id=@messageId;", connection, transaction))
+        {
+            deleteArchive.Parameters.AddWithValue("messageId", request.MessageId);
+            await deleteArchive.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var mediaId in mediaIds)
+        {
+            await using var selectMedia = new NpgsqlCommand("""
+                SELECT storage_key
+                FROM fc_media_objects
+                WHERE media_id=@mediaId
+                  AND owner_user_id=@ownerUserId
+                  AND deleted_at_utc IS NULL
+                  AND media_kind IN ('message', 'image', 'gif', 'file', 'video');
+                """, connection, transaction);
+            selectMedia.Parameters.AddWithValue("mediaId", mediaId);
+            selectMedia.Parameters.AddWithValue("ownerUserId", senderUserId);
+            await using (var reader = await selectMedia.ExecuteReaderAsync(cancellationToken))
+            {
+                if (await reader.ReadAsync(cancellationToken))
+                {
+                    storageKeysToDelete.Add(reader.GetString(0));
+                }
+            }
+
+            await using var deleteMedia = new NpgsqlCommand("""
+                DELETE FROM fc_media_objects
+                WHERE media_id=@mediaId
+                  AND owner_user_id=@ownerUserId
+                  AND media_kind IN ('message', 'image', 'gif', 'file', 'video');
+                """, connection, transaction);
+            deleteMedia.Parameters.AddWithValue("mediaId", mediaId);
+            deleteMedia.Parameters.AddWithValue("ownerUserId", senderUserId);
+            await deleteMedia.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await AuditAsync(connection, transaction, "message-delete", current.UserId, senderUserId, $"message={request.MessageId:N}", cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        foreach (var storageKey in storageKeysToDelete)
+        {
+            TryDeleteMediaFile(storageKey);
+        }
+
+        return new AccountResult(true, "Message deleted.");
+    }
+
+    public async Task<AccountResult> EditArchivedMessageAsync(AccountSession current, AccountMessageEditRequest request, CancellationToken cancellationToken = default)
+    {
+        var packet = request.ReplacementPacket;
+        if (packet.MessageId != request.MessageId)
+        {
+            return AccountResult.Denied("Replacement packet message id does not match.");
+        }
+
+        if (!string.Equals(packet.FromUserId, current.UserId, StringComparison.Ordinal))
+        {
+            return AccountResult.Denied("Only the sender may edit this message.");
+        }
+
+        if (string.IsNullOrWhiteSpace(packet.ToUserId))
+        {
+            return AccountResult.Denied("Replacement packet recipient is required.");
+        }
+
+        var serialized = JsonSerializer.SerializeToUtf8Bytes(packet);
+        if (serialized.Length > MaxArchivedPacketBytes)
+        {
+            return AccountResult.Denied($"Edited message exceeds the {MaxArchivedPacketBytes / 1024 / 1024} MB archive limit.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        string? senderUserId = null;
+        string? conversationId = null;
+        await using (var select = new NpgsqlCommand("""
+            SELECT sender_user_id, conversation_id
+            FROM fc_message_archive
+            WHERE message_id=@messageId AND deleted_at_utc IS NULL
+            FOR UPDATE;
+            """, connection, transaction))
+        {
+            select.Parameters.AddWithValue("messageId", request.MessageId);
+            await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                senderUserId = reader.GetString(0);
+                conversationId = reader.GetString(1);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(senderUserId))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return AccountResult.Denied("Message was not found in server history.");
+        }
+
+        if (!string.Equals(senderUserId, current.UserId, StringComparison.Ordinal))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return AccountResult.Denied("Only the sender may edit this message.");
+        }
+
+        var replacementConversationId = CreateConversationId(packet.FromUserId, packet.ToUserId);
+        if (!string.Equals(conversationId, replacementConversationId, StringComparison.Ordinal))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return AccountResult.Denied("Edited message cannot be moved to another conversation.");
+        }
+
+        var protectedPayload = _protector.Protect(serialized);
+        await using (var update = new NpgsqlCommand("""
+            UPDATE fc_message_archive
+            SET encrypted_payload=@payload,
+                metadata_json=@metadata
+            WHERE message_id=@messageId;
+            """, connection, transaction))
+        {
+            update.Parameters.AddWithValue("payload", protectedPayload);
+            update.Parameters.AddWithValue("metadata", string.IsNullOrWhiteSpace(packet.Intent) ? "" : packet.Intent);
+            update.Parameters.AddWithValue("messageId", request.MessageId);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await AuditAsync(connection, transaction, "message-edit", current.UserId, current.UserId, $"message={request.MessageId:N}", cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new AccountResult(true, "Message edited.");
+    }
+
     public async Task StorePendingPacketAsync(ChatPacket packet, CancellationToken cancellationToken = default)
     {
         var serialized = JsonSerializer.SerializeToUtf8Bytes(packet);
@@ -1500,7 +1728,7 @@ public sealed class AccountStore
     {
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand("""
-            SELECT activity_visibility, activity_selected_friend_ids_json
+            SELECT activity_visibility, activity_selected_friend_ids_json, call_activity_visibility
             FROM fc_account_preferences
             WHERE account_id=@accountId;
             """, connection);
@@ -1508,18 +1736,20 @@ public sealed class AccountStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
-            return new AccountPreferences("Friends", []);
+            return new AccountPreferences("Friends", [], "Participants");
         }
 
         var selected = JsonSerializer.Deserialize<List<string>>(reader.GetString(1)) ?? [];
         return new AccountPreferences(
             NormalizeActivityVisibility(reader.GetString(0)),
-            selected.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).Take(500).ToArray());
+            selected.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).Take(500).ToArray(),
+            NormalizeCallActivityVisibility(reader.GetString(2)));
     }
 
     public async Task<AccountResult> SavePreferencesAsync(AccountSession current, AccountPreferencesUpdateRequest request, CancellationToken cancellationToken = default)
     {
         var visibility = NormalizeActivityVisibility(request.ActivityVisibility);
+        var callVisibility = NormalizeCallActivityVisibility(request.CallActivityVisibility);
         var selected = (request.ActivitySelectedFriendIds ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim())
@@ -1531,15 +1761,17 @@ public sealed class AccountStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand("""
             INSERT INTO fc_account_preferences (
-                account_id, activity_visibility, activity_selected_friend_ids_json, updated_at_utc)
-            VALUES (@accountId, @visibility, @selected, @updatedAtUtc)
+                account_id, activity_visibility, call_activity_visibility, activity_selected_friend_ids_json, updated_at_utc)
+            VALUES (@accountId, @visibility, @callVisibility, @selected, @updatedAtUtc)
             ON CONFLICT (account_id) DO UPDATE SET
                 activity_visibility=EXCLUDED.activity_visibility,
+                call_activity_visibility=EXCLUDED.call_activity_visibility,
                 activity_selected_friend_ids_json=EXCLUDED.activity_selected_friend_ids_json,
                 updated_at_utc=EXCLUDED.updated_at_utc;
             """, connection);
         command.Parameters.AddWithValue("accountId", current.UserId);
         command.Parameters.AddWithValue("visibility", visibility);
+        command.Parameters.AddWithValue("callVisibility", callVisibility);
         command.Parameters.AddWithValue("selected", JsonSerializer.Serialize(selected));
         command.Parameters.AddWithValue("updatedAtUtc", DateTimeOffset.UtcNow);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -1552,6 +1784,18 @@ public sealed class AccountStore
             "everyone" => "Everyone",
             "selected" => "Selected",
             _ => "Friends"
+        };
+
+    private static string NormalizeCallActivityVisibility(string? value)
+        => value?.Trim().ToLowerInvariant() switch
+        {
+            "everyone" => "Everyone",
+            "friends" => "Friends",
+            "selected" => "Selected",
+            "noone" => "NoOne",
+            "no_one" => "NoOne",
+            "none" => "NoOne",
+            _ => "Participants"
         };
 
     public async Task<AccountResult> MarkReadAsync(AccountSession current, AccountMarkReadRequest request, CancellationToken cancellationToken = default)
@@ -1936,6 +2180,35 @@ public sealed class AccountStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private async Task<bool> CanDeleteServerMessageAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        AccountMessageDeleteRequest request,
+        string recipientUserId,
+        string conversationId,
+        string actorUserId,
+        CancellationToken cancellationToken)
+    {
+        var serverId = (request.ServerId ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(serverId))
+        {
+            return false;
+        }
+
+        if (!string.Equals(recipientUserId, serverId, StringComparison.Ordinal) &&
+            !string.Equals(conversationId, CreateGroupConversationId(serverId), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var server = await LoadAuthoritativeServerContactAsync(connection, serverId, cancellationToken, transaction);
+        return server is not null &&
+               IsServerContact(server) &&
+               IsServerMember(server, actorUserId) &&
+               !IsServerBanned(server, actorUserId) &&
+               HasServerPermission(server, actorUserId, ServerPermissionDeleteMessages, request.ChannelId);
+    }
+
     private static bool TryExtractServerPacket(ChatPacket packet, out ServerPacketAccessRequest request)
     {
         request = default;
@@ -1952,7 +2225,19 @@ public sealed class AccountStore
             return false;
         }
 
-        if (intent is "call-invite" or "call-accept" or "call-join" or "call-screen-start")
+        if (intent is "call-video-state" or "call-video-webrtc-offer" or "call-video-webrtc-answer" or "call-video-webrtc-ice")
+        {
+            if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
+            {
+                TryReadJsonString(packet.Body, "ChannelId", out var channelId);
+                request = new ServerPacketAccessRequest(groupId, string.IsNullOrWhiteSpace(channelId) ? "general" : channelId, ServerPacketKind.Video);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (intent is "call-invite" or "call-accept" or "call-join" or "call-leave" or "call-end" or "call-screen-start" or "call-screen-webrtc-offer" or "call-screen-webrtc-answer" or "call-screen-webrtc-ice" or "call-screen-webrtc-fallback" or "server-voice-join" or "server-voice-leave" or "server-voice-state")
         {
             if (TryReadJsonString(packet.Body, "GroupId", out var groupId))
             {
@@ -1968,8 +2253,12 @@ public sealed class AccountStore
         {
             if (TryReadJsonString(packet.Body, "ServerId", out var serverId))
             {
+                TryReadJsonString(packet.Body, "ChannelType", out var channelType);
                 TryReadJsonString(packet.Body, "ChannelId", out var channelId);
-                request = new ServerPacketAccessRequest(serverId, string.IsNullOrWhiteSpace(channelId) ? "general" : channelId, ServerPacketKind.Invite);
+                var accessChannelId = string.Equals(channelType, "server", StringComparison.OrdinalIgnoreCase)
+                    ? ""
+                    : string.IsNullOrWhiteSpace(channelId) ? "general" : channelId;
+                request = new ServerPacketAccessRequest(serverId, accessChannelId, ServerPacketKind.Invite);
                 return true;
             }
 
@@ -2096,7 +2385,8 @@ public sealed class AccountStore
     private async Task<AccountSyncedContact?> LoadAuthoritativeServerContactAsync(
         NpgsqlConnection connection,
         string serverId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
     {
         if (string.IsNullOrWhiteSpace(serverId))
         {
@@ -2108,7 +2398,7 @@ public sealed class AccountStore
             FROM fc_contacts
             WHERE contact_user_id=@serverId AND is_deleted=FALSE
             ORDER BY updated_at_utc DESC;
-            """, connection);
+            """, connection, transaction);
         command.Parameters.AddWithValue("serverId", serverId.Trim());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -2371,6 +2661,7 @@ public sealed class AccountStore
         if (permissions.Contains(ServerPermissionJoinVoice))
         {
             permissions.Add(ServerPermissionSpeak);
+            permissions.Add(ServerPermissionVideo);
         }
 
         return role with { Permissions = string.Join(',', permissions.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) };
@@ -2380,9 +2671,9 @@ public sealed class AccountStore
         =>
         [
             new("owner", "Owner", "#FBBF24", "all", 0, true, ShowSeparately: true),
-            new("admin", "Admin", "#60A5FA", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_server,manage_channels,manage_roles,manage_members,delete_messages", 1, false, ShowSeparately: true),
-            new("moderator", "Moderator", "#34D399", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,create_invite,manage_members,delete_messages", 2, false, ShowSeparately: true),
-            new("member", "Member", "#9CA3AF", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak", 100, false)
+            new("admin", "Admin", "#60A5FA", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,video,create_invite,manage_server,manage_channels,manage_roles,manage_members,delete_messages", 1, false, ShowSeparately: true),
+            new("moderator", "Moderator", "#34D399", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,stream,video,create_invite,manage_members,delete_messages", 2, false, ShowSeparately: true),
+            new("member", "Member", "#9CA3AF", "view_channel,read_history,send_messages,add_reactions,attach_files,join_voice,speak,video", 100, false)
         ];
 
     private static ServerModerationPayload LoadServerModeration(AccountSyncedContact server)
@@ -2670,6 +2961,7 @@ internal enum ServerPacketKind
     Message,
     HistoryRead,
     Voice,
+    Video,
     Invite,
     ManageMembers,
     ManageServer,

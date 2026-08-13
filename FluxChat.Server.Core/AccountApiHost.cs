@@ -10,6 +10,7 @@ public sealed class AccountApiHost : IAsyncDisposable
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const int MaxJsonRequestBytes = (3 * 1024 * 1024);
     private const int MaxMediaRequestBytes = 25 * 1024 * 1024;
+    private const int MaxFileRequestBytes = 1024 * 1024 * 1024;
     private readonly SemaphoreSlim _requestSlots = new(96, 96);
     private readonly RequestRateLimiter _rateLimiter = new();
     private readonly HttpListener _listener = new();
@@ -390,12 +391,38 @@ public sealed class AccountApiHost : IAsyncDisposable
                     await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
                     return;
                 }
+                case "/api/v1/messages/delete":
+                {
+                    var session = await RequireSessionAsync(context, cancellationToken);
+                    if (session is null) return;
+                    if (!await TryRateLimitAsync(context, $"message-delete:{session.UserId}", 120, TimeSpan.FromMinutes(10), cancellationToken)) return;
+                    var request = await ReadJsonAsync<AccountMessageDeleteRequest>(context, cancellationToken);
+                    var result = await _store.DeleteArchivedMessageAsync(session, request, cancellationToken);
+                    await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
+                    return;
+                }
+                case "/api/v1/messages/edit":
+                {
+                    var session = await RequireSessionAsync(context, cancellationToken);
+                    if (session is null) return;
+                    if (!await TryRateLimitAsync(context, $"message-edit:{session.UserId}", 120, TimeSpan.FromMinutes(10), cancellationToken)) return;
+                    var request = await ReadJsonAsync<AccountMessageEditRequest>(context, cancellationToken);
+                    var result = await _store.EditArchivedMessageAsync(session, request, cancellationToken);
+                    await WriteJsonAsync(context, result.Accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, result, cancellationToken);
+                    return;
+                }
                 case "/api/v1/media/upload":
                 {
                     var session = await RequireSessionAsync(context, cancellationToken);
                     if (session is null) return;
                     if (!await TryRateLimitAsync(context, $"media:{session.UserId}", 120, TimeSpan.FromMinutes(10), cancellationToken)) return;
-                    var bytes = await ReadBytesAsync(context, MaxMediaRequestBytes, cancellationToken);
+                    var uploadLimit = await _store.GetMaxFileUploadBytesAsync(cancellationToken);
+                    if (context.Request.ContentLength64 > uploadLimit)
+                    {
+                        throw new InvalidDataException($"File is larger than this VPS upload limit: {FormatBytes(uploadLimit)}.");
+                    }
+
+                    var bytes = await ReadBytesAsync(context, (int)Math.Min(uploadLimit, MaxFileRequestBytes), cancellationToken);
                     var kind = context.Request.Headers["X-FluxChat-Media-Kind"] ?? "message";
                     var fileName = context.Request.Headers["X-FluxChat-File-Name"] ?? "media.bin";
                     var mimeType = context.Request.ContentType ?? "application/octet-stream";
@@ -545,6 +572,20 @@ public sealed class AccountApiHost : IAsyncDisposable
         }
 
         return buffer.ToArray();
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        var value = (double)Math.Max(0, bytes);
+        var index = 0;
+        while (value >= 1024 && index < suffixes.Length - 1)
+        {
+            value /= 1024;
+            index++;
+        }
+
+        return $"{value:0.#} {suffixes[index]}";
     }
 
     private async Task<AccountSession?> RequireSessionAsync(HttpListenerContext context, CancellationToken cancellationToken)

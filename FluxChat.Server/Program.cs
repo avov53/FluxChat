@@ -101,30 +101,35 @@ internal sealed class RelayServer
 
     public async Task RunAsync(AccountApiHost? accountApi = null)
     {
-        accountApi?.Start();
-        if (accountApi is not null)
-        {
-            Console.WriteLine("FluxChat account API started.");
-        }
-
         var (listener, audioUdp) = await BindRelaySocketsWithRetryAsync(FluxChatPorts.Relay, TimeSpan.FromSeconds(90));
         using (listener.Server)
         using (audioUdp)
         {
-        _ = Task.Run(SweepStaleSessionsAsync);
-        _ = Task.Run(() => RunAudioUdpRelayAsync(audioUdp));
-        _ = Task.Run(RunMaintenanceAsync);
-        _ = Task.Run(RunDiagnosticsAsync);
-        Console.WriteLine($"FluxChat relay listening on TCP {FluxChatPorts.Relay}");
-        Console.WriteLine($"FluxChat call audio relay listening on UDP {FluxChatPorts.Relay}");
-        Console.WriteLine($"Database: {ServerPaths.DatabasePath}");
-        Console.WriteLine(string.IsNullOrWhiteSpace(_federationKey)
-            ? "Federation disabled. Set FLUXCHAT_FEDERATION_KEY to enable server-to-server delivery."
-            : "Federation enabled.");
-        Console.WriteLine(IsTurnEnabled()
-            ? $"TURN enabled: {_turnHost}:{_turnPort}, realm={_turnRealm}"
-            : "TURN disabled. Set FLUXCHAT_TURN_HOST and FLUXCHAT_TURN_SECRET to enable WebRTC relay.");
-        Console.WriteLine("Use `fluxus` on the VPS to create invites and manage users.");
+            accountApi?.Start();
+            if (accountApi is not null)
+            {
+                Console.WriteLine("FluxChat account API started.");
+            }
+
+            _ = Task.Run(SweepStaleSessionsAsync);
+            if (audioUdp is not null)
+            {
+                _ = Task.Run(() => RunAudioUdpRelayAsync(audioUdp));
+            }
+            _ = Task.Run(RunMaintenanceAsync);
+            _ = Task.Run(RunDiagnosticsAsync);
+            Console.WriteLine($"FluxChat relay listening on TCP {FluxChatPorts.Relay}");
+            Console.WriteLine(audioUdp is null
+                ? $"FluxChat call audio UDP relay disabled because UDP {FluxChatPorts.Relay} is busy."
+                : $"FluxChat call audio relay listening on UDP {FluxChatPorts.Relay}");
+            Console.WriteLine($"Database: {ServerPaths.DatabasePath}");
+            Console.WriteLine(string.IsNullOrWhiteSpace(_federationKey)
+                ? "Federation disabled. Set FLUXCHAT_FEDERATION_KEY to enable server-to-server delivery."
+                : "Federation enabled.");
+            Console.WriteLine(IsTurnEnabled()
+                ? $"TURN enabled: {_turnHost}:{_turnPort}, realm={_turnRealm}"
+                : "TURN disabled. Set FLUXCHAT_TURN_HOST and FLUXCHAT_TURN_SECRET to enable WebRTC relay.");
+            Console.WriteLine("Use `fluxus` on the VPS to create invites and manage users.");
 
             while (true)
             {
@@ -150,7 +155,7 @@ internal sealed class RelayServer
         }
     }
 
-    private static async Task<(TcpListener Listener, UdpClient AudioUdp)> BindRelaySocketsWithRetryAsync(int port, TimeSpan timeout)
+    private static async Task<(TcpListener Listener, UdpClient? AudioUdp)> BindRelaySocketsWithRetryAsync(int port, TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow.Add(timeout);
         var attempt = 0;
@@ -166,15 +171,26 @@ internal sealed class RelayServer
                 listener = new TcpListener(IPAddress.Any, port);
                 listener.Server.ExclusiveAddressUse = false;
                 listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                audioUdp = CreateReusableUdpClient(port);
                 listener.Start();
+                try
+                {
+                    audioUdp = CreateReusableUdpClient(port);
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+                {
+                    Console.WriteLine($"FluxChat call audio UDP port {port} is busy; TCP relay will continue without UDP audio relay.");
+                }
                 return (listener, audioUdp);
             }
             catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse && DateTimeOffset.UtcNow < deadline)
             {
                 listener?.Server.Dispose();
                 audioUdp?.Dispose();
-                Console.WriteLine($"FluxChat relay port {port} is busy; retrying bind in 1s (attempt {attempt}).");
+                Console.WriteLine($"FluxChat relay TCP port {port} is busy; retrying bind in 1s (attempt {attempt}).");
+                if (attempt == 1 || attempt % 10 == 0)
+                {
+                    Console.WriteLine(GetPortOwnerSnapshot(port));
+                }
                 await Task.Delay(TimeSpan.FromSeconds(1));
             }
             catch
@@ -183,6 +199,48 @@ internal sealed class RelayServer
                 audioUdp?.Dispose();
                 throw;
             }
+        }
+    }
+
+    private static string GetPortOwnerSnapshot(int port)
+    {
+        try
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                return $"Port {port} owner snapshot is only available on Linux.";
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/bin/sh",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"ss -H -ltnup 'sport = :{port}' 2>/dev/null || true; ss -H -tanp 'sport = :{port}' 2>/dev/null | head -20 || true");
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return $"Port {port} owner snapshot unavailable: could not start ss.";
+            }
+
+            if (!process.WaitForExit(1500))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return $"Port {port} owner snapshot timed out.";
+            }
+
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            return string.IsNullOrWhiteSpace(output)
+                ? $"Port {port} owner snapshot: no listener reported by ss."
+                : $"Port {port} owner snapshot:\n{output}";
+        }
+        catch (Exception ex)
+        {
+            return $"Port {port} owner snapshot failed: {ex.GetType().Name}: {ex.Message}";
         }
     }
 
@@ -199,16 +257,18 @@ internal sealed class RelayServer
     {
         ClientSession? session = null;
         var remote = client.Client.RemoteEndPoint;
+        StreamWriter? writer = null;
 
         try
         {
             await using var stream = client.GetStream();
             client.NoDelay = true;
             var reader = new BoundedUtf8LineReader(stream, MaxControlPacketBytes);
-            using var writer = new StreamWriter(stream, Utf8NoBom, leaveOpen: true)
+            using var scopedWriter = new StreamWriter(stream, Utf8NoBom, leaveOpen: true)
             {
                 AutoFlush = true
             };
+            writer = scopedWriter;
 
             var firstLine = await reader.ReadLineAsync();
             Interlocked.Increment(ref _controlPacketsReceived);
@@ -344,10 +404,15 @@ internal sealed class RelayServer
         {
             Interlocked.Increment(ref _controlPacketsRejected);
             Console.WriteLine($"Client {remote} rejected: {ex.Message}");
+            await TrySendRegistrationDeniedAsync(writer, $"Relay registration rejected: {ex.Message}");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Client {remote} disconnected: {ex.Message}");
+            if (session is null)
+            {
+                await TrySendRegistrationDeniedAsync(writer, $"Relay registration failed: {ex.Message}");
+            }
         }
         finally
         {
@@ -362,6 +427,22 @@ internal sealed class RelayServer
             }
 
             client.Dispose();
+        }
+    }
+
+    private async Task TrySendRegistrationDeniedAsync(StreamWriter? writer, string message)
+    {
+        if (writer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await SendAsync(writer, RelayAckPacket.Denied(message, _publicAccountApiUrl));
+        }
+        catch
+        {
         }
     }
 
@@ -408,9 +489,9 @@ internal sealed class RelayServer
                 return;
             }
 
-            session.SetAudioWriter(writer);
+            var replacedAudioWriter = session.SetAudioWriter(writer);
             await SendAsync(writer, RelayAckPacket.AcceptedResult("Audio registered."));
-            Console.WriteLine($"{register.DisplayName} ({register.UserId}) audio connected from {remote}");
+            Console.WriteLine($"{register.DisplayName} ({register.UserId}) audio connected from {remote}{(replacedAudioWriter ? " (replaced stale audio route)" : "")}");
 
             while (client.Connected)
             {
@@ -601,6 +682,10 @@ internal sealed class RelayServer
             {
                 Console.WriteLine($"TCP audio delivery failed from {packet.FromUserId} to {packet.ToUserId}: {ex.Message}");
             }
+        }
+        else
+        {
+            Console.WriteLine($"TCP audio route missing destination: from={packet.FromUserId}, to={packet.ToUserId}");
         }
     }
 
@@ -1029,15 +1114,28 @@ internal sealed class RelayServer
         => packet.Intent is "presence"
             or "call-audio"
             or "call-audio-state"
+            or "call-ping"
+            or "call-pong"
             or "call-invite"
             or "call-accept"
             or "call-decline"
             or "call-end"
             or "call-leave"
             or "call-join"
+            or "server-voice-join"
+            or "server-voice-leave"
+            or "server-voice-state"
             or "call-screen-start"
             or "call-screen-frame"
-            or "call-screen-stop";
+            or "call-screen-stop"
+            or "call-screen-webrtc-offer"
+            or "call-screen-webrtc-answer"
+            or "call-screen-webrtc-ice"
+            or "call-screen-webrtc-fallback"
+            or "call-video-state"
+            or "call-video-webrtc-offer"
+            or "call-video-webrtc-answer"
+            or "call-video-webrtc-ice";
 
     private bool TryOpenFederation(RelayFederationPacket federation, out ChatPacket? message)
     {
@@ -1347,11 +1445,13 @@ internal sealed class ClientSession(string userId, string displayName, StreamWri
         }
     }
 
-    public void SetAudioWriter(StreamWriter writer)
+    public bool SetAudioWriter(StreamWriter writer)
     {
         lock (_audioGate)
         {
+            var replaced = AudioWriter is not null && !ReferenceEquals(AudioWriter, writer);
             AudioWriter = writer;
+            return replaced;
         }
     }
 

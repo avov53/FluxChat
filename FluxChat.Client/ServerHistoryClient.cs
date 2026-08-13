@@ -42,6 +42,25 @@ internal sealed class ServerHistoryClient(string apiUrl, string sessionToken)
                ?? new AccountResult(false, response.ReasonPhrase ?? "History delete did not return a result.");
     }
 
+    public async Task<AccountResult> DeleteMessageAsync(
+        Guid messageId,
+        IReadOnlyList<string> mediaIds,
+        CancellationToken cancellationToken,
+        string serverId = "",
+        string channelId = "")
+    {
+        using var response = await _http.PostAsJsonAsync("api/v1/messages/delete", new AccountMessageDeleteRequest(messageId, mediaIds, serverId, channelId), cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AccountResult>(cancellationToken: cancellationToken)
+               ?? new AccountResult(false, response.ReasonPhrase ?? "Message delete did not return a result.");
+    }
+
+    public async Task<AccountResult> EditMessageAsync(Guid messageId, ChatPacket replacementPacket, CancellationToken cancellationToken)
+    {
+        using var response = await _http.PostAsJsonAsync("api/v1/messages/edit", new AccountMessageEditRequest(messageId, replacementPacket), cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AccountResult>(cancellationToken: cancellationToken)
+               ?? new AccountResult(false, response.ReasonPhrase ?? "Message edit did not return a result.");
+    }
+
     public async Task<IReadOnlyList<AccountSyncedContact>> LoadContactsAsync(CancellationToken cancellationToken)
     {
         var result = await _http.GetFromJsonAsync<AccountContactsResponse>("api/v1/contacts", cancellationToken);

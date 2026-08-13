@@ -383,6 +383,33 @@ internal sealed class RelayClient : IAsyncDisposable
         }
     }
 
+    public async Task ReconnectAudioTcpAsync(string reason, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_audioHost) ||
+            _audioPort <= 0)
+        {
+            AppLog.Write($"Relay audio TCP reconnect skipped: reason={reason}, endpoint is not configured");
+            return;
+        }
+
+        await _audioConnectLock.WaitAsync(cancellationToken);
+        try
+        {
+            AppLog.Write($"Relay audio TCP reconnecting: {_audioHost}:{_audioPort}, reason={reason}");
+            await DisposeAudioTcpAsync();
+            await ConnectAudioTcpAsync(_audioHost, _audioPort, _audioCredential, cancellationToken);
+            AppLog.Write($"Relay audio TCP re-registered: {_audioHost}:{_audioPort}, reason={reason}");
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            AppLog.Write(ex, $"Relay audio TCP reconnect failed: {_audioHost}:{_audioPort}, reason={reason}");
+        }
+        finally
+        {
+            _audioConnectLock.Release();
+        }
+    }
+
     private async Task ConnectScreenTcpAsync(string host, int port, string credential, CancellationToken cancellationToken)
     {
         await DisposeScreenTcpAsync();

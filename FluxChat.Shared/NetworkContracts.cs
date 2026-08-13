@@ -233,7 +233,8 @@ public sealed record AccountResult(bool Accepted, string Message);
 
 public sealed record AccountPreferences(
     string ActivityVisibility,
-    IReadOnlyList<string> ActivitySelectedFriendIds);
+    IReadOnlyList<string> ActivitySelectedFriendIds,
+    string CallActivityVisibility = "Participants");
 
 public sealed record AccountPreferencesResponse(
     bool Accepted,
@@ -242,7 +243,8 @@ public sealed record AccountPreferencesResponse(
 
 public sealed record AccountPreferencesUpdateRequest(
     string ActivityVisibility,
-    IReadOnlyList<string> ActivitySelectedFriendIds);
+    IReadOnlyList<string> ActivitySelectedFriendIds,
+    string CallActivityVisibility = "Participants");
 
 public sealed record AccountReadState(
     string ScopeType,
@@ -315,6 +317,16 @@ public sealed record AccountContactUpsertRequest(AccountSyncedContact Contact);
 public sealed record AccountContactDeleteRequest(string UserId);
 
 public sealed record AccountHistoryDeleteRequest(string PeerUserId);
+
+public sealed record AccountMessageDeleteRequest(
+    Guid MessageId,
+    IReadOnlyList<string>? MediaIds = null,
+    string ServerId = "",
+    string ChannelId = "");
+
+public sealed record AccountMessageEditRequest(
+    Guid MessageId,
+    ChatPacket ReplacementPacket);
 
 public sealed record AccountMediaDeleteRequest(string MediaId);
 

@@ -93,6 +93,85 @@
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
 
+        <Style x:Key="CallToolbarButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Width" Value="48"/>
+            <Setter Property="Height" Value="48"/>
+            <Setter Property="MinWidth" Value="48"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Foreground" Value="#F2F4FA"/>
+            <Setter Property="Background" Value="#14FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#12FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid Background="Transparent">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualStateGroup.Transitions>
+                                        <VisualTransition GeneratedDuration="0:0:0.16"/>
+                                    </VisualStateGroup.Transitions>
+                                    <VisualState x:Name="Normal"/>
+                                    <VisualState x:Name="MouseOver">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="CallButtonScale" Storyboard.TargetProperty="ScaleX" To="1.05" Duration="0:0:0.16"/>
+                                            <DoubleAnimation Storyboard.TargetName="CallButtonScale" Storyboard.TargetProperty="ScaleY" To="1.05" Duration="0:0:0.16"/>
+                                            <ColorAnimation Storyboard.TargetName="CallButtonSurface" Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)" To="#25FFFFFF" Duration="0:0:0.16"/>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="CallButtonScale" Storyboard.TargetProperty="ScaleX" To="0.95" Duration="0:0:0.08"/>
+                                            <DoubleAnimation Storyboard.TargetName="CallButtonScale" Storyboard.TargetProperty="ScaleY" To="0.95" Duration="0:0:0.08"/>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="CallButtonSurface" Storyboard.TargetProperty="Opacity" To="0.38" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="48"/>
+                                <RowDefinition Height="0"/>
+                            </Grid.RowDefinitions>
+                            <Border x:Name="CallButtonSurface"
+                                    Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Center"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="14"
+                                    RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform>
+                                    <ScaleTransform x:Name="CallButtonScale" ScaleX="1" ScaleY="1"/>
+                                </Border.RenderTransform>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Grid.Row="1"
+                                       Margin="0,5,0,0"
+                                       HorizontalAlignment="Center"
+                                       Foreground="#7F8798"
+                                       FontSize="10.5"
+                                       FontWeight="SemiBold"
+                                       Text="{TemplateBinding Tag}"
+                                       TextTrimming="CharacterEllipsis"
+                                       Visibility="Collapsed"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CallToolbarDangerButton" TargetType="Button" BasedOn="{StaticResource CallToolbarButton}">
+            <Setter Property="Background" Value="#E54452"/>
+            <Setter Property="BorderBrush" Value="#33FF8B96"/>
+        </Style>
+
         <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
             <Setter Property="Height" Value="36"/>
             <Setter Property="Padding" Value="14,0"/>
@@ -1062,16 +1141,31 @@
                                                     </Viewbox>
                                                 </MenuItem.Icon>
                                             </MenuItem>
-                                            <MenuItem Header="Notifications">
+                                            <MenuItem Header="{Binding NotificationToggleMenuText}" Click="ContactNotificationToggleMenuItem_OnClick">
                                                 <MenuItem.Icon>
                                                     <Viewbox Width="17" Height="17">
-                                                        <Path Style="{StaticResource ContextMenuIconPath}"
-                                                              Data="M12,22A2.5,2.5 0 0,0 14.5,19.5H9.5A2.5,2.5 0 0,0 12,22M18,16V11C18,7.93 16.36,5.36 13.5,4.68V4A1.5,1.5 0 0,0 12,2.5A1.5,1.5 0 0,0 10.5,4V4.68C7.63,5.36 6,7.92 6,11V16L4,18V19H20V18L18,16Z"/>
+                                                        <Grid Width="24" Height="24">
+                                                            <Path Style="{StaticResource ContextMenuIconPath}"
+                                                                  Data="M12,22A2.5,2.5 0 0,0 14.5,19.5H9.5A2.5,2.5 0 0,0 12,22M18,16V11C18,7.93 16.36,5.36 13.5,4.68V4A1.5,1.5 0 0,0 12,2.5A1.5,1.5 0 0,0 10.5,4V4.68C7.63,5.36 6,7.92 6,11V16L4,18V19H20V18L18,16Z"/>
+                                                            <Path Data="M4,4L20,20"
+                                                                  Stroke="{StaticResource DangerBrush}"
+                                                                  StrokeThickness="2.4"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round">
+                                                                <Path.Style>
+                                                                    <Style TargetType="{x:Type Path}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsNotificationsMuted}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Path.Style>
+                                                            </Path>
+                                                        </Grid>
                                                     </Viewbox>
                                                 </MenuItem.Icon>
-                                                <MenuItem Header="All" Tag="All" Click="ContactNotificationModeMenuItem_OnClick"/>
-                                                <MenuItem Header="Mentions only" Tag="Mentions" Click="ContactNotificationModeMenuItem_OnClick"/>
-                                                <MenuItem Header="Muted" Tag="Muted" Click="ContactNotificationModeMenuItem_OnClick"/>
                                             </MenuItem>
                                             <MenuItem Header="{Binding EditGroupNameMenuText}" Click="EditGroupNameMenuItem_OnClick">
                                                 <MenuItem.Icon>
@@ -1552,6 +1646,26 @@
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
                                         </Grid>
+                                        <TextBlock Text="{Binding ActivityChipText}"
+                                                   Margin="0,3,0,0"
+                                                   Foreground="#B7C4FF"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasActivity}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
                                     <Border Grid.Row="1"
                                             Grid.Column="3"
@@ -1804,6 +1918,7 @@
                                      Background="Transparent"
                                      BorderThickness="0"
                                      SelectionChanged="ServerChannelsList_OnSelectionChanged"
+                                     PreviewMouseLeftButtonUp="ServerChannelsList_OnPreviewMouseLeftButtonUp"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto">
                                 <ListBox.ItemContainerStyle>
                                     <Style TargetType="{x:Type ListBoxItem}">
@@ -2307,7 +2422,9 @@
                                 BorderBrush="#4A4F5D"
                                 BorderThickness="1"
                                 CornerRadius="9"
-                                Padding="7,4">
+                                Padding="7,4"
+                                Cursor="Hand"
+                                MouseLeftButtonUp="ProfileActivityChip_OnMouseLeftButtonUp">
                             <TextBlock x:Name="ProfileActivityText"
                                        Foreground="{StaticResource TextBrush}"
                                        FontSize="11"
@@ -2473,6 +2590,37 @@
                               Data="M6.6,10.8C8,13.6 10.4,16 13.2,17.4L15.4,15.2C15.7,14.9 16.1,14.8 16.5,14.9C17.7,15.3 19,15.5 20.3,15.5C20.9,15.5 21.4,16 21.4,16.6V20.2C21.4,20.8 20.9,21.3 20.3,21.3C10.6,21.3 2.7,13.4 2.7,3.7C2.7,3.1 3.2,2.6 3.8,2.6H7.4C8,2.6 8.5,3.1 8.5,3.7C8.5,5 8.7,6.3 9.1,7.5C9.2,7.9 9.1,8.3 8.8,8.6L6.6,10.8Z"/>
                     </Viewbox>
                 </Button>
+                <Button x:Name="StartVideoCallButton"
+                        Width="36"
+                        Height="36"
+                        Margin="8,0,0,0"
+                        Background="#363940"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        ToolTip="Start video call"
+                        Visibility="Collapsed"
+                        Click="StartVideoCallButton_OnClick">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="18">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="#404249"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter Property="Background" Value="#4a4d55"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <Viewbox Width="19" Height="19">
+                        <Path Fill="#d6d9df"
+                              Stretch="Uniform"
+                              Data="M17,10.5V6C17,5.45 16.55,5 16,5H4C3.45,5 3,5.45 3,6V18C3,18.55 3.45,19 4,19H16C16.55,19 17,18.55 17,18V13.5L21,17.5V6.5L17,10.5Z"/>
+                    </Viewbox>
+                </Button>
                 </StackPanel>
             </Grid>
 
@@ -2494,16 +2642,24 @@
                         Grid.Row="0"
                         Grid.ColumnSpan="3"
                         Visibility="Collapsed"
-                        Height="150"
-                        MinHeight="112"
-                        MaxHeight="260"
-                        Margin="0,0,0,10"
-                        Background="#25272d"
-                        BorderBrush="#45474f"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="14"
+                        Height="Auto"
+                        MinHeight="270"
+                        MaxHeight="620"
+                        Margin="-20,-16,-20,10"
+                        Background="#F20D0F14"
+                        BorderBrush="#18FFFFFF"
+                        BorderThickness="0,0,0,1"
+                        CornerRadius="0"
+                        Padding="18"
+                        Opacity="1"
+                        RenderTransformOrigin="0.5,0.5"
                         SizeChanged="CallPanel_OnSizeChanged">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="34" ShadowDepth="8" Opacity="0.34" Color="#000000"/>
+                    </Border.Effect>
+                    <Border.RenderTransform>
+                        <ScaleTransform x:Name="CallPanelScale" ScaleX="1" ScaleY="1"/>
+                    </Border.RenderTransform>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -2511,188 +2667,223 @@
                         </Grid.ColumnDefinitions>
 
                         <StackPanel x:Name="CallContentPanel"
-                                    VerticalAlignment="Center">
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,0,0,70"
+                                    HorizontalAlignment="Stretch"
+                                    VerticalAlignment="Stretch">
                             <TextBlock x:Name="CallTitleText"
                                        Text="Call"
                                        FontWeight="Bold"
-                                       FontSize="15"/>
+                                       FontSize="16"
+                                       HorizontalAlignment="Center"/>
                             <TextBlock x:Name="CallStatusText"
                                        Text="Connecting..."
                                        Foreground="{StaticResource MutedBrush}"
                                        FontSize="12"
-                                       Margin="0,4,0,14"/>
+                                       HorizontalAlignment="Center"
+                                       Margin="0,5,0,18"/>
+                            <ScrollViewer x:Name="CallParticipantsScroll"
+                                          HorizontalAlignment="Center"
+                                          MaxHeight="190"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <Grid>
                             <StackPanel x:Name="CallParticipantsPanel"
-                                        Orientation="Horizontal">
-                                <Grid x:Name="CallSelfParticipant" Width="58" Height="58" Margin="0,0,14,0">
-                                    <Grid.Clip>
-                                        <EllipseGeometry Center="29,29" RadiusX="29" RadiusY="29"/>
-                                    </Grid.Clip>
-                                    <Border x:Name="CallSelfAvatarColor" CornerRadius="29" Background="#5865f2"/>
-                                    <Image x:Name="CallSelfAvatarImage"
-                                           Stretch="UniformToFill"
-                                           Visibility="Collapsed"
-                                           RenderTransformOrigin="0.5,0.5"/>
-                                    <MediaElement x:Name="CallSelfAvatarVideo"
-                                                  LoadedBehavior="Manual"
-                                                  UnloadedBehavior="Manual"
-                                                  Stretch="UniformToFill"
-                                                  IsMuted="True"
-                                                  Volume="0"
-                                                  Visibility="Collapsed"
-                                                  MediaEnded="AvatarVideo_OnMediaEnded"
-                                                  RenderTransformOrigin="0.5,0.5"/>
-                                    <TextBlock x:Name="CallSelfInitials"
-                                               Text="ME"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               FontWeight="Bold"
-                                               FontSize="14"/>
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Center">
+                                <Grid x:Name="CallSelfParticipant" Width="80" Height="86" Margin="6,0">
+                                    <Grid x:Name="CallSelfAvatarClip" Width="80" Height="80" VerticalAlignment="Top">
+                                        <Grid.Clip>
+                                            <EllipseGeometry Center="40,40" RadiusX="40" RadiusY="40"/>
+                                        </Grid.Clip>
+                                        <Border x:Name="CallSelfAvatarColor" CornerRadius="40" Background="#5865f2"/>
+                                        <Image x:Name="CallSelfAvatarImage"
+                                               Stretch="UniformToFill"
+                                               Visibility="Collapsed"
+                                               RenderTransformOrigin="0.5,0.5"/>
+                                        <MediaElement x:Name="CallSelfAvatarVideo"
+                                                      LoadedBehavior="Manual"
+                                                      UnloadedBehavior="Manual"
+                                                      Stretch="UniformToFill"
+                                                      IsMuted="True"
+                                                      Volume="0"
+                                                      Visibility="Collapsed"
+                                                      MediaEnded="AvatarVideo_OnMediaEnded"
+                                                      RenderTransformOrigin="0.5,0.5"/>
+                                        <TextBlock x:Name="CallSelfInitials"
+                                                   Text="ME"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="Bold"
+                                                   FontSize="14"/>
+                                    </Grid>
                                     <Ellipse x:Name="CallSelfVoiceActivityRing"
+                                             Width="80"
+                                             Height="80"
+                                             VerticalAlignment="Top"
                                              Stroke="#57f287"
                                              StrokeThickness="3"
                                              Fill="Transparent"
                                              Opacity="0"
                                              IsHitTestVisible="False"/>
                                     <Ellipse x:Name="CallSelfNoiseActivityRing"
+                                             Width="72"
+                                             Height="72"
+                                             VerticalAlignment="Top"
                                              Margin="4"
                                              Stroke="#f1c40f"
                                              StrokeThickness="2"
                                              Fill="Transparent"
                                              Opacity="0"
                                              IsHitTestVisible="False"/>
-                                    <StackPanel x:Name="CallSelfAudioIndicators"
-                                                Orientation="Horizontal"
-                                                HorizontalAlignment="Right"
-                                                VerticalAlignment="Bottom"
-                                                Margin="0,0,2,2">
-                                        <Border x:Name="CallSelfMicIndicator"
-                                                Width="18"
-                                                Height="18"
-                                                Margin="0,0,2,0"
-                                                CornerRadius="9"
-                                                Background="#e5484d"
-                                                Visibility="Collapsed">
-                                            <Grid>
-                                                <Viewbox Width="10" Height="10">
-                                                    <Path Fill="White"
+                                    <Border x:Name="CallSelfAudioIndicators"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Bottom"
+                                            Padding="7,3"
+                                            CornerRadius="10"
+                                            Background="#2EEF4444"
+                                            BorderBrush="#66EF4444"
+                                            BorderThickness="1"
+                                            Opacity="0"
+                                            Visibility="Collapsed"
+                                            RenderTransformOrigin="0.5,0.5">
+                                        <Border.RenderTransform>
+                                            <TranslateTransform x:Name="CallSelfAudioIndicatorsTranslate" Y="6"/>
+                                        </Border.RenderTransform>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid x:Name="CallSelfMicIndicator"
+                                                  Width="12"
+                                                  Height="12"
+                                                  Margin="0,0,4,0"
+                                                  Visibility="Collapsed">
+                                                <Viewbox Width="11" Height="11">
+                                                    <Path Fill="#ff8f98"
                                                           Stretch="Uniform"
                                                           Data="M12,14C13.66,14 15,12.66 15,11V5C15,3.34 13.66,2 12,2C10.34,2 9,3.34 9,5V11C9,12.66 10.34,14 12,14M17.3,11C17.3,14 14.76,16.1 12,16.1C9.24,16.1 6.7,14 6.7,11H5C5,14.41 7.72,17.23 11,17.72V21H13V17.72C16.28,17.23 19,14.41 19,11H17.3Z"/>
                                                 </Viewbox>
-                                                <Path Stroke="White"
+                                                <Path Stroke="#ff8f98"
                                                       StrokeThickness="2"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
-                                                      Data="M4,14 L14,4"/>
+                                                      Data="M2,10 L10,2"/>
                                             </Grid>
-                                        </Border>
-                                        <Border x:Name="CallSelfHeadphonesIndicator"
-                                                Width="18"
-                                                Height="18"
-                                                CornerRadius="9"
-                                                Background="#e5484d"
-                                                Visibility="Collapsed">
-                                            <Grid>
-                                                <Viewbox Width="11" Height="11">
-                                                    <Path Fill="White"
+                                            <Grid x:Name="CallSelfHeadphonesIndicator"
+                                                  Width="12"
+                                                  Height="12"
+                                                  Visibility="Collapsed">
+                                                <Viewbox Width="12" Height="12">
+                                                    <Path Fill="#ff8f98"
                                                           Stretch="Uniform"
                                                           Data="M12,3C7.03,3 3,7.03 3,12V18C3,19.66 4.34,21 6,21H9V13H5V12C5,8.13 8.13,5 12,5C15.87,5 19,8.13 19,12V13H15V21H18C19.66,21 21,19.66 21,18V12C21,7.03 16.97,3 12,3Z"/>
                                                 </Viewbox>
-                                                <Path Stroke="White"
+                                                <Path Stroke="#ff8f98"
                                                       StrokeThickness="2"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
-                                                      Data="M4,14 L14,4"/>
+                                                      Data="M2,10 L10,2"/>
                                             </Grid>
-                                        </Border>
-                                    </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
                                 <Grid x:Name="CallPeerParticipant"
-                                      Width="58"
-                                      Height="58"
+                                      Width="80"
+                                      Height="86"
+                                      Margin="6,0"
                                       Cursor="Hand"
                                       ToolTip="Right-click for audio controls"
                                       MouseRightButtonUp="CallPeerParticipant_OnMouseRightButtonUp">
-                                    <Grid.Clip>
-                                        <EllipseGeometry Center="29,29" RadiusX="29" RadiusY="29"/>
-                                    </Grid.Clip>
-                                    <Border x:Name="CallPeerAvatarColor" CornerRadius="29" Background="#4e5058"/>
-                                    <Image x:Name="CallPeerAvatarImage"
-                                           Stretch="UniformToFill"
-                                           Visibility="Collapsed"
-                                           RenderTransformOrigin="0.5,0.5"/>
-                                    <MediaElement x:Name="CallPeerAvatarVideo"
-                                                  LoadedBehavior="Manual"
-                                                  UnloadedBehavior="Manual"
-                                                  Stretch="UniformToFill"
-                                                  IsMuted="True"
-                                                  Volume="0"
-                                                  Visibility="Collapsed"
-                                                  MediaEnded="AvatarVideo_OnMediaEnded"
-                                                  RenderTransformOrigin="0.5,0.5"/>
-                                    <TextBlock x:Name="CallPeerInitials"
-                                               Text="FR"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               FontWeight="Bold"
-                                               FontSize="14"/>
+                                    <Grid x:Name="CallPeerAvatarClip" Width="80" Height="80" VerticalAlignment="Top">
+                                        <Grid.Clip>
+                                            <EllipseGeometry Center="40,40" RadiusX="40" RadiusY="40"/>
+                                        </Grid.Clip>
+                                        <Border x:Name="CallPeerAvatarColor" CornerRadius="40" Background="#4e5058"/>
+                                        <Image x:Name="CallPeerAvatarImage"
+                                               Stretch="UniformToFill"
+                                               Visibility="Collapsed"
+                                               RenderTransformOrigin="0.5,0.5"/>
+                                        <MediaElement x:Name="CallPeerAvatarVideo"
+                                                      LoadedBehavior="Manual"
+                                                      UnloadedBehavior="Manual"
+                                                      Stretch="UniformToFill"
+                                                      IsMuted="True"
+                                                      Volume="0"
+                                                      Visibility="Collapsed"
+                                                      MediaEnded="AvatarVideo_OnMediaEnded"
+                                                      RenderTransformOrigin="0.5,0.5"/>
+                                        <TextBlock x:Name="CallPeerInitials"
+                                                   Text="FR"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="Bold"
+                                                   FontSize="14"/>
+                                    </Grid>
                                     <Ellipse x:Name="CallPeerVoiceActivityRing"
+                                             Width="80"
+                                             Height="80"
+                                             VerticalAlignment="Top"
                                              Stroke="#57f287"
                                              StrokeThickness="3"
                                              Fill="Transparent"
                                              Opacity="0"
                                              IsHitTestVisible="False"/>
                                     <Ellipse x:Name="CallPeerNoiseActivityRing"
+                                             Width="72"
+                                             Height="72"
+                                             VerticalAlignment="Top"
                                              Margin="4"
                                              Stroke="#f1c40f"
                                              StrokeThickness="2"
                                              Fill="Transparent"
                                              Opacity="0"
                                              IsHitTestVisible="False"/>
-                                    <StackPanel x:Name="CallPeerAudioIndicators"
-                                                Orientation="Horizontal"
-                                                HorizontalAlignment="Right"
-                                                VerticalAlignment="Bottom"
-                                                Margin="0,0,2,2">
-                                        <Border x:Name="CallPeerMicIndicator"
-                                                Width="18"
-                                                Height="18"
-                                                Margin="0,0,2,0"
-                                                CornerRadius="9"
-                                                Background="#e5484d"
-                                                Visibility="Collapsed">
-                                            <Grid>
-                                                <Viewbox Width="10" Height="10">
-                                                    <Path Fill="White"
+                                    <Border x:Name="CallPeerAudioIndicators"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Bottom"
+                                            Padding="7,3"
+                                            CornerRadius="10"
+                                            Background="#2EEF4444"
+                                            BorderBrush="#66EF4444"
+                                            BorderThickness="1"
+                                            Opacity="0"
+                                            Visibility="Collapsed"
+                                            RenderTransformOrigin="0.5,0.5">
+                                        <Border.RenderTransform>
+                                            <TranslateTransform x:Name="CallPeerAudioIndicatorsTranslate" Y="6"/>
+                                        </Border.RenderTransform>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid x:Name="CallPeerMicIndicator"
+                                                  Width="12"
+                                                  Height="12"
+                                                  Margin="0,0,4,0"
+                                                  Visibility="Collapsed">
+                                                <Viewbox Width="11" Height="11">
+                                                    <Path Fill="#ff8f98"
                                                           Stretch="Uniform"
                                                           Data="M12,14C13.66,14 15,12.66 15,11V5C15,3.34 13.66,2 12,2C10.34,2 9,3.34 9,5V11C9,12.66 10.34,14 12,14M17.3,11C17.3,14 14.76,16.1 12,16.1C9.24,16.1 6.7,14 6.7,11H5C5,14.41 7.72,17.23 11,17.72V21H13V17.72C16.28,17.23 19,14.41 19,11H17.3Z"/>
                                                 </Viewbox>
-                                                <Path Stroke="White"
+                                                <Path Stroke="#ff8f98"
                                                       StrokeThickness="2"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
-                                                      Data="M4,14 L14,4"/>
+                                                      Data="M2,10 L10,2"/>
                                             </Grid>
-                                        </Border>
-                                        <Border x:Name="CallPeerHeadphonesIndicator"
-                                                Width="18"
-                                                Height="18"
-                                                CornerRadius="9"
-                                                Background="#e5484d"
-                                                Visibility="Collapsed">
-                                            <Grid>
-                                                <Viewbox Width="11" Height="11">
-                                                    <Path Fill="White"
+                                            <Grid x:Name="CallPeerHeadphonesIndicator"
+                                                  Width="12"
+                                                  Height="12"
+                                                  Visibility="Collapsed">
+                                                <Viewbox Width="12" Height="12">
+                                                    <Path Fill="#ff8f98"
                                                           Stretch="Uniform"
                                                           Data="M12,3C7.03,3 3,7.03 3,12V18C3,19.66 4.34,21 6,21H9V13H5V12C5,8.13 8.13,5 12,5C15.87,5 19,8.13 19,12V13H15V21H18C19.66,21 21,19.66 21,18V12C21,7.03 16.97,3 12,3Z"/>
                                                 </Viewbox>
-                                                <Path Stroke="White"
+                                                <Path Stroke="#ff8f98"
                                                       StrokeThickness="2"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
-                                                      Data="M4,14 L14,4"/>
+                                                      Data="M2,10 L10,2"/>
                                             </Grid>
-                                        </Border>
-                                    </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                     <Grid.Style>
                                         <Style TargetType="Grid">
                                             <Setter Property="Opacity" Value="1"/>
@@ -2708,16 +2899,131 @@
                                     </Grid.Style>
                                 </Grid>
                             </StackPanel>
+                            <ItemsControl x:Name="CallParticipantsList"
+                                          Visibility="Collapsed">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel HorizontalAlignment="Center"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Width="{Binding ItemSize}"
+                                              Height="{Binding ItemSize}"
+                                              Margin="5"
+                                              ToolTip="{Binding DisplayName}">
+                                            <Grid Width="{Binding AvatarSize}"
+                                                  Height="{Binding AvatarSize}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Top">
+                                                <Grid.Clip>
+                                                    <EllipseGeometry Center="{Binding AvatarCenter}" RadiusX="{Binding AvatarRadius}" RadiusY="{Binding AvatarRadius}"/>
+                                                </Grid.Clip>
+                                                <Border Background="{Binding AvatarBrush}"
+                                                        CornerRadius="{Binding CornerRadius}"/>
+                                                <TextBlock Text="{Binding Initials}"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="#f2f3f5"
+                                                           FontSize="{Binding InitialsFontSize}"
+                                                           FontWeight="Bold"/>
+                                            </Grid>
+                                            <Ellipse Width="{Binding AvatarSize}"
+                                                     Height="{Binding AvatarSize}"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Top"
+                                                     Stroke="#57f287"
+                                                     StrokeThickness="2"
+                                                     Fill="Transparent"
+                                                     Opacity="{Binding VoiceActivityOpacity}"
+                                                     IsHitTestVisible="False"/>
+                                            <Border HorizontalAlignment="Center"
+                                                    VerticalAlignment="Bottom"
+                                                    Padding="6,3"
+                                                    CornerRadius="9"
+                                                    Background="#2EEF4444"
+                                                    BorderBrush="#66EF4444"
+                                                    BorderThickness="1"
+                                                    Visibility="{Binding AudioIndicatorVisibility}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Viewbox Width="10" Height="10" Margin="0,0,3,0" Visibility="{Binding MicOffVisibility}">
+                                                        <Grid Width="12" Height="12">
+                                                            <Path Fill="#ff8f98" Stretch="Uniform" Data="M12,14C13.66,14 15,12.66 15,11V5C15,3.34 13.66,2 12,2C10.34,2 9,3.34 9,5V11C9,12.66 10.34,14 12,14M17.3,11C17.3,14 14.76,16.1 12,16.1C9.24,16.1 6.7,14 6.7,11H5C5,14.41 7.72,17.23 11,17.72V21H13V17.72C16.28,17.23 19,14.41 19,11H17.3Z"/>
+                                                            <Path Stroke="#ff8f98" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,10 L10,2"/>
+                                                        </Grid>
+                                                    </Viewbox>
+                                                    <Viewbox Width="10" Height="10" Visibility="{Binding HeadphonesOffVisibility}">
+                                                        <Grid Width="12" Height="12">
+                                                            <Path Fill="#ff8f98" Stretch="Uniform" Data="M12,3C7.03,3 3,7.03 3,12V18C3,19.66 4.34,21 6,21H9V13H5V12C5,8.13 8.13,5 12,5C15.87,5 19,8.13 19,12V13H15V21H18C19.66,21 21,19.66 21,18V12C21,7.03 16.97,3 12,3Z"/>
+                                                            <Path Stroke="#ff8f98" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,10 L10,2"/>
+                                                        </Grid>
+                                                    </Viewbox>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                                </Grid>
+                            </ScrollViewer>
+                            <WrapPanel x:Name="CallMediaTray"
+                                       HorizontalAlignment="Left"
+                                       Margin="0,10,0,0">
+                            <Border x:Name="CallVideoStage"
+                                    Visibility="Collapsed"
+                                    Width="220"
+                                    Height="124"
+                                    MinWidth="0"
+                                    MaxWidth="220"
+                                    Margin="0,0,10,0"
+                                    HorizontalAlignment="Left"
+                                    Background="#0A0C12"
+                                    BorderBrush="#286366F1"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    ClipToBounds="True"
+                                    Cursor="Hand"
+                                    MouseLeftButtonDown="CallVideoStage_OnMouseLeftButtonDown">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.22" Color="#6366F1"/>
+                                </Border.Effect>
+                                <Grid>
+                                    <wv2:WebView2 x:Name="CallVideoWebView"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Stretch"
+                                                  ClipToBounds="True"/>
+                                    <Border x:Name="CallVideoHitOverlay"
+                                            Background="#01000000"
+                                            Cursor="Hand"
+                                            MouseLeftButtonDown="CallVideoStage_OnMouseLeftButtonDown"/>
+                                    <Border x:Name="CallVideoStatusOverlay"
+                                            Background="#A30D0F14"
+                                            VerticalAlignment="Bottom"
+                                            Padding="12,7"
+                                            Visibility="Collapsed"
+                                            IsHitTestVisible="False">
+                                        <TextBlock x:Name="CallVideoStatusText"
+                                                   Text="Camera ready"
+                                                   Foreground="#d8deea"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
                             <Border x:Name="CallScreenShareStage"
                                     Visibility="Collapsed"
-                                    Width="260"
-                                    Height="104"
-                                    Margin="0,12,0,0"
-                                    Background="#111214"
-                                    BorderBrush="#45474f"
+                                    Width="Auto"
+                                    Height="136"
+                                    MaxWidth="452"
+                                    Margin="0"
+                                    HorizontalAlignment="Left"
+                                    Background="#0A0C12"
+                                    BorderBrush="#286366F1"
                                     BorderThickness="1"
-                                    CornerRadius="6"
+                                    CornerRadius="10"
                                     ClipToBounds="True"
+                                    Cursor="Hand"
+                                    MouseLeftButtonDown="CallScreenShareStage_OnMouseLeftButtonDown"
                                     ToolTip="Right-click for stream audio controls"
                                     MouseRightButtonUp="CallScreenShareStage_OnMouseRightButtonUp">
                                 <Grid>
@@ -2738,14 +3044,18 @@
                                                        Stretch="Uniform"/>
                                                 <Border Background="#A0000000"
                                                         HorizontalAlignment="Left"
-                                                        VerticalAlignment="Top"
+                                                        VerticalAlignment="Bottom"
                                                         Margin="8"
                                                         Padding="8,4"
                                                         CornerRadius="4">
-                                                    <TextBlock Text="Your screen"
+                                                    <TextBlock x:Name="CallSelfScreenShareLabel"
+                                                               Text="Your screen"
                                                                FontSize="11"
                                                                Foreground="#f2f3f5"/>
                                                 </Border>
+                                                <Border Background="#01000000"
+                                                        Tag="Local"
+                                                        MouseLeftButtonDown="CallScreenShareTile_OnMouseLeftButtonDown"/>
                                             </Grid>
                                         </Border>
                                         <Border x:Name="CallPeerScreenTile"
@@ -2761,14 +3071,19 @@
                                                        Stretch="Uniform"/>
                                                 <Border Background="#A0000000"
                                                         HorizontalAlignment="Left"
-                                                        VerticalAlignment="Top"
+                                                        VerticalAlignment="Bottom"
                                                         Margin="8"
                                                         Padding="8,4"
                                                         CornerRadius="4">
-                                                    <TextBlock Text="Friend screen"
+                                                    <TextBlock x:Name="CallPeerScreenShareLabel"
+                                                               Text="Friend screen"
                                                                FontSize="11"
                                                                Foreground="#f2f3f5"/>
                                                 </Border>
+                                                <Border x:Name="CallPeerScreenShareHitOverlay"
+                                                        Background="#01000000"
+                                                        Tag="Peer"
+                                                        MouseLeftButtonDown="CallScreenShareTile_OnMouseLeftButtonDown"/>
                                                 <Border x:Name="CallScreenShareJoinOverlay"
                                                         Background="#D0111214"
                                                         Cursor="Hand"
@@ -2776,7 +3091,7 @@
                                                         MouseLeftButtonUp="CallScreenShareJoinOverlay_OnMouseLeftButtonUp">
                                                     <TextBlock Text="Нажмите, чтобы смотреть демонстрацию экрана"
                                                                TextAlignment="Center"
-                                                               FontSize="13"
+                                                               FontSize="10"
                                                                FontWeight="SemiBold"
                                                                TextWrapping="Wrap"
                                                                HorizontalAlignment="Center"
@@ -2792,6 +3107,11 @@
                                                   HorizontalAlignment="Stretch"
                                                   VerticalAlignment="Stretch"
                                                   ClipToBounds="True"/>
+                                    <Border x:Name="CallScreenShareWebViewHitOverlay"
+                                            Visibility="Collapsed"
+                                            Background="#01000000"
+                                            Cursor="Hand"
+                                            MouseLeftButtonDown="CallScreenShareStage_OnMouseLeftButtonDown"/>
                                     <StackPanel HorizontalAlignment="Right"
                                                 VerticalAlignment="Bottom"
                                                 Orientation="Horizontal"
@@ -2823,32 +3143,72 @@
                                     </StackPanel>
                                 </Grid>
                             </Border>
+                            </WrapPanel>
                         </StackPanel>
 
-                        <StackPanel x:Name="CallControlsPanel"
-                                    Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    VerticalAlignment="Bottom"
-                                    HorizontalAlignment="Right">
+                        <Border x:Name="CallControlsShell"
+                                Grid.ColumnSpan="2"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Bottom"
+                                Padding="12"
+                                Background="#E6161921"
+                                BorderBrush="#12FFFFFF"
+                                BorderThickness="1"
+                                CornerRadius="22">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="38" ShadowDepth="9" Opacity="0.48" Color="#000000"/>
+                            </Border.Effect>
+                            <Grid x:Name="CallControlsPanel"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Bottom">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="CallControlsLeftSeparator" Grid.Column="2" Width="1" Height="32" Background="#14FFFFFF" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <Border x:Name="CallControlsMiddleSeparator" Grid.Column="5" Width="1" Height="32" Background="#14FFFFFF" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <Border x:Name="CallControlsDangerSeparator" Grid.Column="8" Width="1" Height="32" Background="#14FFFFFF" VerticalAlignment="Center" Visibility="Collapsed"/>
                             <Button x:Name="AcceptCallButton"
+                                    Grid.Column="3"
                                     Width="44"
-                                    Height="36"
+                                    Height="44"
                                     Margin="0,0,8,0"
-                                    Content="✓"
                                     Style="{StaticResource GhostButton}"
-                                    Click="AcceptCallButton_OnClick"/>
+                                    ToolTip="Accept call"
+                                    Click="AcceptCallButton_OnClick">
+                                <Viewbox Width="20" Height="20">
+                                    <Path Fill="#57f287"
+                                          Stretch="Uniform"
+                                          Data="M9,16.2L4.8,12L3.4,13.4L9,19L21,7L19.6,5.6L9,16.2Z"/>
+                                </Viewbox>
+                            </Button>
                             <Button x:Name="DeclineCallButton"
+                                    Grid.Column="4"
                                     Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Content="✕"
+                                    Height="44"
+                                    Margin="0"
                                     Style="{StaticResource GhostButton}"
-                                    Click="DeclineCallButton_OnClick"/>
+                                    ToolTip="Decline call"
+                                    Click="DeclineCallButton_OnClick">
+                                <Viewbox Width="19" Height="19">
+                                    <Path Fill="#ff8f98"
+                                          Stretch="Uniform"
+                                          Data="M18.3,5.71L16.89,4.29L12,9.17L7.11,4.29L5.7,5.71L10.59,10.59L5.7,15.48L7.11,16.89L12,12L16.89,16.89L18.3,15.48L13.41,10.59L18.3,5.71Z"/>
+                                </Viewbox>
+                            </Button>
                             <Button x:Name="MicMuteButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="0"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Microphone"
                                     ToolTip="Mute microphone"
                                     Click="MicMuteButton_OnClick">
                                 <Grid Width="18" Height="18" RenderTransformOrigin="0.5,0.5">
@@ -2871,10 +3231,9 @@
                                 </Grid>
                             </Button>
                             <Button x:Name="HeadphonesMuteButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="1"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Headphones"
                                     ToolTip="Deafen"
                                     Click="HeadphonesMuteButton_OnClick">
                                 <Grid Width="18" Height="18" RenderTransformOrigin="0.5,0.5">
@@ -2897,10 +3256,9 @@
                                 </Grid>
                             </Button>
                             <Button x:Name="CallNetworkButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="7"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Network"
                                     ToolTip="Network status"
                                     Visibility="Collapsed"
                                     Click="CallNetworkButton_OnClick">
@@ -3031,10 +3389,9 @@
                                 </Border>
                             </Popup>
                             <Button x:Name="SoundboardButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="6"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Sounds"
                                     ToolTip="Soundboard"
                                     Click="SoundboardButton_OnClick">
                                 <Viewbox Width="19" Height="19">
@@ -3043,11 +3400,36 @@
                                           Data="M12,3V13.55A4,4 0 1 0 14,17V7H20V3H12M10,17A2,2 0 1 1 8,15A2,2 0 0 1 10,17Z"/>
                                 </Viewbox>
                             </Button>
+                            <Button x:Name="CameraToggleButton"
+                                    Grid.Column="3"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Camera"
+                                    ToolTip="Turn camera on"
+                                    Visibility="Collapsed"
+                                    Click="CameraToggleButton_OnClick">
+                                <Grid Width="20" Height="20" RenderTransformOrigin="0.5,0.5">
+                                    <Grid.RenderTransform>
+                                        <ScaleTransform x:Name="CameraToggleIconScale" ScaleX="1" ScaleY="1"/>
+                                    </Grid.RenderTransform>
+                                    <Viewbox Width="20" Height="20">
+                                        <Path x:Name="CameraToggleIcon"
+                                              Fill="#f2f3f5"
+                                              Stretch="Uniform"
+                                              Data="M17,10.5V6C17,5.45 16.55,5 16,5H4C3.45,5 3,5.45 3,6V18C3,18.55 3.45,19 4,19H16C16.55,19 17,18.55 17,18V13.5L21,17.5V6.5L17,10.5Z"/>
+                                    </Viewbox>
+                                    <Path x:Name="CameraToggleSlash"
+                                          Stroke="#ff6b6b"
+                                          StrokeThickness="2.5"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          Opacity="0"
+                                          Data="M2,16 L16,2"/>
+                                </Grid>
+                            </Button>
                             <Button x:Name="ScreenShareButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="4"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Share screen"
                                     ToolTip="Share screen"
                                     Click="ScreenShareButton_OnClick">
                                 <Grid Width="19" Height="19" RenderTransformOrigin="0.5,0.5">
@@ -3064,18 +3446,21 @@
                             </Button>
                             <Popup x:Name="SoundboardPopup"
                                    PlacementTarget="{Binding ElementName=SoundboardButton}"
-                                   Placement="Bottom"
-                                   VerticalOffset="8"
+                                   Placement="Top"
+                                   VerticalOffset="-14"
                                    AllowsTransparency="True"
                                    PopupAnimation="Fade"
                                    StaysOpen="False">
-                                <Border Width="370"
+                                <Border Width="320"
                                         MaxHeight="460"
                                         Padding="14"
-                                        Background="#202225"
-                                        BorderBrush="#4e5058"
+                                        Background="#FA0E1119"
+                                        BorderBrush="#16FFFFFF"
                                         BorderThickness="1"
-                                        CornerRadius="8">
+                                        CornerRadius="16">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="42" ShadowDepth="12" Opacity="0.55" Color="#000000"/>
+                                    </Border.Effect>
                                     <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
@@ -3243,10 +3628,9 @@
                                 </Border>
                             </Popup>
                             <Button x:Name="CallScreenShareFullscreenControlButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="0,0,8,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="4"
+                                    Style="{StaticResource CallToolbarButton}"
+                                    Tag="Focus"
                                     ToolTip="Fullscreen screen share"
                                     Visibility="Collapsed"
                                     Click="CallScreenShareFullscreenButton_OnClick">
@@ -3258,16 +3642,21 @@
                                 </Viewbox>
                             </Button>
                             <Button x:Name="EndCallButton"
-                                    Width="44"
-                                    Height="36"
-                                    Content="☎"
-                                    Style="{StaticResource GhostButton}"
-                                    Click="EndCallButton_OnClick"/>
+                                    Grid.Column="9"
+                                    Style="{StaticResource CallToolbarDangerButton}"
+                                    Tag="End call"
+                                    ToolTip="End call"
+                                    Click="EndCallButton_OnClick">
+                                <Viewbox Width="20" Height="20">
+                                    <Path Fill="#ff8f98"
+                                          Stretch="Uniform"
+                                          Data="M21,15.46L15.73,14.85L13.21,17.37C10.38,15.93 8.06,13.62 6.63,10.79L9.16,8.26L8.54,3H3.03C2.45,13.18 10.82,21.55 21,20.97V15.46Z"/>
+                                </Viewbox>
+                            </Button>
                             <Button x:Name="LeaveScreenViewButton"
-                                    Width="44"
-                                    Height="36"
-                                    Margin="8,0,0,0"
-                                    Style="{StaticResource GhostButton}"
+                                    Grid.Column="9"
+                                    Style="{StaticResource CallToolbarDangerButton}"
+                                    Tag="Leave screen"
                                     ToolTip="Leave screen view"
                                     Visibility="Collapsed"
                                     Click="LeaveScreenViewButton_OnClick">
@@ -3278,14 +3667,20 @@
                                 </Viewbox>
                             </Button>
                             <Button x:Name="EndCallMenuButton"
-                                    Width="26"
-                                    Height="36"
-                                    Margin="2,0,0,0"
-                                    Content="⌄"
+                                    Grid.Column="10"
+                                    Width="28"
+                                    Height="44"
+                                    Margin="4,0,0,0"
                                     Style="{StaticResource GhostButton}"
                                     ToolTip="Call actions"
                                     Visibility="Collapsed"
-                                    Click="EndCallMenuButton_OnClick"/>
+                                    Click="EndCallMenuButton_OnClick">
+                                <Viewbox Width="12" Height="12">
+                                    <Path Fill="#f2f3f5"
+                                          Stretch="Uniform"
+                                          Data="M7.41,8.59L12,13.17L16.59,8.59L18,10L12,16L6,10L7.41,8.59Z"/>
+                                </Viewbox>
+                            </Button>
                             <Popup x:Name="EndCallActionPopup"
                                    PlacementTarget="{Binding ElementName=EndCallMenuButton}"
                                    Placement="Top"
@@ -3315,14 +3710,17 @@
                                 </Border>
                             </Popup>
                             <Button x:Name="JoinCallButton"
-                                    Width="64"
-                                    Height="36"
-                                    Margin="8,0,0,0"
+                                    Grid.Column="3"
+                                    Grid.ColumnSpan="2"
+                                    Width="84"
+                                    Height="40"
+                                    Margin="0"
                                     Content="Join"
                                     Style="{StaticResource PrimaryButton}"
                                     Visibility="Collapsed"
                                     Click="JoinCallButton_OnClick"/>
-                        </StackPanel>
+                            </Grid>
+                        </Border>
                     </Grid>
                 </Border>
 
@@ -4474,12 +4872,16 @@
                                             </MenuItem>
                                         </ContextMenu>
                                     </Border.ContextMenu>
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Background" Value="Transparent"/>
-                                            <Setter Property="Padding" Value="0,2"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsCompactContinuation}" Value="True">
+                                     <Border.Style>
+                                         <Style TargetType="Border">
+                                             <Setter Property="Background" Value="Transparent"/>
+                                             <Setter Property="Padding" Value="0,2"/>
+                                             <Style.Triggers>
+                                                 <DataTrigger Binding="{Binding IsReplyJumpTarget}" Value="True">
+                                                     <Setter Property="Background" Value="#38406f"/>
+                                                     <Setter Property="CornerRadius" Value="6"/>
+                                                 </DataTrigger>
+                                                 <DataTrigger Binding="{Binding IsCompactContinuation}" Value="True">
                                                     <Setter Property="Padding" Value="0"/>
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
@@ -4540,9 +4942,12 @@
                                             </TextBlock.Style>
                                         </TextBlock>
                                         <Border Background="#202225"
-                                                CornerRadius="4"
-                                                Padding="8,5"
-                                                Margin="0,0,0,8">
+                                                CornerRadius="5"
+                                                Padding="7,5"
+                                                Margin="0,0,0,8"
+                                                Cursor="Hand"
+                                                ToolTip="Go to original message"
+                                                MouseLeftButtonUp="ReplyPreview_OnMouseLeftButtonUp">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -4553,10 +4958,136 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
-                                            <TextBlock Text="{Binding ReplyPreview}"
-                                                       Foreground="{StaticResource MutedBrush}"
-                                                       FontSize="12"
-                                                       TextTrimming="CharacterEllipsis"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="22"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="18" Height="18" CornerRadius="9" Background="#4e5058" VerticalAlignment="Center">
+                                                    <Grid ClipToBounds="True">
+                                                        <Image Source="{Binding ReplyAuthorAvatarImageSource}" Stretch="UniformToFill">
+                                                            <Image.Style>
+                                                                <Style TargetType="Image">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsReplyAuthorAvatarImage}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Image.Style>
+                                                        </Image>
+                                                        <MediaElement LoadedBehavior="Manual" UnloadedBehavior="Stop" Loaded="AvatarVideo_OnLoaded" MediaEnded="AvatarVideo_OnMediaEnded" Tag="ReplyAuthor" Stretch="UniformToFill" IsMuted="True" Volume="0">
+                                                            <MediaElement.Style>
+                                                                <Style TargetType="MediaElement">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsReplyAuthorAvatarVideo}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </MediaElement.Style>
+                                                        </MediaElement>
+                                                        <TextBlock Text="{Binding ReplyAuthorInitials}" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="8" FontWeight="Bold" Foreground="#f2f3f5">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsReplyAuthorAvatarImage}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding IsReplyAuthorAvatarVideo}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Grid>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding ReplyAuthorDisplayName}" Foreground="#aeb5ff" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding ReplyPreview}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                        <Border Width="360"
+                                                MaxWidth="420"
+                                                Margin="0,4,0,8"
+                                                Padding="14"
+                                                Background="#30333b"
+                                                BorderBrush="#4a4f5c"
+                                                BorderThickness="1"
+                                                CornerRadius="14">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsServerInviteMessage}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="6"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="4"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="10"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <TextBlock Text="{Binding ServerInviteTitle}"
+                                                           Foreground="{StaticResource TextBrush}"
+                                                           FontSize="16"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Grid.Row="2"
+                                                           Text="{Binding ServerInviteChannelText}"
+                                                           Foreground="{StaticResource MutedBrush}"
+                                                           FontSize="12"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Grid.Row="4"
+                                                           Text="{Binding ServerInviteVoiceParticipantsText}"
+                                                           Foreground="{StaticResource SubtleBrush}"
+                                                           FontSize="12"
+                                                           TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasServerInviteVoiceParticipants}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <Grid Grid.Row="6">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="10"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding ServerInviteExpiryText}"
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               FontSize="11"
+                                                               VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <Button Grid.Column="2"
+                                                            Content="{Binding ServerInviteButtonText}"
+                                                            Tag="{Binding}"
+                                                            MinWidth="96"
+                                                            Height="34"
+                                                            Style="{StaticResource GhostButton}"
+                                                            IsEnabled="{Binding CanJoinServerInvite}"
+                                                            Click="ServerInviteJoinButton_OnClick"/>
+                                                </Grid>
+                                            </Grid>
                                         </Border>
                                         <ItemsControl ItemsSource="{Binding TextSegments}">
                                             <ItemsControl.Style>
@@ -4968,45 +5499,76 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="44"/>
-                                                    <ColumnDefinition Width="12"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="12"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="44" Height="44" CornerRadius="7" Background="#343956">
-                                                    <TextBlock Text="{Binding FileTypeText}"
-                                                               Foreground="#c8ceff"
-                                                               FontSize="9"
-                                                               FontWeight="Bold"
-                                                               TextTrimming="CharacterEllipsis"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center"/>
+                                            <StackPanel>
+                                                <Border Margin="0,0,0,10"
+                                                        Padding="12"
+                                                        Background="#2b2e34"
+                                                        BorderBrush="#3d414b"
+                                                        BorderThickness="1"
+                                                        CornerRadius="7">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasTextPreview}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding TextPreview}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="12"
+                                                                   Foreground="{StaticResource TextBrush}"
+                                                                   TextWrapping="Wrap"
+                                                                   MaxHeight="220"/>
+                                                        <TextBlock Text="{Binding TextPreviewFooter}"
+                                                                   Margin="0,8,0,0"
+                                                                   Foreground="{StaticResource MutedBrush}"
+                                                                   FontSize="10"/>
+                                                    </StackPanel>
                                                 </Border>
-                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="270">
-                                                    <TextBlock Text="{Binding FileName}"
-                                                               FontWeight="SemiBold"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding FileSizeText}"
-                                                               Margin="0,3,0,0"
-                                                               Foreground="{StaticResource MutedBrush}"
-                                                               FontSize="11"/>
-                                                </StackPanel>
-                                                <Button Grid.Column="4"
-                                                        Tag="{Binding}"
-                                                        Width="36"
-                                                        Height="36"
-                                                        Padding="0"
-                                                        Style="{StaticResource GhostButton}"
-                                                        ToolTip="Download or open file"
-                                                        Click="MessageFileOpenButton_OnClick">
-                                                    <Path Width="18" Height="18" Stretch="Uniform"
-                                                          Fill="{StaticResource TextBrush}"
-                                                          Data="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
-                                                </Button>
-                                            </Grid>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="44"/>
+                                                        <ColumnDefinition Width="12"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="12"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Width="44" Height="44" CornerRadius="7" Background="#343956">
+                                                        <TextBlock Text="{Binding FileTypeText}"
+                                                                   Foreground="#c8ceff"
+                                                                   FontSize="9"
+                                                                   FontWeight="Bold"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" MaxWidth="270">
+                                                        <TextBlock Text="{Binding FileName}"
+                                                                   FontWeight="SemiBold"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding FileSizeText}"
+                                                                   Margin="0,3,0,0"
+                                                                   Foreground="{StaticResource MutedBrush}"
+                                                                   FontSize="11"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="4"
+                                                            Tag="{Binding}"
+                                                            Width="36"
+                                                            Height="36"
+                                                            Padding="0"
+                                                            Style="{StaticResource GhostButton}"
+                                                            ToolTip="Download or open file"
+                                                            Click="MessageFileOpenButton_OnClick">
+                                                        <Path Width="18" Height="18" Stretch="Uniform"
+                                                              Fill="{StaticResource TextBrush}"
+                                                              Data="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
+                                                    </Button>
+                                                </Grid>
+                                            </StackPanel>
                                         </Border>
                                         <ItemsControl ItemsSource="{Binding ReactionItems}"
                                                       Margin="0,8,0,0">
@@ -5237,6 +5799,20 @@
                             <ListBox.Resources>
                                 <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource ChatScrollBarStyle}"/>
                             </ListBox.Resources>
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="{x:Type ListBoxItem}">
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="{x:Type ListBoxItem}">
+                                                <ContentPresenter/>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,3"
@@ -5295,24 +5871,6 @@
                                                             <Setter Property="Visibility" Value="Collapsed"/>
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding CanWriteMessage}" Value="True">
-                                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </MenuItem.Style>
-                                                </MenuItem>
-                                                <MenuItem Header="Make server owner" Click="GroupMemberMakeOwnerMenuItem_OnClick">
-                                                    <MenuItem.Icon>
-                                                        <Viewbox Width="17" Height="17">
-                                                            <Path Style="{StaticResource ContextMenuIconPath}"
-                                                                  Data="M5,16L3,5L8.5,10L12,4L15.5,10L21,5L19,16H5M19,19H5V21H19V19Z"/>
-                                                        </Viewbox>
-                                                    </MenuItem.Icon>
-                                                    <MenuItem.Style>
-                                                        <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
-                                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding CanMakeOwner}" Value="True">
                                                                     <Setter Property="Visibility" Value="Visible"/>
                                                                 </DataTrigger>
                                                             </Style.Triggers>
@@ -5378,7 +5936,9 @@
                                         <Border Grid.Row="1"
                                                 CornerRadius="7"
                                                 Padding="6"
-                                                Background="#23252B">
+                                                Background="#23252B"
+                                                Cursor="Hand"
+                                                MouseLeftButtonUp="GroupMemberRow_OnMouseLeftButtonUp">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="32"/>
@@ -5453,22 +6013,6 @@
                                                                Foreground="{StaticResource MutedBrush}"
                                                                FontSize="10"
                                                                Margin="0,1,0,0"/>
-                                                    <TextBlock Text="{Binding RoleSummary}"
-                                                               Foreground="#9fb1ff"
-                                                               FontSize="10"
-                                                               Margin="0,1,0,0"
-                                                               TextTrimming="CharacterEllipsis">
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HasRoleSummary}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible"/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
-                                                    </TextBlock>
                                                     <DockPanel Margin="0,2,0,0">
                                                         <Ellipse Width="7"
                                                                  Height="7"
@@ -5997,41 +6541,155 @@
                             </Border>
                         </Canvas>
 
-                        <Border x:Name="ForwardPanel"
-                                Visibility="Collapsed"
-                                HorizontalAlignment="Right"
-                                Width="300"
-                                MaxHeight="280"
-                                Background="#202225"
-                                BorderBrush="#45474f"
-                                BorderThickness="1"
-                                CornerRadius="7"
-                                Padding="10"
-                                Margin="0,8,0,0">
-                            <DockPanel>
-                                <TextBlock DockPanel.Dock="Top"
-                                           Text="Forward to"
-                                           FontWeight="SemiBold"
-                                           Margin="0,0,0,8"/>
-                                <ListBox x:Name="ForwardContactsList"
-                                         MouseDoubleClick="ForwardContactsList_OnMouseDoubleClick">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Margin="8,6">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
-                                                <TextBlock Text="{Binding ShortId}"
-                                                           Foreground="{StaticResource MutedBrush}"
-                                                           FontSize="11"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </DockPanel>
-                        </Border>
                     </Grid>
                 </Grid>
             </Border>
         </Grid>
+
+        <Border x:Name="ForwardOverlay"
+                Grid.ColumnSpan="2"
+                Visibility="Collapsed"
+                Panel.ZIndex="80"
+                Background="#B8111215"
+                Opacity="0"
+                MouseLeftButtonUp="ForwardOverlay_OnMouseLeftButtonUp">
+            <Border x:Name="ForwardDialog"
+                    Width="520"
+                    MaxHeight="680"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Margin="24"
+                    Padding="20"
+                    Background="#2b2d31"
+                    BorderBrush="#45474f"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    RenderTransformOrigin="0.5,0.5">
+                <Border.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="ForwardDialogScale" ScaleX="0.96" ScaleY="0.96"/>
+                        <TranslateTransform x:Name="ForwardDialogTranslate" Y="12"/>
+                    </TransformGroup>
+                </Border.RenderTransform>
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.4" Color="#000000"/>
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="14"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="10"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="12"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="12"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <TextBlock Text="Переслать" FontSize="21" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <Button Width="34" Height="34" HorizontalAlignment="Right" Background="#363940" BorderThickness="0" Cursor="Hand" ToolTip="Закрыть" Click="ForwardCloseButton_OnClick">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="7">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#4b4f59"/></Trigger>
+                                        <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#5865f2"/></Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Viewbox Width="12" Height="12"><Path Stroke="#f2f3f5" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M0,0 L10,10 M10,0 L0,10"/></Viewbox>
+                        </Button>
+                    </Grid>
+                    <TextBox x:Name="ForwardSearchInput"
+                             Grid.Row="2"
+                             Height="38"
+                             Padding="12,7"
+                             Background="#1e1f22"
+                             BorderBrush="#3f424b"
+                             BorderThickness="1"
+                             Foreground="{StaticResource TextBrush}"
+                             CaretBrush="{StaticResource TextBrush}"
+                             TextChanged="ForwardSearchInput_OnTextChanged"
+                             ToolTip="Поиск друга"/>
+                    <ListBox x:Name="ForwardContactsList"
+                             Grid.Row="4"
+                             MinHeight="148"
+                             MaxHeight="240"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             SelectionChanged="ForwardContactsList_OnSelectionChanged">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="10,8"/>
+                                <Setter Property="Margin" Value="0,1"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" CornerRadius="6"><ContentPresenter/></Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#363940"/></Trigger>
+                                                <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#5865f2"/></Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Border Width="30" Height="30" CornerRadius="15" Background="#4e5058" VerticalAlignment="Center">
+                                        <Grid ClipToBounds="True">
+                                            <Image Source="{Binding AvatarImageSource}" Stretch="UniformToFill">
+                                                <Image.Style><Style TargetType="Image"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsAvatarImage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Image.Style>
+                                            </Image>
+                                            <TextBlock Text="{Binding Initials}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" FontSize="11">
+                                                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding IsAvatarImage}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding ShortId}" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <Border Grid.Row="6" Padding="10" Background="#202225" BorderBrush="#3f424b" BorderThickness="1" CornerRadius="6">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="Пересылается" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="ForwardPreviewText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+                    <Grid Grid.Row="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="104"/></Grid.ColumnDefinitions>
+                        <TextBox x:Name="ForwardCommentInput"
+                                 MinHeight="44"
+                                 MaxHeight="90"
+                                 Padding="12,9"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Background="#1e1f22"
+                                 BorderBrush="#3f424b"
+                                 BorderThickness="1"
+                                 Foreground="{StaticResource TextBrush}"
+                                 CaretBrush="{StaticResource TextBrush}"
+                                 ToolTip="Добавить сообщение"/>
+                        <Button x:Name="ForwardSendButton" Grid.Column="2" Height="44" Content="Отправить" Style="{StaticResource PrimaryButton}" Click="ForwardSendButton_OnClick"/>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Border>
 
         <Border x:Name="ServerRolesOverlay"
                 Grid.ColumnSpan="2"
@@ -7230,6 +7888,22 @@
                                                                             </Style>
                                                                         </CheckBox.Style>
                                                                     </CheckBox>
+                                                                    <CheckBox Content="Video"
+                                                                              IsChecked="{Binding CanVideo, Mode=TwoWay}"
+                                                                              IsEnabled="{Binding CanEdit}"
+                                                                              Checked="ServerChannelRoleAccessCheck_OnChanged"
+                                                                              Unchecked="ServerChannelRoleAccessCheck_OnChanged">
+                                                                        <CheckBox.Style>
+                                                                            <Style TargetType="CheckBox" BasedOn="{StaticResource SmoothCheckBox}">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding IsVoice}" Value="True">
+                                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </CheckBox.Style>
+                                                                    </CheckBox>
                                                                 </UniformGrid>
                                                             </StackPanel>
                                                         </Border>
@@ -7421,6 +8095,7 @@
                                                 <Button Grid.Column="2"
                                                         Content="{Binding InviteButtonText}"
                                                         Style="{StaticResource GhostButton}"
+                                                        IsEnabled="{Binding CanInvite}"
                                                         Click="ServerInviteFriendButton_OnClick"/>
                                             </Grid>
                                         </Border>
@@ -7588,7 +8263,7 @@
                                         <TextBlock x:Name="SettingsNotificationsTabText" Text="Notifications" FontWeight="SemiBold"/>
                                     </DockPanel>
                                 </Button>
-                                <Button x:Name="SettingsDataTabButton" Visibility="Collapsed"
+                                <Button x:Name="SettingsDataTabButton"
                                         Style="{StaticResource StatusMenuButton}"
                                         Background="Transparent"
                                         HorizontalContentAlignment="Left"
@@ -7596,7 +8271,7 @@
                                         Click="SettingsDataTabButton_OnClick">
                                     <DockPanel>
                                         <TextBlock Text="&#x2601;" FontFamily="Segoe UI Symbol" FontSize="15" Margin="0,0,10,0"/>
-                                        <TextBlock Text="Data" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="SettingsDataTabText" Text="Data" FontWeight="SemiBold"/>
                                     </DockPanel>
                                 </Button>
                                 <Button x:Name="SettingsSignOutTabButton"
@@ -7686,8 +8361,8 @@
                                 <Button DockPanel.Dock="Right" Width="34" Height="34" Content="x"
                                         Style="{StaticResource GhostButton}" Click="SettingsCloseButton_OnClick"/>
                                 <StackPanel>
-                                    <TextBlock Text="Data" FontSize="22" FontWeight="Bold"/>
-                                    <TextBlock Text="Choose where FluxChat keeps conversations and attachments."
+                                    <TextBlock x:Name="SettingsDataTitleText" Text="Data" FontSize="22" FontWeight="Bold"/>
+                                    <TextBlock x:Name="SettingsDataSubtitleText" Text="Choose how FluxChat stores local cache."
                                                Foreground="{StaticResource MutedBrush}" FontSize="13" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </DockPanel>
@@ -8394,6 +9069,7 @@
                                             CornerRadius="8" Padding="16">
                                         <StackPanel>
                                             <TextBlock Text="STORAGE" Foreground="{StaticResource SubtleBrush}"
+                                                       x:Name="SettingsDataStorageTitleText"
                                                        FontSize="11" FontWeight="Bold"/>
                                             <Grid Margin="0,12,0,0">
                                                 <Grid.ColumnDefinitions>
@@ -8401,39 +9077,37 @@
                                                     <ColumnDefinition Width="210"/>
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel VerticalAlignment="Center">
-                                                    <TextBlock Text="Chat history" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="Local remains the primary cache in this version."
+                                                    <TextBlock x:Name="SettingsDataChatHistoryTitleText" Text="Chat history" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="SettingsDataChatHistoryBodyText" Text="Stored locally as a temporary cache. VPS remains the main source."
                                                                Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
                                                 </StackPanel>
                                                 <ComboBox x:Name="SettingsChatStorageCombo" Grid.Column="1"
                                                           SelectionChanged="SettingsDataStorageCombo_OnSelectionChanged">
-                                                    <ComboBoxItem Content="Local computer" Tag="LocalComputer"/>
-                                                    <ComboBoxItem Content="Google Drive backup" Tag="GoogleDrive"/>
+                                                    <ComboBoxItem x:Name="SettingsChatStorageLocalItem" Content="Local cache" Tag="LocalComputer"/>
                                                 </ComboBox>
                                             </Grid>
                                             <Grid Margin="0,14,0,0">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
                                                 <StackPanel VerticalAlignment="Center">
-                                                    <TextBlock Text="Images" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="Choose local storage or Drive backup."
+                                                    <TextBlock x:Name="SettingsDataImagesTitleText" Text="Images" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="SettingsDataImagesBodyText" Text="Cached on this device and cleaned automatically."
                                                                Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
                                                 </StackPanel>
                                                 <ComboBox x:Name="SettingsImageStorageCombo" Grid.Column="1"
                                                           SelectionChanged="SettingsDataStorageCombo_OnSelectionChanged">
-                                                    <ComboBoxItem Content="Local computer" Tag="LocalComputer"/>
-                                                    <ComboBoxItem Content="Google Drive" Tag="GoogleDrive"/>
+                                                    <ComboBoxItem x:Name="SettingsImageStorageLocalItem" Content="Local cache" Tag="LocalComputer"/>
                                                 </ComboBox>
                                             </Grid>
                                             <Grid Margin="0,14,0,0">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
                                                 <StackPanel VerticalAlignment="Center">
-                                                    <TextBlock Text="Videos and files" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="Files up to 5 GB are uploaded directly to your Drive."
+                                                    <TextBlock x:Name="SettingsDataFilesTitleText" Text="Videos and files" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="SettingsDataFilesBodyText" Text="Cached locally with the file cache limit below."
                                                                Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
                                                 </StackPanel>
                                                 <ComboBox x:Name="SettingsFileStorageCombo" Grid.Column="1"
                                                           SelectionChanged="SettingsDataStorageCombo_OnSelectionChanged">
-                                                    <ComboBoxItem Content="Google Drive" Tag="GoogleDrive"/>
+                                                    <ComboBoxItem x:Name="SettingsFileStorageLocalItem" Content="Local cache" Tag="LocalComputer"/>
                                                 </ComboBox>
                                             </Grid>
                                         </StackPanel>
@@ -8442,60 +9116,82 @@
                                     <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
                                             CornerRadius="8" Padding="16" Margin="0,14,0,0">
                                         <StackPanel>
-                                            <TextBlock Text="GOOGLE DRIVE" Foreground="{StaticResource SubtleBrush}"
-                                                       FontSize="11" FontWeight="Bold"/>
-                                            <TextBlock x:Name="GoogleDriveStatusText" Text="Not connected"
-                                                       Margin="0,8,0,0" FontWeight="SemiBold"/>
-                                            <TextBlock Text="FluxChat requests drive.file access and can only manage files created by FluxChat."
-                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,10"/>
-                                            <TextBox x:Name="GoogleDriveClientIdInput" MinHeight="36"
-                                                     ToolTip="Google OAuth Desktop client ID (public identifier)"/>
-                                            <TextBlock Text="OAuth client ID is needed for self-built public releases; no private client secret is stored in FluxChat."
-                                                       Foreground="{StaticResource SubtleBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,5,0,10"/>
-                                            <StackPanel Orientation="Horizontal">
-                                                <Button x:Name="GoogleDriveConnectButton" Content="Connect Google Drive"
-                                                        Style="{StaticResource PrimaryButton}" Click="GoogleDriveConnectButton_OnClick"/>
-                                                <Button x:Name="GoogleDriveDisconnectButton" Content="Disconnect"
-                                                        Margin="8,0,0,0" Style="{StaticResource GhostButton}"
-                                                        Visibility="Collapsed" Click="GoogleDriveDisconnectButton_OnClick"/>
-                                                <Button x:Name="GoogleDriveBackupButton" Content="Back up now"
-                                                        Margin="8,0,0,0" Style="{StaticResource GhostButton}"
-                                                        Click="GoogleDriveBackupButton_OnClick"/>
-                                            </StackPanel>
-                                            <TextBlock x:Name="GoogleDriveBackupStatusText"
-                                                       Foreground="{StaticResource MutedBrush}" FontSize="11"
-                                                       TextWrapping="Wrap" Margin="0,9,0,0"/>
-                                        </StackPanel>
-                                    </Border>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock x:Name="LocalCacheTitleText"
+                                                               Text="LOCAL CACHE"
+                                                               Foreground="{StaticResource SubtleBrush}"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"/>
+                                                    <TextBlock x:Name="LocalCacheSizeText"
+                                                               Text="Calculating cache size..."
+                                                               Margin="0,6,12,0"
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               FontSize="12"/>
+                                                </StackPanel>
+                                                <CheckBox x:Name="AutoCleanLocalCacheCheck"
+                                                          Grid.Column="1"
+                                                          Content="Auto clean"
+                                                          Style="{StaticResource SmoothCheckBox}"
+                                                          Checked="LocalCacheSettings_OnChanged"
+                                                          Unchecked="LocalCacheSettings_OnChanged"/>
+                                            </Grid>
 
-                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
-                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
-                                        <StackPanel>
-                                            <TextBlock Text="HOW TO CONNECT GOOGLE DRIVE" Foreground="{StaticResource SubtleBrush}"
-                                                       FontSize="11" FontWeight="Bold"/>
-                                            <TextBlock Text="1. Open Google Cloud Console and select your FluxChat Drive project."
-                                                       TextWrapping="Wrap" Margin="0,12,0,0"/>
-                                            <TextBlock Text="2. Open APIs &amp; Services, then Library, find Google Drive API, and enable it."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="3. Open Google Auth Platform. If it is not configured, click Get started."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="4. In Branding, fill the app name, support email, and developer contact email, then save."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="5. In Audience, use External for a normal Google account. While testing, add your Google account as a test user."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="6. In Data Access, add the Google Drive API scope: drive.file."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="7. In Clients, create an OAuth client. Application type must be Desktop app."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="8. Copy the Client ID, paste it into the field above, then click Connect Google Drive."
-                                                       TextWrapping="Wrap" Margin="0,7,0,0"/>
-                                            <TextBlock Text="If Google Cloud says access is blocked, enable 2-step verification on your Google account and refresh the page after a few minutes."
-                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,12,0,0"/>
-                                            <Border Background="#282a30" BorderBrush="#3f424b" BorderThickness="1"
-                                                    CornerRadius="6" Padding="12" Margin="0,12,0,0">
-                                                <TextBlock Text="Important: use only the Client ID. FluxChat does not need a client secret for the Desktop OAuth flow."
-                                                           Foreground="{StaticResource SubtleBrush}" FontSize="11" TextWrapping="Wrap"/>
-                                            </Border>
+                                            <Grid Margin="0,14,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="180"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="LocalMessageCacheAgeText" Text="Message cache age" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="LocalMessageCacheDaysCombo"
+                                                          Grid.Column="1"
+                                                          SelectionChanged="LocalCacheSettings_OnChanged">
+                                                    <ComboBoxItem x:Name="LocalMessageCache7DaysItem" Content="7 days" Tag="7"/>
+                                                    <ComboBoxItem x:Name="LocalMessageCache30DaysItem" Content="30 days" Tag="30"/>
+                                                    <ComboBoxItem x:Name="LocalMessageCache90DaysItem" Content="90 days" Tag="90"/>
+                                                </ComboBox>
+                                            </Grid>
+
+                                            <Grid Margin="0,10,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="180"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="LocalMediaCacheLimitText" Text="Media cache limit" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="LocalMediaCacheLimitCombo"
+                                                          Grid.Column="1"
+                                                          SelectionChanged="LocalCacheSettings_OnChanged">
+                                                    <ComboBoxItem Content="300 MB" Tag="314572800"/>
+                                                    <ComboBoxItem Content="1 GB" Tag="1073741824"/>
+                                                    <ComboBoxItem Content="5 GB" Tag="5368709120"/>
+                                                </ComboBox>
+                                            </Grid>
+
+                                            <Grid Margin="0,10,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="180"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="LocalFileCacheLimitText" Text="File cache limit" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="LocalFileCacheLimitCombo"
+                                                          Grid.Column="1"
+                                                          SelectionChanged="LocalCacheSettings_OnChanged">
+                                                    <ComboBoxItem Content="300 MB" Tag="314572800"/>
+                                                    <ComboBoxItem Content="1 GB" Tag="1073741824"/>
+                                                    <ComboBoxItem Content="5 GB" Tag="5368709120"/>
+                                                </ComboBox>
+                                            </Grid>
+
+                                            <Button x:Name="ClearLocalCacheButton"
+                                                    Content="Clear cache"
+                                                    Margin="0,14,0,0"
+                                                    HorizontalAlignment="Left"
+                                                    Style="{StaticResource PrimaryButton}"
+                                                    Click="ClearLocalCacheButton_OnClick"/>
                                         </StackPanel>
                                     </Border>
 
@@ -8504,8 +9200,8 @@
                                         <Grid>
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                             <StackPanel>
-                                                <TextBlock Text="Reduced motion" FontWeight="SemiBold"/>
-                                                <TextBlock Text="Disables hover and press animations throughout FluxChat."
+                                                <TextBlock x:Name="SettingsReducedMotionTitleText" Text="Reduced motion" FontWeight="SemiBold"/>
+                                                <TextBlock x:Name="SettingsReducedMotionBodyText" Text="Disables hover and press animations throughout FluxChat."
                                                            Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0"/>
                                             </StackPanel>
                                             <CheckBox x:Name="SettingsReducedMotionCheck" Grid.Column="1"
@@ -8612,56 +9308,6 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
-                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
-                                        <StackPanel>
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel>
-                                                    <TextBlock Text="NOTIFICATION SOUNDS"
-                                                               Foreground="{StaticResource SubtleBrush}"
-                                                               FontSize="11"
-                                                               FontWeight="Bold"/>
-                                                    <TextBlock Text="Custom local sounds for incoming calls and messages."
-                                                               Foreground="{StaticResource MutedBrush}"
-                                                               FontSize="12"
-                                                               Margin="0,6,12,12"/>
-                                                </StackPanel>
-                                                <CheckBox x:Name="CustomizationSoundsEnabledCheck"
-                                                          Grid.Column="1"
-                                                          Style="{StaticResource SmoothCheckBox}"
-                                                          VerticalAlignment="Top"
-                                                          Checked="CustomizationSoundsEnabledCheck_OnChanged"
-                                                          Unchecked="CustomizationSoundsEnabledCheck_OnChanged"/>
-                                            </Grid>
-
-                                            <Grid Margin="0,0,0,12">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                                <StackPanel>
-                                                    <TextBlock Text="Incoming call ringtone" FontWeight="SemiBold"/>
-                                                    <TextBlock x:Name="CustomizationCallSoundPathText" Text="System sound" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="If the file is longer, FluxChat will let you choose a 20-second part." Foreground="{StaticResource MutedBrush}" FontSize="11"/>
-                                                </StackPanel>
-                                                <Button Grid.Column="2" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseCallSoundButton_OnClick"/>
-                                                <Button Grid.Column="4" Content="Play" Style="{StaticResource GhostButton}" Click="CustomizationPlayCallSoundButton_OnClick"/>
-                                                <Button Grid.Column="6" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetCallSoundButton_OnClick"/>
-                                            </Grid>
-
-                                            <Grid>
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                                <StackPanel>
-                                                    <TextBlock Text="Incoming message sound" FontWeight="SemiBold"/>
-                                                    <TextBlock x:Name="CustomizationMessageSoundPathText" Text="System sound" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
-                                                </StackPanel>
-                                                <Button Grid.Column="2" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseMessageSoundButton_OnClick"/>
-                                                <Button Grid.Column="4" Content="Play" Style="{StaticResource GhostButton}" Click="CustomizationPlayMessageSoundButton_OnClick"/>
-                                                <Button Grid.Column="6" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetMessageSoundButton_OnClick"/>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
                                 </StackPanel>
                             </ScrollViewer>
 
@@ -8838,6 +9484,14 @@
                                                 <ComboBoxItem Content="Everyone" Tag="Everyone"/>
                                                 <ComboBoxItem Content="Selected friends" Tag="Selected"/>
                                             </ComboBox>
+                                            <TextBlock x:Name="ActivityCallVisibilityTitleText" Text="WHO CAN SEE CALL AND SCREEN-SHARE ACTIVITY" Foreground="{StaticResource SubtleBrush}" FontSize="11" FontWeight="Bold" Margin="0,14,0,0"/>
+                                            <ComboBox x:Name="ActivityCallVisibilityCombo" Height="36" Margin="0,10,0,0" SelectionChanged="ActivityCallVisibilityCombo_OnSelectionChanged">
+                                                <ComboBoxItem Content="Call participants" Tag="Participants"/>
+                                                <ComboBoxItem Content="Everyone" Tag="Everyone"/>
+                                                <ComboBoxItem Content="Friends" Tag="Friends"/>
+                                                <ComboBoxItem Content="Selected friends" Tag="Selected"/>
+                                                <ComboBoxItem Content="No one" Tag="NoOne"/>
+                                            </ComboBox>
                                             <StackPanel x:Name="ActivitySelectedFriendsPanel" Visibility="Collapsed" Margin="0,12,0,0">
                                                 <TextBox x:Name="ActivityFriendSearchInput" MinHeight="36" ToolTip="Search friends" TextChanged="ActivityFriendSearchInput_OnTextChanged"/>
                                                 <ItemsControl x:Name="ActivityAudienceFriendsList" Margin="0,8,0,0">
@@ -8900,6 +9554,59 @@
                                             <CheckBox x:Name="DesktopNotificationsCheck" Content="Desktop notifications" Style="{StaticResource SmoothCheckBox}" Margin="0,14,0,0" Checked="NotificationSettingsCheck_OnChanged" Unchecked="NotificationSettingsCheck_OnChanged"/>
                                             <CheckBox x:Name="TaskbarFlashCheck" Content="Flash FluxChat on the taskbar for new messages" Style="{StaticResource SmoothCheckBox}" Margin="0,12,0,0" Checked="NotificationSettingsCheck_OnChanged" Unchecked="NotificationSettingsCheck_OnChanged"/>
                                             <CheckBox x:Name="FriendRequestNotificationsCheck" Content="Notify when someone sends a friend request" Style="{StaticResource SmoothCheckBox}" Margin="0,12,0,0" Checked="NotificationSettingsCheck_OnChanged" Unchecked="NotificationSettingsCheck_OnChanged"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#313338" BorderBrush="#45474f" BorderThickness="1"
+                                            CornerRadius="8" Padding="16" Margin="0,14,0,0">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock x:Name="NotificationsSoundsTitleText"
+                                                               Text="NOTIFICATION SOUNDS"
+                                                               Foreground="{StaticResource SubtleBrush}"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"/>
+                                                    <TextBlock x:Name="NotificationsSoundsBodyText"
+                                                               Text="Custom local sounds for incoming calls and messages."
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               FontSize="12"
+                                                               Margin="0,6,12,12"/>
+                                                </StackPanel>
+                                                <CheckBox x:Name="CustomizationSoundsEnabledCheck"
+                                                          Grid.Column="1"
+                                                          Style="{StaticResource SmoothCheckBox}"
+                                                          VerticalAlignment="Top"
+                                                          Checked="CustomizationSoundsEnabledCheck_OnChanged"
+                                                          Unchecked="CustomizationSoundsEnabledCheck_OnChanged"/>
+                                            </Grid>
+
+                                            <Grid Margin="0,0,0,12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock x:Name="NotificationsCallSoundTitleText" Text="Incoming call ringtone" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationCallSoundPathText" Text="System sound" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock x:Name="NotificationsCallSoundHintText" Text="If the file is longer, FluxChat will let you choose a 20-second part." Foreground="{StaticResource MutedBrush}" FontSize="11"/>
+                                                </StackPanel>
+                                                <Button x:Name="NotificationsChooseCallSoundButton" Grid.Column="2" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseCallSoundButton_OnClick"/>
+                                                <Button x:Name="NotificationsPlayCallSoundButton" Grid.Column="4" Content="Play" Style="{StaticResource GhostButton}" Click="CustomizationPlayCallSoundButton_OnClick"/>
+                                                <Button x:Name="NotificationsResetCallSoundButton" Grid.Column="6" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetCallSoundButton_OnClick"/>
+                                            </Grid>
+
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock x:Name="NotificationsMessageSoundTitleText" Text="Incoming message sound" FontWeight="SemiBold"/>
+                                                    <TextBlock x:Name="CustomizationMessageSoundPathText" Text="System sound" Foreground="{StaticResource MutedBrush}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <Button x:Name="NotificationsChooseMessageSoundButton" Grid.Column="2" Content="Choose" Style="{StaticResource GhostButton}" Click="CustomizationChooseMessageSoundButton_OnClick"/>
+                                                <Button x:Name="NotificationsPlayMessageSoundButton" Grid.Column="4" Content="Play" Style="{StaticResource GhostButton}" Click="CustomizationPlayMessageSoundButton_OnClick"/>
+                                                <Button x:Name="NotificationsResetMessageSoundButton" Grid.Column="6" Content="Reset" Style="{StaticResource GhostButton}" Click="CustomizationResetMessageSoundButton_OnClick"/>
+                                            </Grid>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
@@ -9203,6 +9910,157 @@
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    Foreground="{StaticResource TextBrush}"/>
+                        <Border Margin="0,12,0,0"
+                                Padding="10,7"
+                                CornerRadius="13"
+                                Background="#343741"
+                                BorderBrush="#464a55"
+                                BorderThickness="1">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasActivity}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="{Binding ActivityText}"
+                                       Foreground="#B7C4FF"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap"/>
+                        </Border>
+                        <StackPanel Margin="0,12,0,0">
+                            <WrapPanel>
+                                <ItemsControl ItemsSource="{Binding ServerRoles}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,6,6"
+                                                    Padding="8,4"
+                                                    CornerRadius="11"
+                                                    Background="#363942"
+                                                    BorderBrush="#4a4f5b"
+                                                    BorderThickness="1">
+                                                <StackPanel Orientation="Horizontal"
+                                                            VerticalAlignment="Center">
+                                                    <Ellipse Width="8"
+                                                             Height="8"
+                                                             Fill="{Binding Color}"
+                                                             Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               Foreground="{StaticResource TextBrush}"
+                                                               FontSize="12"
+                                                               FontWeight="SemiBold"/>
+                                                    <Button Margin="6,0,0,0"
+                                                            Width="18"
+                                                            Height="18"
+                                                            Padding="0"
+                                                            Foreground="{StaticResource MutedBrush}"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            Click="MiniProfileRemoveRoleButton_OnClick">
+                                                        <Viewbox Width="9" Height="9">
+                                                            <Path Data="M5,5 L19,19 M19,5 L5,19"
+                                                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                                                  StrokeThickness="2.6"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"/>
+                                                        </Viewbox>
+                                                        <Button.Style>
+                                                            <Style TargetType="Button">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Setter Property="Template">
+                                                                    <Setter.Value>
+                                                                        <ControlTemplate TargetType="Button">
+                                                                            <Border x:Name="Root"
+                                                                                    Background="{TemplateBinding Background}"
+                                                                                    CornerRadius="9">
+                                                                                <ContentPresenter HorizontalAlignment="Center"
+                                                                                                  VerticalAlignment="Center"/>
+                                                                            </Border>
+                                                                            <ControlTemplate.Triggers>
+                                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                                    <Setter TargetName="Root" Property="Background" Value="#454852"/>
+                                                                                    <Setter Property="Foreground" Value="#ffb4b4"/>
+                                                                                </Trigger>
+                                                                            </ControlTemplate.Triggers>
+                                                                        </ControlTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding CanRemove}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                    </Button>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button x:Name="MiniProfileAddRoleButton"
+                                        Width="28"
+                                        Height="28"
+                                        Padding="0"
+                                        Margin="0,0,6,6"
+                                        ToolTip="Добавить роль"
+                                        Background="#343741"
+                                        Foreground="{StaticResource TextBrush}"
+                                        BorderBrush="#4a4f5b"
+                                        BorderThickness="1"
+                                        Click="MiniProfileAddRoleButton_OnClick">
+                                    <Viewbox Width="13" Height="13">
+                                        <Path Data="M12,5 V19 M5,12 H19"
+                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                              StrokeThickness="2.8"
+                                              StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round"/>
+                                    </Viewbox>
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="{x:Type Button}">
+                                                        <Border x:Name="Root"
+                                                                Background="{TemplateBinding Background}"
+                                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                                CornerRadius="10">
+                                                            <ContentPresenter HorizontalAlignment="Center"
+                                                                              VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="Root" Property="Background" Value="#454852"/>
+                                                                <Setter TargetName="Root" Property="BorderBrush" Value="#626673"/>
+                                                            </Trigger>
+                                                            <Trigger Property="IsPressed" Value="True">
+                                                                <Setter TargetName="Root" Property="Background" Value="#30333B"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CanManageServerRoles}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </WrapPanel>
+                        </StackPanel>
                     </StackPanel>
 
                     <Grid Grid.Row="2"
@@ -9368,6 +10226,95 @@
                                Width="264"
                                Orientation="Horizontal"/>
                 </ScrollViewer>
+            </Border>
+
+            <Border x:Name="MiniProfileRolePicker"
+                    Width="240"
+                    Padding="10"
+                    CornerRadius="14"
+                    Background="#202225"
+                    BorderBrush="#4b4e57"
+                    BorderThickness="1"
+                    Visibility="Collapsed"
+                    MouseLeftButtonDown="MiniProfileCard_OnMouseLeftButtonDown">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="22" ShadowDepth="4" Opacity="0.38"/>
+                </Border.Effect>
+                <StackPanel>
+                    <TextBox x:Name="MiniProfileRoleSearchInput"
+                             Height="34"
+                             Padding="10,0"
+                             VerticalContentAlignment="Center"
+                             Background="#30333B"
+                             BorderBrush="#4b4e57"
+                             BorderThickness="1"
+                             Foreground="{StaticResource TextBrush}"
+                             FontSize="12"
+                             TextChanged="MiniProfileRoleSearchInput_OnTextChanged"/>
+                    <ItemsControl Margin="0,8,0,0"
+                                  ItemsSource="{Binding AvailableServerRoles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Height="34"
+                                        Margin="0,0,0,4"
+                                        Padding="8,0"
+                                        HorizontalContentAlignment="Stretch"
+                                        Background="#30333B"
+                                        BorderBrush="#434752"
+                                        BorderThickness="1"
+                                        Click="MiniProfileAvailableRoleButton_OnClick">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="{x:Type Button}">
+                                            <Border x:Name="Root"
+                                                    Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                    CornerRadius="8">
+                                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                                  VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Root" Property="Background" Value="#3A3D45"/>
+                                                    <Setter TargetName="Root" Property="BorderBrush" Value="#5A5F6D"/>
+                                                </Trigger>
+                                                <Trigger Property="IsPressed" Value="True">
+                                                    <Setter TargetName="Root" Property="Background" Value="#343741"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <StackPanel Orientation="Horizontal"
+                                                VerticalAlignment="Center">
+                                        <Ellipse Width="9"
+                                                 Height="9"
+                                                 Fill="{Binding Color}"
+                                                 Margin="0,0,8,0"/>
+                                        <TextBlock Text="{Binding Name}"
+                                                   Foreground="{StaticResource TextBrush}"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="Нет доступных ролей"
+                               Foreground="{StaticResource MutedBrush}"
+                               FontSize="12"
+                               Margin="2,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasAvailableServerRoles}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
             </Border>
         </Canvas>
 

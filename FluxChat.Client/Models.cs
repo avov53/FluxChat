@@ -284,6 +284,8 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             _notificationMode = normalized;
             OnPropertyChanged();
             OnPropertyChanged(nameof(NotificationModeText));
+            OnPropertyChanged(nameof(IsNotificationsMuted));
+            OnPropertyChanged(nameof(NotificationToggleMenuText));
         }
     }
 
@@ -293,6 +295,12 @@ public sealed class ContactViewModel : INotifyPropertyChanged
         "Mentions" => "Mentions only",
         _ => "All notifications"
     };
+
+    public bool IsNotificationsMuted => string.Equals(NotificationMode, "Muted", StringComparison.OrdinalIgnoreCase);
+
+    public string NotificationToggleMenuText => IsNotificationsMuted
+        ? "Unmute notifications"
+        : "Mute notifications";
 
     public string GroupOwnerUserId
     {
@@ -604,6 +612,7 @@ public sealed class ContactViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(ActivityText));
             OnPropertyChanged(nameof(HasActivity));
+            OnPropertyChanged(nameof(ActivityChipText));
         }
     }
 
@@ -658,6 +667,7 @@ public sealed class ContactViewModel : INotifyPropertyChanged
 
     public string ActivityText => CustomStatus;
     public bool HasActivity => !string.IsNullOrWhiteSpace(ActivityText);
+    public string ActivityChipText => HasActivity ? ActivityText : "";
 
     public string StatusText => Status switch
         {
@@ -851,6 +861,8 @@ public sealed class ServerInviteFriendViewModel
     public string ShortId { get; init; } = "";
     public string StatusText { get; init; } = "";
     public bool IsAlreadyMember { get; init; }
+    public string InviteButtonText { get; init; } = "Invite";
+    public bool CanInvite { get; init; } = true;
 
     public string Initials
     {
@@ -866,7 +878,6 @@ public sealed class ServerInviteFriendViewModel
         }
     }
 
-    public string InviteButtonText => IsAlreadyMember ? "Invite" : "Add";
 }
 
 public enum UserPresenceStatus
@@ -892,6 +903,9 @@ public sealed class MiniProfileViewModel : INotifyPropertyChanged
     public int CommonGroupsCount { get; init; }
     public bool IsSelf { get; init; }
     public bool IsKnownContact { get; init; }
+    public bool CanManageServerRoles { get; init; }
+    public ObservableCollection<MiniProfileRoleViewModel> ServerRoles { get; } = [];
+    public ObservableCollection<MiniProfileRoleViewModel> AvailableServerRoles { get; } = [];
 
     public string ShortUserId => string.IsNullOrWhiteSpace(UserId)
         ? ""
@@ -906,16 +920,19 @@ public sealed class MiniProfileViewModel : INotifyPropertyChanged
         CultureInfo.CurrentCulture,
         AppLanguage.Text("miniProfile.commonGroups"),
         CommonGroupsCount);
+    public string ActivityText => CustomStatus;
+    public bool HasActivity => !string.IsNullOrWhiteSpace(ActivityText);
+    public bool HasServerRoles => ServerRoles.Count > 0;
+    public bool HasAvailableServerRoles => AvailableServerRoles.Count > 0;
+    public string AddRoleText => HasServerRoles ? "+" : $"+ {AppLanguage.Text("server.roles.add")}";
 
-    public string StatusText => !string.IsNullOrWhiteSpace(CustomStatus)
-        ? CustomStatus
-        : Status switch
-        {
-            UserPresenceStatus.Online => AppLanguage.Text("profile.status.online").ToLower(CultureInfo.CurrentCulture),
-            UserPresenceStatus.Idle => AppLanguage.Text("profile.status.idle").ToLower(CultureInfo.CurrentCulture),
-            UserPresenceStatus.DoNotDisturb => AppLanguage.Text("profile.status.dnd").ToLower(CultureInfo.CurrentCulture),
-            _ => AppLanguage.Text("profile.status.offline").ToLower(CultureInfo.CurrentCulture)
-        };
+    public string StatusText => Status switch
+    {
+        UserPresenceStatus.Online => AppLanguage.Text("profile.status.online").ToLower(CultureInfo.CurrentCulture),
+        UserPresenceStatus.Idle => AppLanguage.Text("profile.status.idle").ToLower(CultureInfo.CurrentCulture),
+        UserPresenceStatus.DoNotDisturb => AppLanguage.Text("profile.status.dnd").ToLower(CultureInfo.CurrentCulture),
+        _ => AppLanguage.Text("profile.status.offline").ToLower(CultureInfo.CurrentCulture)
+    };
 
     public System.Windows.Media.Brush StatusBrush => new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(Status switch
     {
@@ -965,6 +982,13 @@ public sealed class MiniProfileViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public void NotifyRoleCollectionsChanged()
+    {
+        OnPropertyChanged(nameof(HasServerRoles));
+        OnPropertyChanged(nameof(HasAvailableServerRoles));
+        OnPropertyChanged(nameof(AddRoleText));
+    }
+
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
@@ -1008,6 +1032,15 @@ public sealed class MiniProfileViewModel : INotifyPropertyChanged
     }
 }
 
+public sealed class MiniProfileRoleViewModel
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public string Color { get; init; } = "#9CA3AF";
+    public bool IsSystem { get; init; }
+    public bool CanRemove { get; init; }
+}
+
 public sealed class MessageViewModel : INotifyPropertyChanged
 {
     private string _body = "";
@@ -1032,6 +1065,7 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     private double _videoVolume = 0.8;
     private bool _isVideoPlaying;
     private bool _isGroupStart = true;
+    private bool _isReplyJumpTarget;
 
     public required Guid MessageId { get; init; }
     public required string PeerUserId { get; init; }
@@ -1048,6 +1082,9 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public string FileName { get; init; } = "";
     public long FileSizeBytes { get; init; }
     public string MimeType { get; init; } = "";
+    public string TextPreview { get; init; } = "";
+    public bool TextPreviewTruncated { get; init; }
+    public string OriginalFolderName { get; init; } = "";
     public string DriveFileId
     {
         get => _driveFileId;
@@ -1089,6 +1126,10 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     }
     public Guid? ReplyToMessageId { get; init; }
     public string ReplyPreview { get; init; } = "";
+    public string ReplyAuthorUserId { get; set; } = "";
+    public string ReplyAuthorDisplayName { get; set; } = "";
+    public string ReplyAuthorAvatarKind { get; set; } = "color";
+    public string ReplyAuthorAvatarPath { get; set; } = "";
     public string ForwardedFrom { get; init; } = "";
     public string SenderUserId { get; set; } = "";
 
@@ -1289,15 +1330,32 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool IsImageMessage => Kind == MessageKinds.Image;
     public bool IsGifMessage => Kind == MessageKinds.Gif;
     public bool IsFileMessage => Kind == MessageKinds.File;
+    public bool IsServerInviteMessage => Kind == MessageKinds.ServerInvite;
     public bool IsVideoFileMessage => IsFileMessage &&
         (MimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
          IsVideoExtension(FileName));
     public bool IsGenericFileMessage => IsFileMessage && !IsVideoFileMessage;
-    public bool HasText => !string.IsNullOrWhiteSpace(Text) && !IsGifMessage;
+    public bool HasTextPreview => IsGenericFileMessage && !string.IsNullOrWhiteSpace(TextPreview);
+    public string TextPreviewFooter => TextPreviewTruncated ? "Preview truncated" : "Text preview";
+    public bool HasText => !string.IsNullOrWhiteSpace(Text) && !IsGifMessage && !IsServerInviteMessage;
     public bool IsEmojiOnlyText => IsTextMessage && HasText && IsEmojiOnly(Text);
     public bool ShowsPlainText => HasText && !IsEmojiOnlyText;
     public bool HasAttachment => !string.IsNullOrWhiteSpace(AttachmentPath) || !string.IsNullOrWhiteSpace(AttachmentUrl) || !string.IsNullOrWhiteSpace(MediaId);
     public bool HasReply => !string.IsNullOrWhiteSpace(ReplyPreview);
+    public bool IsReplyJumpTarget
+    {
+        get => _isReplyJumpTarget;
+        set
+        {
+            if (_isReplyJumpTarget == value) return;
+            _isReplyJumpTarget = value;
+            OnPropertyChanged();
+        }
+    }
+    public bool IsReplyAuthorAvatarImage => !string.IsNullOrWhiteSpace(ReplyAuthorAvatarPath) && ReplyAuthorAvatarKind == "image";
+    public bool IsReplyAuthorAvatarVideo => !string.IsNullOrWhiteSpace(ReplyAuthorAvatarPath) && ReplyAuthorAvatarKind == "video";
+    public ImageSource? ReplyAuthorAvatarImageSource => IsReplyAuthorAvatarImage ? AvatarImageLoader.Load(ReplyAuthorAvatarPath) : null;
+    public string ReplyAuthorInitials => BuildInitials(ReplyAuthorDisplayName);
     public bool IsForwarded => !string.IsNullOrWhiteSpace(ForwardedFrom);
     public bool IsEdited => EditedAtUtc is not null;
     public bool CanEdit => IsOutgoing && IsTextMessage;
@@ -1310,7 +1368,81 @@ public sealed class MessageViewModel : INotifyPropertyChanged
     public bool IsSenderAvatarVideo => HasSenderAvatar && SenderAvatarKind == "video";
     public ImageSource? SenderAvatarImageSource => IsSenderAvatarImage ? AvatarImageLoader.Load(SenderAvatarPath) : null;
     public string SenderInitials => BuildInitials(SenderDisplayName);
-    public string PreviewText => IsImageMessage ? "Image" : IsGifMessage ? "GIF" : IsFileMessage ? FileName : Text;
+    public string PreviewText => IsServerInviteMessage ? ServerInvitePreviewText : IsImageMessage ? "Image" : IsGifMessage ? "GIF" : IsFileMessage ? FileName : Text;
+    public string ServerInviteTitle => ReadServerInviteSnapshotString("DisplayName") ?? ReadServerInviteString("ServerName") ?? "Server invite";
+    public string ServerInviteChannelName => ReadServerInviteString("ChannelName") ?? "";
+    public string ServerInviteChannelType => ReadServerInviteString("ChannelType") ?? "text";
+    public bool IsServerOnlyInvite => string.Equals(ServerInviteChannelType, "server", StringComparison.OrdinalIgnoreCase);
+    public bool IsServerVoiceInvite => string.Equals(ServerInviteChannelType, "voice", StringComparison.OrdinalIgnoreCase);
+    public string ServerInviteChannelText
+    {
+        get
+        {
+            if (IsServerOnlyInvite)
+            {
+                return "Server invite";
+            }
+
+            var channelName = string.IsNullOrWhiteSpace(ServerInviteChannelName) ? "general" : ServerInviteChannelName;
+            return IsServerVoiceInvite ? $"Voice: {channelName}" : $"# {channelName}";
+        }
+    }
+    public bool IsServerInviteExpired => TryReadServerInviteExpiresAt(out var expiresAtUtc) && expiresAtUtc <= DateTimeOffset.UtcNow;
+    public bool CanJoinServerInvite => IsServerInviteMessage && !IsServerInviteExpired;
+    public string ServerInviteButtonText
+    {
+        get
+        {
+            if (IsServerInviteExpired)
+            {
+                return "Expired";
+            }
+
+            if (IsServerVoiceInvite)
+            {
+                return "Join voice";
+            }
+
+            return IsServerOnlyInvite ? "Join server" : "Join channel";
+        }
+    }
+    public string ServerInviteExpiryText
+    {
+        get
+        {
+            if (!TryReadServerInviteExpiresAt(out var expiresAtUtc))
+            {
+                return "";
+            }
+
+            return expiresAtUtc <= DateTimeOffset.UtcNow
+                ? "Invite expired"
+                : $"Expires {expiresAtUtc.ToLocalTime():g}";
+        }
+    }
+    public string ServerInviteVoiceParticipantsText
+    {
+        get
+        {
+            var names = ReadServerInviteVoiceParticipantNames();
+            return names.Count == 0 ? "" : $"In voice: {string.Join(", ", names.Take(3))}";
+        }
+    }
+    public bool HasServerInviteVoiceParticipants => !string.IsNullOrWhiteSpace(ServerInviteVoiceParticipantsText);
+    public string ServerInvitePreviewText
+    {
+        get
+        {
+            if (IsServerVoiceInvite)
+            {
+                return $"Voice invite to {ServerInviteTitle}";
+            }
+
+            return IsServerOnlyInvite
+                ? $"Server invite to {ServerInviteTitle}"
+                : $"Channel invite to {ServerInviteTitle}";
+        }
+    }
     public string FileSizeText => FormatFileSize(FileSizeBytes);
     public string FileTypeText => string.IsNullOrWhiteSpace(MimeType) ? "FILE" : MimeType.Split('/').LastOrDefault()?.ToUpperInvariant() ?? "FILE";
     public bool HasDownloadUrl => !string.IsNullOrWhiteSpace(DownloadUrl);
@@ -1563,6 +1695,98 @@ public sealed class MessageViewModel : INotifyPropertyChanged
         return codepoints.Length == 0
             ? ""
             : $"https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{string.Join("-", codepoints)}.png";
+    }
+
+    private string? ReadServerInviteString(string propertyName)
+    {
+        if (!IsServerInviteMessage || string.IsNullOrWhiteSpace(Body))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(Body);
+            return document.RootElement.TryGetProperty(propertyName, out var property) &&
+                   property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private string? ReadServerInviteSnapshotString(string propertyName)
+    {
+        if (!IsServerInviteMessage || string.IsNullOrWhiteSpace(Body))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(Body);
+            if (!document.RootElement.TryGetProperty("Snapshot", out var snapshot) ||
+                !snapshot.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            return property.GetString();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private bool TryReadServerInviteExpiresAt(out DateTimeOffset expiresAtUtc)
+    {
+        expiresAtUtc = default;
+        var value = ReadServerInviteString("ExpiresAtUtc");
+        return !string.IsNullOrWhiteSpace(value) &&
+               DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out expiresAtUtc);
+    }
+
+    private IReadOnlyList<string> ReadServerInviteVoiceParticipantNames()
+    {
+        if (!IsServerInviteMessage || string.IsNullOrWhiteSpace(Body))
+        {
+            return [];
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(Body);
+            if (!document.RootElement.TryGetProperty("VoiceParticipants", out var participants) ||
+                participants.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var names = new List<string>();
+            foreach (var participant in participants.EnumerateArray())
+            {
+                if (participant.TryGetProperty("DisplayName", out var nameProperty) &&
+                    nameProperty.ValueKind == JsonValueKind.String)
+                {
+                    var name = nameProperty.GetString();
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+
+            return names;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static string FormatFileSize(long bytes)
@@ -1841,6 +2065,7 @@ public static class MessageKinds
     public const string Image = "Image";
     public const string Gif = "Gif";
     public const string File = "File";
+    public const string ServerInvite = "ServerInvite";
 }
 
 public enum VideoDownloadState
@@ -2565,6 +2790,7 @@ public sealed class ServerChannelRoleAccessViewModel : INotifyPropertyChanged
     private bool _canAddReactions;
     private bool _canSpeak;
     private bool _canStream;
+    private bool _canVideo;
     private bool _isExpanded;
 
     public required string RoleId { get; init; }
@@ -2682,6 +2908,21 @@ public sealed class ServerChannelRoleAccessViewModel : INotifyPropertyChanged
             }
 
             _canStream = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CanVideo
+    {
+        get => _canVideo;
+        set
+        {
+            if (_canVideo == value)
+            {
+                return;
+            }
+
+            _canVideo = value;
             OnPropertyChanged();
         }
     }

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using FluxChat.Shared;
 
@@ -19,6 +20,10 @@ public partial class AccountWindow : Window
     private string _registrationAccountApiUrl = "";
     private LocalAccountVault _accountVault = LocalAccountVault.Load();
     private bool _isApplyingSavedAccount;
+    private bool _isSyncingPasswordText;
+    private bool _isLoginPasswordVisible;
+    private bool _isNewPasswordVisible;
+    private bool _isConfirmPasswordVisible;
 
     internal UserProfile SelectedProfile => _profile;
 
@@ -66,6 +71,9 @@ public partial class AccountWindow : Window
         RegisterInviteLabelText.Text = L("account.inviteCode");
         RegisterButton.Content = L("account.welcome.create");
         BusyText.Text = L("account.wait");
+        PasswordRevealButton.ToolTip = L(_isLoginPasswordVisible ? "account.hidePassword" : "account.showPassword");
+        NewPasswordRevealButton.ToolTip = L(_isNewPasswordVisible ? "account.hidePassword" : "account.showPassword");
+        ConfirmPasswordRevealButton.ToolTip = L(_isConfirmPasswordVisible ? "account.hidePassword" : "account.showPassword");
     }
 
     private void WelcomeSignInButton_OnClick(object sender, RoutedEventArgs e)
@@ -442,6 +450,123 @@ Registered:
 
     private void PasswordInput_OnGotKeyboardFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
         => TryFillSavedPassword(LoginInput.Text);
+
+    private void PasswordField_OnPasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isSyncingPasswordText)
+        {
+            return;
+        }
+
+        _isSyncingPasswordText = true;
+        try
+        {
+            if (sender == PasswordInput)
+            {
+                PasswordRevealInput.Text = PasswordInput.Password;
+            }
+            else if (sender == NewPasswordInput)
+            {
+                NewPasswordRevealInput.Text = NewPasswordInput.Password;
+            }
+            else if (sender == ConfirmPasswordInput)
+            {
+                ConfirmPasswordRevealInput.Text = ConfirmPasswordInput.Password;
+            }
+        }
+        finally
+        {
+            _isSyncingPasswordText = false;
+        }
+    }
+
+    private void PasswordRevealInput_OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isSyncingPasswordText)
+        {
+            return;
+        }
+
+        _isSyncingPasswordText = true;
+        try
+        {
+            if (sender == PasswordRevealInput)
+            {
+                PasswordInput.Password = PasswordRevealInput.Text;
+            }
+            else if (sender == NewPasswordRevealInput)
+            {
+                NewPasswordInput.Password = NewPasswordRevealInput.Text;
+            }
+            else if (sender == ConfirmPasswordRevealInput)
+            {
+                ConfirmPasswordInput.Password = ConfirmPasswordRevealInput.Text;
+            }
+        }
+        finally
+        {
+            _isSyncingPasswordText = false;
+        }
+    }
+
+    private void PasswordRevealButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender == PasswordRevealButton)
+        {
+            _isLoginPasswordVisible = !_isLoginPasswordVisible;
+            SetPasswordRevealState(PasswordRevealInput, PasswordRevealButton, PasswordRevealSlash, _isLoginPasswordVisible);
+        }
+        else if (sender == NewPasswordRevealButton)
+        {
+            _isNewPasswordVisible = !_isNewPasswordVisible;
+            SetPasswordRevealState(NewPasswordRevealInput, NewPasswordRevealButton, NewPasswordRevealSlash, _isNewPasswordVisible);
+        }
+        else if (sender == ConfirmPasswordRevealButton)
+        {
+            _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+            SetPasswordRevealState(ConfirmPasswordRevealInput, ConfirmPasswordRevealButton, ConfirmPasswordRevealSlash, _isConfirmPasswordVisible);
+        }
+    }
+
+    private void SetPasswordRevealState(System.Windows.Controls.TextBox revealInput, System.Windows.Controls.Button button, FrameworkElement slash, bool isVisible)
+    {
+        button.ToolTip = L(isVisible ? "account.hidePassword" : "account.showPassword");
+        revealInput.Visibility = Visibility.Visible;
+        revealInput.IsHitTestVisible = isVisible;
+        revealInput.Focusable = isVisible;
+        var revealAnimation = new DoubleAnimation(isVisible ? 1 : 0, TimeSpan.FromMilliseconds(140))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        };
+        if (!isVisible)
+        {
+            revealAnimation.Completed += (_, _) => revealInput.Visibility = Visibility.Collapsed;
+        }
+
+        revealInput.BeginAnimation(OpacityProperty, revealAnimation);
+        slash.BeginAnimation(OpacityProperty, new DoubleAnimation(isVisible ? 0 : 1, TimeSpan.FromMilliseconds(140))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        });
+
+        if (button.RenderTransform is ScaleTransform scale)
+        {
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.92, 1, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new BackEase { Amplitude = 0.25, EasingMode = EasingMode.EaseOut }
+            });
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.92, 1, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new BackEase { Amplitude = 0.25, EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        if (isVisible)
+        {
+            revealInput.CaretIndex = revealInput.Text.Length;
+            revealInput.Focus();
+        }
+    }
 
     private void ShowSavedAccounts()
     {
